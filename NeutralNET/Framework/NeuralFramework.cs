@@ -65,13 +65,27 @@ public class NeuralFramework
 
         Randomize();
 
-        for (var i = 0; i < 500 * 100; i++)
+        for (var i = 0; i < 1000 * 100; i++)
         {
             FiniteDifference(gradientFramework, epsillon, xorAdvanced.TrainingInput, xorAdvanced.TrainingOutput);
             Learn(gradientFramework);
 
             var loss = Loss(xorAdvanced.TrainingInput, xorAdvanced.TrainingOutput);
-            Console.WriteLine(loss);
+            Console.WriteLine($"Loss:{loss}");
+        }
+
+        Console.WriteLine();
+
+        for (var i = 0; i < 2; i++)
+        {
+            for (var j = 0; j < 2; j++)
+            {
+                MatrixInputs[0].Set(0, 0, i);
+                MatrixInputs[0].Set(0, 1, j);
+
+                Forward();
+                Console.WriteLine($"{i} ^ {j} = {MatrixInputs[_count].At(0, 0)}");
+            }
         }
     }
 
