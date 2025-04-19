@@ -27,7 +27,7 @@ public struct Matrix
         }
     }
 
-    public Matrix Dot(ref Matrix other)
+    public Matrix Dot(in Matrix other)
     {
         if (Columns != other.Rows)
         {
@@ -128,7 +128,7 @@ public struct Matrix
         return result;
     }
 
-    public void Sum(ref Matrix other)
+    public void Sum(in Matrix other)
     {
         if (Rows != other.Rows)
         {

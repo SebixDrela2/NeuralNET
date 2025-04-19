@@ -23,13 +23,16 @@ internal class XorModels
 
 internal class XorAdvanced
 {
-    private static readonly ArraySegment<float> _trainingData = new(
+    public readonly ArraySegment<float> TrainingData = new(
     [
         0, 0, 0,
         1, 0, 1,
         0, 1, 1,
         1, 1, 0,
     ]);
+
+    public Matrix TrainingInput;
+    public Matrix TrainingOutput;
 
     public Matrix A0 = new Matrix(1, 2);
     public Matrix W1 = new Matrix(2, 2);
@@ -50,6 +53,17 @@ internal class XorAdvanced
         return A2.FirstElement;
     }
 
+    public void Prepare()
+    {
+        var trainingData = new Matrix(4, 3)
+        {
+            Data = TrainingData
+        };
+
+        TrainingInput = trainingData.SplitStart(2);
+        TrainingOutput = trainingData.SplitEnd(3);
+    }
+
     public void Run(int x1, int x2)
     {
         float epsillon = 1e-1f;
@@ -63,25 +77,17 @@ internal class XorAdvanced
         A0.Set(0, 0, x1);
         A0.Set(0, 1, x2);
 
-        var trainingData = new Matrix(4, 3)
-        {
-            Data = _trainingData
-        };
-
-        var trainingInput = trainingData.SplitStart(2);
-        var trainingOutput = trainingData.SplitEnd(3);
-
-        trainingInput.Print("input");
-        trainingOutput.Print("output");
+        TrainingInput.Print("input");
+        TrainingOutput.Print("output");
 
 
         var gradient = new XorAdvanced();
 
         for (var i = 0; i < 2000 * 1000; i++)
         {
-            var loss = Loss(trainingInput, trainingOutput);
+            var loss = Loss(TrainingInput, TrainingOutput);
             Console.WriteLine($"Loss: {loss}");
-            FiniteDifference(gradient, epsillon, trainingInput, trainingOutput);
+            FiniteDifference(gradient, epsillon, TrainingInput, TrainingOutput);
             Learn(gradient, rate);
         }
 
