@@ -1,4 +1,5 @@
 ﻿using NeutralNET.Framework;
+using NeutralNET.Models;
 
 namespace NeutralTest
 {
@@ -6,12 +7,13 @@ namespace NeutralTest
     {
         static void Main(string[] args)
         {
-            int[] architecture = [2, 2, 1];
+            int[] architecture = [8, 16, 8, 8];
 
             var neuralFramework = new NeuralFramework(architecture);
             var gradientFramework = new NeuralFramework(architecture);
+            var model = new BitModel();
 
-            neuralFramework.Run(gradientFramework);                     
+            neuralFramework.Run(gradientFramework, model);                     
         }
     }
 }

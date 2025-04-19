@@ -54,23 +54,20 @@ public class NeuralFramework
         Console.WriteLine("]");
     }
     
-    public void Run(NeuralFramework gradientFramework)
+    public void Run(NeuralFramework gradientFramework, IModel model)
     {
         float epsillon = 1e-1f;
 
-        var xorAdvanced = new XorAdvanced();
-        xorAdvanced.Prepare();
-
-        MatrixInputs[0].CopyDataFrom(xorAdvanced.TrainingInput.Row(1));
+        MatrixInputs[0].CopyDataFrom(model.TrainingInput.Row(1));
 
         Randomize();
 
         for (var i = 0; i < 1000 * 100; i++)
         {
-            FiniteDifference(gradientFramework, epsillon, xorAdvanced.TrainingInput, xorAdvanced.TrainingOutput);
+            FiniteDifference(gradientFramework, epsillon, model.TrainingInput, model.TrainingOutput);
             Learn(gradientFramework);
 
-            var loss = Loss(xorAdvanced.TrainingInput, xorAdvanced.TrainingOutput);
+            var loss = Loss(model.TrainingInput, model.TrainingOutput);
             Console.WriteLine($"Loss:{loss}");
         }
 
