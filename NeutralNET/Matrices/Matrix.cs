@@ -206,4 +206,9 @@ public struct Matrix
     {
         Data[(row * Columns) + column] -= value;
     }
+
+    public void Divide(int row, int column, float value)
+    {
+        Data[(row * Columns) + column] /= value;
+    }
 }
