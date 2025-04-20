@@ -27,6 +27,17 @@ public struct Matrix
         }
     }
 
+    public void ApplyReLU()
+    {
+        for (var row = 0; row < Rows; row++)
+        {
+            for (var column = 0; column < Columns; column++)
+            {
+                Set(row, column, MathUtils.ReLU(At(row, column)));
+            }
+        }
+    }
+
     public Matrix Dot(in Matrix other)
     {
         if (Columns != other.Rows)

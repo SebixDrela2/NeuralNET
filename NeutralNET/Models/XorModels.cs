@@ -21,7 +21,7 @@ internal class XorModels
     public double BiasThree = RandomUtils.GetDouble(1);
 }
 
-internal class XorAdvanced
+public class XorAdvanced : IModel
 {
     public readonly ArraySegment<float> TrainingData = new(
     [
@@ -31,8 +31,8 @@ internal class XorAdvanced
         1, 1, 0,
     ]);
 
-    public Matrix TrainingInput;
-    public Matrix TrainingOutput;
+    public Matrix TrainingInput { get; set; }
+    public Matrix TrainingOutput { get; set; }
 
     public Matrix A0 = new Matrix(1, 2);
     public Matrix W1 = new Matrix(2, 2);

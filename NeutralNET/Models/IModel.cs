@@ -4,6 +4,6 @@ namespace NeutralNET.Models;
 
 public interface IModel
 {
-    public Matrix TrainingInput { get; init; }
-    public Matrix TrainingOutput { get; init; }
+    public Matrix TrainingInput { get; set; }
+    public Matrix TrainingOutput { get; set; }
 }

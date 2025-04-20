@@ -57,8 +57,6 @@ public class NeuralFramework
     
     public void Run(NeuralFramework gradientFramework, IModel model)
     {
-        float epsillon = 1e-1f;
-
         MatrixInputs[0].CopyDataFrom(model.TrainingInput.Row(1));
 
         Randomize();
@@ -89,7 +87,7 @@ public class NeuralFramework
 
     private void Learn(NeuralFramework gradient)
     {
-        float rate = 1e-1f;
+        float rate = 1;
 
         for (var i = 0; i < Count; i++)
         {
@@ -129,11 +127,18 @@ public class NeuralFramework
             throw new NotImplementedException($"Output columns: {MatrixInputs[Count].Columns} is not training output columns: {trainingOutput.Columns}");
         }
 
+        gradient.ZeroOut();
+
         for (var i = 0; i < trainingInput.Rows; i++)
         {
             MatrixInputs[0].CopyDataFrom(trainingInput.Row(i));
             Forward();
             
+            for (var m = 0; m < Count ; m++)
+            {
+                gradient.MatrixInputs[m].Fill(0);
+            }
+
             for (var j = 0; j <  trainingOutput.Columns; j++)
             {
                 var difference = MatrixInputs[Count].At(0, j) - trainingOutput.At(i, j);
@@ -158,7 +163,7 @@ public class NeuralFramework
                         var computedLayer = computed * previousLayer;
                         var computedWeight = computed * weight;
 
-                        gradient.MatrixWeights[l - 1].Set(k, j, computedLayer);
+                        gradient.MatrixWeights[l - 1].Add(k, j, computedLayer);
                         gradient.MatrixInputs[l - 1].Add(0, k, computedWeight);
                     }
                 }
@@ -201,6 +206,17 @@ public class NeuralFramework
         }
     }
 
+    public void ZeroOut()
+    {
+        for (var i = 0; i < Count; i++)
+        {
+            MatrixInputs[i].Fill(0);
+            MatrixWeights[i].Fill(0);
+            MatrixBiases[i].Fill(0);
+        }
+    }
+
+    [Obsolete]
     private void ComputeGradient(
         in ArraySegment<Matrix> matrixes, 
         in ArraySegment<Matrix> gradientMatrixes, 
@@ -266,7 +282,7 @@ public class NeuralFramework
         {
             MatrixInputs[i + 1] = MatrixInputs[i].Dot(MatrixWeights[i]);
             MatrixInputs[i + 1].Sum(MatrixBiases[i]);
-            MatrixInputs[i + 1].ApplySigmoid();
+            MatrixInputs[i + 1].ApplyReLU();
         }
     }
 

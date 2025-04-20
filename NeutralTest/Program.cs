@@ -7,7 +7,7 @@ namespace NeutralTest
     {
         static void Main(string[] args)
         {
-            int[] architecture = [8, 16, 8, 8];
+            int[] architecture = [6, 4, 4, 6];
 
             var neuralFramework = new NeuralFramework(architecture);
             var gradientFramework = new NeuralFramework(architecture);

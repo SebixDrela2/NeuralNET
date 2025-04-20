@@ -4,13 +4,13 @@ namespace NeutralNET.Models;
 
 public class BitModel : IModel
 {
-
-    private const int BitInput = 4;
+    private const int BitInput = 3;
     private const int BitOutput = BitInput * 2;
     private const int BitLimit = 1 << BitInput;
     private const int BitRows = 1 << BitOutput;
-    public Matrix TrainingInput { get;  init; }
-    public Matrix TrainingOutput { get; init ; }
+
+    public Matrix TrainingInput { get;  set; }
+    public Matrix TrainingOutput { get; set ; }
 
     public BitModel()
     {
@@ -24,9 +24,9 @@ public class BitModel : IModel
             for (var b = 0; b < BitLimit; b++, index++)
             {
                 var sum = a + b;
-                var aBit = $"{a:b4}".Select(x => x is '1' ? 1f : 0f);
-                var bBit = $"{b:b4}".Select(x => x is '1' ? 1f : 0f);
-                var sumBit = $"{b:b8}".Select(x => x is '1' ? 1f : 0f);
+                var aBit = $"{a:b3}".Select(x => x is '1' ? 1f : 0f);
+                var bBit = $"{b:b3}".Select(x => x is '1' ? 1f : 0f);
+                var sumBit = $"{b:b6}".Select(x => x is '1' ? 1f : 0f);
 
                 trainingInput.AddRange(aBit);
                 trainingInput.AddRange(bBit);
