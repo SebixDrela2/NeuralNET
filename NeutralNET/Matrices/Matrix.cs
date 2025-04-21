@@ -222,4 +222,12 @@ public class Matrix
     {
         Data[(row * Columns) + column] /= value;
     }
+
+    public void Clip(float min, float max)
+    {
+        for (var index = 0; index < Data.Count; index++)
+        {
+            Data[index] = MathF.Max(min, MathF.Min(max, Data[index]));
+        }
+    }
 }

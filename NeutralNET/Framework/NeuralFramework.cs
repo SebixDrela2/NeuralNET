@@ -7,8 +7,10 @@ public class NeuralFramework
 {
     public readonly int Count;
 
-    private const int TrainingCount = 500 * 200;
-    private const float Rate = 1e-1f;
+    private const int TrainingCount = 100 * 200;
+
+    private const float Rate = 1e-2f;
+    private const float WeightDecay = 1e-4f;
 
     private ArraySegment<Matrix> _matrixNeurons;
     private ArraySegment<Matrix> _matrixWeights;
@@ -87,25 +89,30 @@ public class NeuralFramework
     }
 
     private void Learn(NeuralFramework gradient)
-    {       
+    {
         for (var i = 0; i < Count; i++)
         {
+            gradient._matrixWeights[i].Clip(-1f, 1f);
+            gradient._matrixBiases[i].Clip(-1f, 1f);
+
             LearnInternal(_matrixWeights, gradient._matrixWeights, Rate, i);
             LearnInternal(_matrixBiases, gradient._matrixBiases, Rate, i);
         }
     }
 
     private void LearnInternal(
-     in ArraySegment<Matrix> matrixes,
-     in ArraySegment<Matrix> gradientMatrixes,
-     float rate,
-     int index)
+    in ArraySegment<Matrix> matrixes,
+    in ArraySegment<Matrix> gradientMatrixes,
+    float rate,
+    int index)
     {
         for (var j = 0; j < matrixes[index].Rows; j++)
         {
             for (var k = 0; k < matrixes[index].Columns; k++)
             {
                 var computedRate = rate * gradientMatrixes[index].At(j, k);
+
+                computedRate += rate * WeightDecay * matrixes[index].At(j, k);
                 matrixes[index].Sub(j, k, computedRate);
             }
         }
@@ -171,28 +178,29 @@ public class NeuralFramework
     ArraySegment<float> currentActivations,
     ArraySegment<float> currentErrors)
     {
+        bool isOutputLayer = layerIndex == Count;
+
         for (int neuronIdx = 0; neuronIdx < currentActivations.Count; neuronIdx++)
         {
-            float neuronGradient = CalculateNeuronGradient(
-                currentActivations[neuronIdx],
-                currentErrors[neuronIdx]);
+            float activation = currentActivations[neuronIdx];
+            float error = currentErrors[neuronIdx];
+
+            var neuronGradient = CalculateNeuronGradient(activation, error, useRelu: !isOutputLayer);
 
             gradient._matrixBiases[layerIndex - 1].Add(0, neuronIdx, neuronGradient);
 
             for (int prevNeuronIdx = 0; prevNeuronIdx < _matrixNeurons[layerIndex - 1].Columns; prevNeuronIdx++)
             {
                 float prevActivation = _matrixNeurons[layerIndex - 1].At(0, prevNeuronIdx);
-                float weight = _matrixWeights[layerIndex - 1].At(prevNeuronIdx, neuronIdx);
-
                 gradient._matrixWeights[layerIndex - 1].Add(
                     prevNeuronIdx,
                     neuronIdx,
-                    CalculateWeightGradient(neuronGradient, prevActivation));
-                
+                    neuronGradient * prevActivation);
+
                 gradient._matrixNeurons[layerIndex - 1].Add(
                     0,
                     prevNeuronIdx,
-                    CalculatePreviousLayerError(neuronGradient, weight));
+                    neuronGradient * _matrixWeights[layerIndex - 1].At(prevNeuronIdx, neuronIdx));
             }
         }
     }
@@ -219,7 +227,17 @@ public class NeuralFramework
         }
     }
 
-    private float CalculateNeuronGradient(float activation, float error) => 2 * error * activation * (1 - activation);
+    private float CalculateNeuronGradient(float activation, float error, bool useRelu)
+    {
+        if (useRelu)
+        {
+            // ReLU derivative
+            return 2 * error * (activation > 0 ? 1 : 0);
+        }
+        // Linear derivative (output layer)
+        return 2 * error; // Changed from sigmoid derivative to 1
+    }
+
     private float CalculateWeightGradient(float neuronGradient, float previousActivation) => neuronGradient * previousActivation;
     private float CalculatePreviousLayerError(float neuronGradient, float connectionWeight) => neuronGradient * connectionWeight;
 
@@ -317,18 +335,25 @@ public class NeuralFramework
         {
             _matrixNeurons[i + 1] = _matrixNeurons[i].Dot(_matrixWeights[i]);
             _matrixNeurons[i + 1].Sum(_matrixBiases[i]);
-            _matrixNeurons[i + 1].ApplySigmoid();
-        }
 
+            if (i < Count - 1)
+            {
+                _matrixNeurons[i + 1].ApplyReLU();
+            }
+            else
+            {
+                _matrixNeurons[i + 1].ApplySigmoid();
+            }
+        }
         return _matrixNeurons[Count];
     }
 
-    public void Randomize(float low = 0, float high = 1)
+    private void Randomize()
     {
         for (var i = 0; i < Count; i++)
         {
-            _matrixWeights[i].Randomize(low, high);
-            _matrixBiases[i].Randomize(low, high);
+            float scale = MathF.Sqrt(2f / _matrixWeights[i].Rows);
+            _matrixWeights[i].Randomize(-scale, scale);
         }
     }
 }
