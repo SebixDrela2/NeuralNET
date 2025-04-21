@@ -244,12 +244,12 @@ public class NeuralFramework
         Matrix trainingInput, 
         Matrix trainingOutput)
     {
-        var cost = Loss(trainingInput, trainingOutput);
+        var loss = Loss(trainingInput, trainingOutput);
 
         for (var i = 0; i < Count; i++)
         {
-            ComputeGradient(_matrixWeights, gradient._matrixWeights, trainingInput, trainingOutput, epsillon, cost, i);
-            ComputeGradient(_matrixBiases, gradient._matrixBiases, trainingInput, trainingOutput, epsillon, cost, i);           
+            ComputeGradient(_matrixWeights, gradient._matrixWeights, trainingInput, trainingOutput, epsillon, loss, i);
+            ComputeGradient(_matrixBiases, gradient._matrixBiases, trainingInput, trainingOutput, epsillon, loss, i);           
         }
     }
 
@@ -270,7 +270,7 @@ public class NeuralFramework
         in Matrix trainingInput,
         in Matrix trainingOutput,
         float epsillon,
-        float cost,
+        float loss,
         int index)
     {
         for (var j = 0; j < matrixes[index].Rows; j++)
@@ -281,8 +281,8 @@ public class NeuralFramework
 
                 matrixes[index].Add(j, k, epsillon);
 
-                var computedCost = (Loss(trainingInput, trainingOutput) - cost) / epsillon;
-                gradientMatrixes[index].Set(j, k, computedCost);
+                var computedLoss = (Loss(trainingInput, trainingOutput) - loss) / epsillon;
+                gradientMatrixes[index].Set(j, k, computedLoss);
 
                 matrixes[index].Set(j, k, temp);
             }
@@ -301,7 +301,7 @@ public class NeuralFramework
             throw new NotImplementedException($"Training output columns: {trainingInput.Rows} is not matrix output Columns: {_matrixNeurons[Count].Columns}");
         }
 
-        var cost = 0f;
+        var loss = 0f;
         var outputColumns = trainingOutput.Columns;
 
         for (var i = 0; i < trainingInput.Rows; i++)
@@ -317,11 +317,11 @@ public class NeuralFramework
             {
                 float distance = _matrixNeurons[Count].At(0, j) - outputRow.At(0, j);
 
-                cost += distance * distance;
+                loss += distance * distance;
             }
         }
 
-        return cost / trainingInput.Rows;
+        return loss / trainingInput.Rows;
     }
 
     private Matrix Forward()
