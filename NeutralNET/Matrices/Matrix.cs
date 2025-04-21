@@ -162,6 +162,21 @@ public class Matrix
         }
     }
 
+    public Matrix BatchView(int startRow, int batchSize)
+    {
+        if (startRow + batchSize > Rows)
+        {
+            throw new ArgumentException(
+                    $"Batch would exceed matrix rows. Available: {Rows}, Requested: {startRow + batchSize}"
+                );
+        }
+
+        return new Matrix(batchSize, Columns)
+        {
+            Data = new ArraySegment<float>(Data.Array, Data.Offset + startRow * Columns, batchSize * Columns)
+        };
+    }
+
     public float At(int row, int column) => Data[(row * Columns) + column];
     
     public void Randomize(float low = 0, float high = 1)
@@ -172,6 +187,30 @@ public class Matrix
             {
                 Set(i, j, RandomUtils.GetFloat(1) * (high - low) + low);
             }            
+        }
+    }
+
+    // Fisher-Yates algorithm
+    public void ShuffleRows(Random rand = null)
+    {
+        rand = rand ?? new Random();
+
+        var cols = Columns;
+        var offset = Data.Offset;
+
+        for (int i = Rows - 1; i > 0; i--)
+        {
+            int j = rand.Next(i + 1);
+            int rowIOffset = offset + i * cols;
+            int rowJOffset = offset + j * cols;
+
+            for (int k = 0; k < cols; k++)
+            {
+                int indexI = rowIOffset + k;
+                int indexJ = rowJOffset + k;
+
+                (Data[indexJ], Data[indexI]) = (Data[indexI], Data[indexJ]);
+            }
         }
     }
 
