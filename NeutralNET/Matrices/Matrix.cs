@@ -2,12 +2,12 @@
 
 namespace NeutralNET.Matrices;
 
-public struct Matrix
+public class Matrix
 {
     public int Rows;
     public int Columns;
     public ArraySegment<float> Data;
-    public readonly float FirstElement => Data[0];
+    public float FirstElement => Data[0];
 
     public Matrix(int rows, int columns)
     {
@@ -160,7 +160,7 @@ public struct Matrix
         }
     }
 
-    public readonly float At(int row, int column) => Data[(row * Columns) + column];
+    public float At(int row, int column) => Data[(row * Columns) + column];
     
     public void Randomize(float low = 0, float high = 1)
     {
@@ -184,7 +184,7 @@ public struct Matrix
         }
     }
 
-    public readonly void Print(string name)
+    public void Print(string name)
     {
         Console.WriteLine($"{name} = [");
 

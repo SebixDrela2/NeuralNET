@@ -15,11 +15,11 @@ public class NeuralNetwork
         _model = model;
     }
 
-    public void Run()
+    public IModelRunner Run()
     {
         var neuralFramework = new NeuralFramework(_architecture);
         var gradientFramework = new NeuralFramework(_architecture);
 
-        neuralFramework.Run(gradientFramework, _model);
+        return neuralFramework.Run(gradientFramework, _model);
     }
 }

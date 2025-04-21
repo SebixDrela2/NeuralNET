@@ -1,5 +1,6 @@
 ﻿using NeutralNET.Framework;
 using NeutralNET.Models;
+using NeutralNET.Validators;
 
 namespace NeutralTest
 {
@@ -11,7 +12,10 @@ namespace NeutralTest
         
             var model = new BitModel();
             var neuralNetwork = new NeuralNetwork(architecture, model);
-            neuralNetwork.Run();                     
+            var modelRunner = neuralNetwork.Run();
+
+            var validator = new ThreeBitModelValidator(modelRunner);
+            validator.Validate();
         }
     }
 }
