@@ -1,7 +1,7 @@
 ## How to run/validate.
 
 In order to properly run a neural network, you must specify it's config parameters.
-Most importantly network architecture, batchsize, epochs (training count) and the learning rate.
+Most importantly network architecture, model, batchsize, epochs (training count) and the learning rate.
 
 **NeuralNetwork** example
 
