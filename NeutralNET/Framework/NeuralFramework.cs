@@ -7,7 +7,7 @@ public class NeuralFramework
 {
     public readonly int Count;
 
-    private const int TrainingCount = 1000 * 200;
+    private const int TrainingCount = 500 * 200;
     private const float Rate = 1e-1f;
 
     private ArraySegment<Matrix> _matrixNeurons;

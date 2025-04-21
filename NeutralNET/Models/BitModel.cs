@@ -22,14 +22,16 @@ public class BitModel : IModel
             for (var b = 0; b < BitLimit; b++)
             {
                 var sum = a + b;
-                var aBit = $"{a:b3}".Select(x => x is '1' ? 1f : 0f);
-                var bBit = $"{b:b3}".Select(x => x is '1' ? 1f : 0f);
-                var sumBit = $"{sum:b6}".Select(x => x is '1' ? 1f : 0f);
 
-                trainingInput.AddRange(aBit);
-                trainingInput.AddRange(bBit);
+                var aBits = $"{a:b3}".Select(x => x == '1' ? 1f : 0f).ToArray();
+                var bBits = $"{b:b3}".Select(x => x == '1' ? 1f : 0f).ToArray();
+                var sumBits = $"{sum:b6}".Select(x => x == '1' ? 1f : 0f).ToArray();
 
-                trainingOutput.AddRange(sumBit);
+                trainingInput.AddRange(aBits);
+                trainingInput.AddRange(bBits);
+                trainingOutput.AddRange(sumBits);
+
+                Console.WriteLine($"Training input: {string.Join("", aBits)} + {string.Join("", bBits)} = {string.Join("", sumBits)}");
             }
         }
 

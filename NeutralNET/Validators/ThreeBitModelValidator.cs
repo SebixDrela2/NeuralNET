@@ -25,6 +25,7 @@ public class ThreeBitModelValidator : Validator
                 var sum = a + b;
                 var aBits = $"{a:b3}".Select(x => x is '1' ? 1f : 0f);
                 var bBits = $"{b:b3}".Select(x => x is '1' ? 1f : 0f);
+                var sumBits = $"{sum:b6}".Select(x => x == '1' ? 1f : 0f).ToArray();
 
                 trainingInput.Clear();
                 trainingInput.AddRange(aBits);
@@ -36,16 +37,21 @@ public class ThreeBitModelValidator : Validator
                 var aBitsText = string.Join("", aBits);
                 var bBitsText = string.Join("", bBits);
 
-                var expectedBits = string.Join("", $"{b:b6}".Select(x => x is '1' ? 1f : 0f));
+                var expectedBits = string.Join("", sumBits);
                 var actualBits = string.Join("", outputData.Select(element => element > 0.8f ? '1' : '0'));
-
+                
                 var resultText = "TRUE";
 
                 if (expectedBits != actualBits)
                 {
                     resultText = "FALSE";
                 }
-                Console.WriteLine($"{resultText}: {aBitsText} + {bBitsText} = {expectedBits} and {actualBits}");               
+
+                string resultMessage = resultText == "TRUE"
+                    ? $"Correct: {aBitsText} + {bBitsText} = {expectedBits}, Predicted: {actualBits}"
+                    : $"Incorrect: {aBitsText} + {bBitsText} = {expectedBits}, Predicted: {actualBits}";
+
+                Console.WriteLine(resultMessage);
             }
         }
     }
