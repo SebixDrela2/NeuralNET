@@ -8,13 +8,13 @@ namespace NeutralTest
     {
         static void Main(string[] args)
         {
-            int[] architecture = [6, 10, 10, 6];
+            int[] architecture = [8, 12, 12, 8];
         
             var model = new BitModel();
             var neuralNetwork = new NeuralNetwork(architecture, model);
             var modelRunner = neuralNetwork.Run();
 
-            var validator = new ThreeBitModelValidator(modelRunner);
+            var validator = new BitModelValidator(modelRunner);
             validator.Validate();
         }
     }

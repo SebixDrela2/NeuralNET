@@ -1,19 +1,15 @@
 ﻿
 
 using NeutralNET.Framework;
+using NeutralNET.Stuff;
 
 namespace NeutralNET.Validators;
 
-public class ThreeBitModelValidator : Validator
+public class BitModelValidator(IModelRunner modelRunner) : Validator(modelRunner)
 {
-    private const int BitInput = 3;
+    private const int BitInput = BitModelUtils.BitInput;
     private const int BitLimit = 1 << BitInput;
-
-    public ThreeBitModelValidator(IModelRunner modelRunner) : base(modelRunner)
-    {
-        
-    }
-
+    
     public override void Validate()
     {
         var trainingInput = new List<float>();
@@ -23,9 +19,9 @@ public class ThreeBitModelValidator : Validator
             for (var b = 0; b < BitLimit; b++)
             {
                 var sum = a + b;
-                var aBits = $"{a:b3}".Select(x => x is '1' ? 1f : 0f);
-                var bBits = $"{b:b3}".Select(x => x is '1' ? 1f : 0f);
-                var sumBits = $"{sum:b6}".Select(x => x == '1' ? 1f : 0f).ToArray();
+                var aBits = Convert.ToString(a, 2).PadLeft(BitInput, '0').Select(x => x == '1' ? 1f : 0f);
+                var bBits = Convert.ToString(b, 2).PadLeft(BitInput, '0').Select(x => x == '1' ? 1f : 0f);
+                var sumBits = Convert.ToString(sum, 2).PadLeft(BitInput * 2, '0').Select(x => x == '1' ? 1f : 0f).ToArray();
 
                 trainingInput.Clear();
                 trainingInput.AddRange(aBits);
@@ -47,7 +43,7 @@ public class ThreeBitModelValidator : Validator
                     resultText = "FALSE";
                 }
 
-                string resultMessage = resultText == "TRUE"
+                var resultMessage = resultText == "TRUE"
                     ? $"Correct: {aBitsText} + {bBitsText} = {expectedBits}, Predicted: {actualBits}"
                     : $"Incorrect: {aBitsText} + {bBitsText} = {expectedBits}, Predicted: {actualBits}";
 

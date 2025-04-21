@@ -1,10 +1,11 @@
 ﻿using NeutralNET.Matrices;
+using NeutralNET.Stuff;
 
 namespace NeutralNET.Models;
 
 public class BitModel : IModel
 {
-    private const int BitInput = 3;
+    private const int BitInput = BitModelUtils.BitInput;
     private const int BitOutput = BitInput * 2;
     private const int BitLimit = 1 << BitInput;
     private const int BitRows = 1 << BitOutput;
@@ -23,9 +24,9 @@ public class BitModel : IModel
             {
                 var sum = a + b;
 
-                var aBits = $"{a:b3}".Select(x => x == '1' ? 1f : 0f).ToArray();
-                var bBits = $"{b:b3}".Select(x => x == '1' ? 1f : 0f).ToArray();
-                var sumBits = $"{sum:b6}".Select(x => x == '1' ? 1f : 0f).ToArray();
+                var aBits = Convert.ToString(a, 2).PadLeft(BitInput, '0').Select(x => x == '1' ? 1f : 0f);
+                var bBits = Convert.ToString(b, 2).PadLeft(BitInput, '0').Select(x => x == '1' ? 1f : 0f);
+                var sumBits = Convert.ToString(sum, 2).PadLeft(BitInput * 2, '0').Select(x => x == '1' ? 1f : 0f).ToArray();
 
                 trainingInput.AddRange(aBits);
                 trainingInput.AddRange(bBits);
@@ -37,12 +38,12 @@ public class BitModel : IModel
 
         TrainingInput = new Matrix(BitRows, BitOutput)
         {
-            Data = new ArraySegment<float>(trainingInput.ToArray())
+            Data = trainingInput.ToArray()
         };
 
         TrainingOutput = new Matrix(BitRows, BitOutput)
         {
-            Data = new ArraySegment<float>(trainingOutput.ToArray())
+            Data = trainingOutput.ToArray()
         };
     }
 }

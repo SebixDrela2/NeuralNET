@@ -7,7 +7,7 @@ public class NeuralFramework
 {
     public readonly int Count;
 
-    private const int TrainingCount = 100 * 200;
+    private const int TrainingCount = 200 * 200;
 
     private const float Rate = 1e-2f;
     private const float WeightDecay = 1e-4f;
@@ -236,10 +236,6 @@ public class NeuralFramework
         
         return 2 * error;
     }
-
-    private float CalculateWeightGradient(float neuronGradient, float previousActivation) => neuronGradient * previousActivation;
-    private float CalculatePreviousLayerError(float neuronGradient, float connectionWeight) => neuronGradient * connectionWeight;
-
 
     [Obsolete]
     public void FiniteDifference(
