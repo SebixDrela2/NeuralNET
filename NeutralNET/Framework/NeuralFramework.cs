@@ -157,28 +157,44 @@ public class NeuralFramework
     }
 
     private void PropagateToPreviousLayer(NeuralFramework gradient)
+    {       
+        for (int layerIdx = Count; layerIdx > 0; layerIdx--)
+        {            
+            var currentActivations = MatrixNeurons[layerIdx].Row(0).Data;
+            var currentErrors = gradient.MatrixNeurons[layerIdx].Row(0).Data;
+
+            BackpropagateLayer(layerIdx, gradient, currentActivations, currentErrors);
+        }
+    }
+
+    private void BackpropagateLayer(
+    int layerIndex,
+    NeuralFramework gradient,
+    ArraySegment<float> currentActivations,
+    ArraySegment<float> currentErrors)
     {
-        for (var l = Count; l > 0; l--)
+        for (int neuronIdx = 0; neuronIdx < currentActivations.Count; neuronIdx++)
         {
-            for (var j = 0; j < MatrixNeurons[l].Columns; j++)
+            float neuronGradient = CalculateNeuronGradient(
+                currentActivations[neuronIdx],
+                currentErrors[neuronIdx]);
+
+            gradient.MatrixBiases[layerIndex - 1].Add(0, neuronIdx, neuronGradient);
+
+            for (int prevNeuronIdx = 0; prevNeuronIdx < MatrixNeurons[layerIndex - 1].Columns; prevNeuronIdx++)
             {
-                float a = MatrixNeurons[l].At(0, j);
-                float differenceA = gradient.MatrixNeurons[l].At(0, j);
+                float prevActivation = MatrixNeurons[layerIndex - 1].At(0, prevNeuronIdx);
+                float weight = MatrixWeights[layerIndex - 1].At(prevNeuronIdx, neuronIdx);
 
-                var computed = 2 * differenceA * a * (1 - a);
-                gradient.MatrixBiases[l - 1].Add(0, j, computed);
-
-                for (var k = 0; k < MatrixNeurons[l - 1].Columns; k++)
-                {
-                    float previousLayer = MatrixNeurons[l - 1].At(0, k);
-                    var weight = MatrixWeights[l - 1].At(k, j);
-
-                    var computedLayer = computed * previousLayer;
-                    var computedWeight = computed * weight;
-
-                    gradient.MatrixWeights[l - 1].Add(k, j, computedLayer);
-                    gradient.MatrixNeurons[l - 1].Add(0, k, computedWeight);
-                }
+                gradient.MatrixWeights[layerIndex - 1].Add(
+                    prevNeuronIdx,
+                    neuronIdx,
+                    CalculateWeightGradient(neuronGradient, prevActivation));
+                
+                gradient.MatrixNeurons[layerIndex - 1].Add(
+                    0,
+                    prevNeuronIdx,
+                    CalculatePreviousLayerError(neuronGradient, weight));
             }
         }
     }
@@ -204,6 +220,11 @@ public class NeuralFramework
             }
         }
     }
+
+    private float CalculateNeuronGradient(float activation, float error) => 2 * error * activation * (1 - activation);
+    private float CalculateWeightGradient(float neuronGradient, float previousActivation) => neuronGradient * previousActivation;
+    private float CalculatePreviousLayerError(float neuronGradient, float connectionWeight) => neuronGradient * connectionWeight;
+
 
     [Obsolete]
     public void FiniteDifference(
