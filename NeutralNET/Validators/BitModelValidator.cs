@@ -1,6 +1,4 @@
-﻿
-
-using NeutralNET.Framework;
+﻿using NeutralNET.Framework;
 using NeutralNET.Stuff;
 
 namespace NeutralNET.Validators;
