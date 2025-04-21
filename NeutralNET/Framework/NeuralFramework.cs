@@ -230,12 +230,11 @@ public class NeuralFramework
     private float CalculateNeuronGradient(float activation, float error, bool useRelu)
     {
         if (useRelu)
-        {
-            // ReLU derivative
+        {            
             return 2 * error * (activation > 0 ? 1 : 0);
         }
-        // Linear derivative (output layer)
-        return 2 * error; // Changed from sigmoid derivative to 1
+        
+        return 2 * error;
     }
 
     private float CalculateWeightGradient(float neuronGradient, float previousActivation) => neuronGradient * previousActivation;
