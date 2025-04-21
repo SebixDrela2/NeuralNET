@@ -31,8 +31,8 @@ public class XorAdvanced : IModel
         1, 1, 0,
     ];
 
-    public Matrix TrainingInput { get; set; }
-    public Matrix TrainingOutput { get; set; }
+    public Matrix TrainingInput { get; set; } = null!;
+    public Matrix TrainingOutput { get; set; } = null!;
 
     public Matrix A0 = new Matrix(1, 2);
     public Matrix W1 = new Matrix(2, 2);
@@ -42,12 +42,12 @@ public class XorAdvanced : IModel
 
     public float Forward()
     {
-        var A1 = A0.Dot(ref W1);
-        A1.Sum(ref B1);
+        var A1 = A0.Dot(W1);
+        A1.Sum(B1);
         A1.ApplySigmoid();
 
-        var A2 = A1.Dot(ref W2);
-        A2.Sum(ref B2);
+        var A2 = A1.Dot(W2);
+        A2.Sum(B2);
         A2.ApplySigmoid();
 
         return A2.FirstElement;

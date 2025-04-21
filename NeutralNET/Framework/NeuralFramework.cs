@@ -5,7 +5,7 @@ namespace NeutralNET.Framework;
 
 public class NeuralFramework
 {
-    private MatrixBatchProcessor _batchProcessor;
+    private MatrixBatchProcessor _batchProcessor = null!;
 
     private ArraySegment<Matrix> _matrixNeurons;
     private ArraySegment<Matrix> _matrixWeights;

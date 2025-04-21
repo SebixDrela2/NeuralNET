@@ -40,7 +40,6 @@ public class SingleNeuronGateModel
 
             var loss = Loss(weightOne, weightTwo, bias);
 
-            double result = 0;
             (double A, double B, double C, double D) tmp = (
                 1 - Math.Abs((MathUtils.Sigmoid(0 * weightOne + 0 * weightTwo + bias) - _trainingData[0].C)),
                 1 - Math.Abs((MathUtils.Sigmoid(0 * weightOne + 1 * weightTwo + bias) - _trainingData[1].C)),
