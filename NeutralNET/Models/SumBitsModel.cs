@@ -3,7 +3,7 @@ using NeutralNET.Stuff;
 
 namespace NeutralNET.Models;
 
-public class BitModel : IModel
+public class SumBitsModel : IModel
 {
     private const int BitInput = BitModelUtils.Bits;
     private const int BitOutput = BitInput * 2;
@@ -13,7 +13,7 @@ public class BitModel : IModel
     public Matrix TrainingInput { get;  set; }
     public Matrix TrainingOutput { get; set ; }
 
-    public BitModel()
+    public SumBitsModel()
     {
         var trainingInput = new List<float>();
         var trainingOutput = new List<float>();

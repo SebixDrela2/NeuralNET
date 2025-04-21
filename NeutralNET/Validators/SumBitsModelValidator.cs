@@ -3,7 +3,7 @@ using NeutralNET.Stuff;
 
 namespace NeutralNET.Validators;
 
-public class BitModelValidator(IModelRunner modelRunner) : Validator(modelRunner)
+public class SumBitsModelValidator(IModelRunner modelRunner) : Validator(modelRunner)
 {
     private const int BitInput = BitModelUtils.Bits;
     private const int BitLimit = 1 << BitInput;
