@@ -16,6 +16,8 @@ public class Matrix
         Data = new float[rows * columns];
     }
 
+    public Matrix this[int row] => Row(row);
+
     public void ApplySigmoid()
     {
         for (var row = 0; row < Rows; row++)

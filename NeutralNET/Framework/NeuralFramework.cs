@@ -65,7 +65,7 @@ public class NeuralFramework
     {
         _matrixNeurons[0].CopyDataFrom(model.TrainingInput.Row(1));
 
-        Randomize();
+        RandomizeWeights();
 
         for (var index = 0; index < TrainingCount; index++)
         {
@@ -343,7 +343,7 @@ public class NeuralFramework
         return _matrixNeurons[Count];
     }
 
-    private void Randomize()
+    private void RandomizeWeights()
     {
         for (var i = 0; i < Count; i++)
         {
