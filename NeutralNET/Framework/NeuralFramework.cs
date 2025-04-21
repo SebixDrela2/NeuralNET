@@ -107,7 +107,7 @@ public class NeuralFramework
 
             if (epoch % 100 is 0)
             {
-                Console.WriteLine($"Epoch{epoch + 1}/{Epochs}:{loss}");
+                Console.WriteLine($"Epoch ({epoch + 1}/{Epochs}) Loss: {loss}");
             }
         }
     }
