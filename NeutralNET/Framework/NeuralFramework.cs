@@ -5,49 +5,42 @@ namespace NeutralNET.Framework;
 
 public class NeuralFramework
 {
-    public readonly int Count;
-
-    private const int Epochs = 2000;
-    private const int BatchSize = 100;
-
-    private const float Rate = 1e-2f;
-    private const float WeightDecay = 1e-4f;
-
     private MatrixBatchProcessor _batchProcessor;
 
     private ArraySegment<Matrix> _matrixNeurons;
     private ArraySegment<Matrix> _matrixWeights;
     private ArraySegment<Matrix> _matrixBiases;
-    
-    private readonly int[] _architecture;
 
-    public NeuralFramework(int[] architecture)
+    private readonly NeuralNetworkConfig _config;
+
+    public readonly int Count;
+
+    public NeuralFramework(NeuralNetworkConfig config)
     {
-        if (architecture.Length <= 0)
+        if (config.Architecture.Length <= 0)
         {
             throw new ArgumentException("Negative or empty architecture.");
         }
 
-        _architecture = architecture;     
-        
-        Count = architecture.Length - 1;
+        _config = config;    
+        Count = config.Architecture.Length - 1;
 
         Initialize();
     }
 
     private void Initialize()
     {
-        _matrixNeurons = new ArraySegment<Matrix>(new Matrix[_architecture.Length]);
+        _matrixNeurons = new ArraySegment<Matrix>(new Matrix[_config.Architecture.Length]);
         _matrixWeights = new ArraySegment<Matrix>(new Matrix[Count]);
         _matrixBiases = new ArraySegment<Matrix>(new Matrix[Count]);
 
-        _matrixNeurons[0] = new Matrix(1, _architecture[0]);
+        _matrixNeurons[0] = new Matrix(1, _config.Architecture[0]);
 
-        for (var i = 1; i < _architecture.Length; i++)
+        for (var i = 1; i < _config.Architecture.Length; i++)
         {
-            _matrixWeights[i - 1] = new Matrix(_matrixNeurons[i - 1].Columns, _architecture[i]);
-            _matrixBiases[i - 1] = new Matrix(1, _architecture[i]);
-            _matrixNeurons[i] = new Matrix(1, _architecture[i]);
+            _matrixWeights[i - 1] = new Matrix(_matrixNeurons[i - 1].Columns, _config.Architecture[i]);
+            _matrixBiases[i - 1] = new Matrix(1, _config.Architecture[i]);
+            _matrixNeurons[i] = new Matrix(1, _config.Architecture[i]);
         }
 
         _batchProcessor = new MatrixBatchProcessor();
@@ -89,7 +82,7 @@ public class NeuralFramework
     {
         int[] indices = Enumerable.Range(0, trainingInput.Rows).ToArray();
 
-        for (var epoch = 0; epoch < Epochs; epoch++)
+        for (var epoch = 0; epoch < _config.Epochs; epoch++)
         {
             float loss = 0;
 
@@ -98,16 +91,16 @@ public class NeuralFramework
             var shuffledInput = trainingInput.Reorder(indices);
             var shuffledOutput = trainingOutput.Reorder(indices);
 
-            foreach (var (inputBatch, outputBatch) in _batchProcessor.GetBatches(shuffledInput, shuffledOutput, BatchSize))
+            foreach (var (inputBatch, outputBatch) in _batchProcessor.GetBatches(shuffledInput, shuffledOutput, _config.BatchSize))
             {
                 ProcessBatch(gradientFramework, inputBatch, outputBatch, ref loss);
             }
 
-            loss /= BatchSize;
+            loss /= _config.BatchSize;
 
             if (epoch % 100 is 0)
             {
-                Console.WriteLine($"Epoch ({epoch + 1}/{Epochs}) Loss: {loss}");
+                Console.WriteLine($"Epoch ({epoch + 1}/{_config.Epochs}) Loss: {loss}");
             }
         }
     }
@@ -142,8 +135,8 @@ public class NeuralFramework
             gradient._matrixWeights[i].Clip(-1f, 1f);
             gradient._matrixBiases[i].Clip(-1f, 1f);
 
-            LearnInternal(_matrixWeights, gradient._matrixWeights, Rate, i);
-            LearnInternal(_matrixBiases, gradient._matrixBiases, Rate, i);
+            LearnInternal(_matrixWeights, gradient._matrixWeights, _config.LearningRate, i);
+            LearnInternal(_matrixBiases, gradient._matrixBiases, _config.LearningRate, i);
         }
     }
 
@@ -159,7 +152,7 @@ public class NeuralFramework
             {
                 var computedRate = rate * gradientMatrixes[index].At(j, k);
 
-                computedRate += rate * WeightDecay * matrixes[index].At(j, k);
+                computedRate += rate * _config.WeightDecay * matrixes[index].At(j, k);
                 matrixes[index].Sub(j, k, computedRate);
             }
         }

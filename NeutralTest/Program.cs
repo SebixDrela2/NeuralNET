@@ -8,12 +8,16 @@ internal class Program
 {
     static void Main(string[] args)
     {
-        int[] architecture = [12, 20, 20, 12];
-    
-        var model = new BitModel();
-        var neuralNetwork = new NeuralNetwork(architecture, model);
-        var modelRunner = neuralNetwork.Run();
+        var network = new NeuralNetworkBuilder()
+            .WithArchitecture(8, 12, 12, 8)
+            .WithEpochs(5000)
+            .WithBatchSize(64)
+            .WithLearningRate(0.01f)
+            .WithWeightDecay(1e-5f)
+            .WithModel(new BitModel())
+            .Build();
 
+        var modelRunner = network.Run();
         var validator = new BitModelValidator(modelRunner);
         validator.Validate();
     }

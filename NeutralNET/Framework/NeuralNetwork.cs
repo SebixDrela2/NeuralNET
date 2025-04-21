@@ -1,25 +1,19 @@
-﻿
-
-using NeutralNET.Models;
-
-namespace NeutralNET.Framework;
+﻿namespace NeutralNET.Framework;
 
 public class NeuralNetwork
 {
-    private int[] _architecture;
-    private IModel _model;
+    private NeuralNetworkConfig _config;
 
-    public NeuralNetwork(int[] architecture, IModel model)
+    public NeuralNetwork(NeuralNetworkConfig config)
     {
-        _architecture = architecture;
-        _model = model;
+        _config = config;
     }
 
     public IModelRunner Run()
     {
-        var neuralFramework = new NeuralFramework(_architecture);
-        var gradientFramework = new NeuralFramework(_architecture);
+        var neuralFramework = new NeuralFramework(_config);
+        var gradientFramework = new NeuralFramework(_config);
 
-        return neuralFramework.Run(gradientFramework, _model);
+        return neuralFramework.Run(gradientFramework, _config.Model);
     }
 }

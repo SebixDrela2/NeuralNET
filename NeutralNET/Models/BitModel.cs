@@ -5,7 +5,7 @@ namespace NeutralNET.Models;
 
 public class BitModel : IModel
 {
-    private const int BitInput = BitModelUtils.BitInput;
+    private const int BitInput = BitModelUtils.Bits;
     private const int BitOutput = BitInput * 2;
     private const int BitLimit = 1 << BitInput;
     private const int BitRows = 1 << BitOutput;

@@ -1,299 +1,190 @@
 ﻿using NeutralNET.Stuff;
+using System.Runtime.CompilerServices;
 
-namespace NeutralNET.Matrices;
-
-public class Matrix
+namespace NeutralNET.Matrices
 {
-    public int Rows;
-    public int Columns;
-    public ArraySegment<float> Data;
-    public float FirstElement => Data[0];
-
-    public Matrix(int rows, int columns)
+    public class Matrix
     {
-        Rows = rows;
-        Columns = columns;     
-        Data = new float[rows * columns];
-    }
+        public int Rows { get; }
+        public int Columns { get; }
+        public float[] Data { get; set; }
+        public float FirstElement => Data[0];
 
-    public Matrix this[int row] => Row(row);
-
-    public void ApplySigmoid()
-    {
-        for (var row = 0; row < Rows; row++)
+        public Matrix(int rows, int columns)
         {
-            for (var column = 0; column < Columns; column++)
-            {
-                Set(row, column, MathUtils.Sigmoid(At(row, column)));
-            }
-        }
-    }
-
-    public void ApplyReLU()
-    {
-        for (var row = 0; row < Rows; row++)
-        {
-            for (var column = 0; column < Columns; column++)
-            {
-                Set(row, column, MathUtils.ReLU(At(row, column)));
-            }
-        }
-    }
-
-    public Matrix Dot(in Matrix other)
-    {
-        if (Columns != other.Rows)
-        {
-            throw new ArgumentException($"Rows of current: {Rows} do not match other Columns {other.Columns}");
+            Rows = rows;
+            Columns = columns;
+            Data = new float[rows * columns];
         }
 
-        var innerColumnSize = Columns;
-        var result = new Matrix(Rows, other.Columns);
+        public Matrix this[int row] => Row(row);
 
-        for (var row = 0; row < result.Rows; row++)
+        public void ApplySigmoid()
         {
-            for (var column = 0; column < result.Columns; column++)
-            {
-                result.Set(row, column, 0);
+            for (int i = 0; i < Data.Length; i++)
+                Data[i] = 1f / (1f + MathF.Exp(-Data[i]));
+        }
 
-                for (var k = 0 ; k < innerColumnSize; k++)
+        public void ApplyReLU()
+        {
+            for (int i = 0; i < Data.Length; i++)
+                Data[i] = Math.Max(0.01f * Data[i], Data[i]); // Leaky ReLU
+        }
+
+        public Matrix Dot(in Matrix other)
+        {
+            if (Columns != other.Rows)
+                throw new ArgumentException("Dimension mismatch");
+
+            var result = new Matrix(Rows, other.Columns);
+
+            for (int row = 0; row < Rows; row++)
+            {
+                for (int col = 0; col < other.Columns; col++)
                 {
-                    var innerAt = At(row, k);
-                    var outerAt = other.At(k, column);
+                    float sum = 0f;
+                    for (int k = 0; k < Columns; k++)
+                        sum += At(row, k) * other.At(k, col);
+                    result.Set(row, col, sum);
+                }
+            }
+            return result;
+        }
 
-                    var multipliedResult = innerAt * outerAt;
-                    result.Add(row, column, multipliedResult);
-                }              
+        public void CopyDataFrom(Matrix other)
+        {
+            if (Rows != other.Rows || Columns != other.Columns)
+            {
+                throw new ArgumentException("Dimension mismatch");
+            }
+
+            Buffer.BlockCopy(other.Data, 0, Data, 0, Data.Length * sizeof(float));
+        }
+
+        public Matrix SplitStart(int column)
+        {
+            var result = new Matrix(Rows, column);
+            for (int i = 0; i < Rows; i++)
+                for (int j = 0; j < column; j++)
+                    result.Set(i, j, At(i, j));
+            return result;
+        }
+
+        public Matrix SplitEnd(int column)
+        {
+            var result = new Matrix(Rows, 1);
+            for (int i = 0; i < Rows; i++)
+                result.Set(i, 0, At(i, column - 1));
+            return result;
+        }
+
+        public IEnumerable<Matrix> BatchAllRows(int batchSize)
+        {
+            if (batchSize <= 0)
+            {
+                throw new ArgumentException("Batch size must be positive");
+            }
+
+            for (int startRow = 0; startRow < Rows; startRow += batchSize)
+            {
+                yield return BatchView(startRow, batchSize);
             }
         }
 
-        return result;
-    }
-
-    public void CopyDataFrom(Matrix other)
-    {
-        if (Rows != other.Rows)
+        public Matrix BatchView(int startRow, int rowCount)
         {
-            throw new ArgumentException($"Rows of current: {Rows} do not rows match other Rows: {other.Rows}");
+            var actualRows = Math.Min(rowCount, Rows - startRow);
+            var result = new Matrix(actualRows, Columns);
+            Buffer.BlockCopy(Data, startRow * Columns * sizeof(float),
+                           result.Data, 0,
+                           actualRows * Columns * sizeof(float));
+
+            return result;
         }
 
-        if (Columns != other.Columns)
+        public Matrix Row(int row)
         {
-            throw new ArgumentException($"Columns of current: {Columns} do not match other Columns: {other.Columns}");
+            var result = new Matrix(1, Columns);
+            Buffer.BlockCopy(Data, row * Columns * sizeof(float),
+                           result.Data, 0,
+                           Columns * sizeof(float));
+
+            return result;
         }
 
-        for (var row = 0; row < other.Rows; row++)
+        public void Sum(in Matrix other)
         {
-            for (var column = 0; column < other.Columns; column++)
+            if (Rows != other.Rows || Columns != other.Columns)
             {
-                Set(row, column, other.At(row, column));
+                throw new ArgumentException("Dimension mismatch");
             }
-        }
-    }
 
-    public Matrix SplitStart(int column)
-    {
-        var result = new List<float>();
-
-        var rows = Rows;
-        var columns = Columns;
-
-        for (var i = 0; i < Rows; i++)
-        {
-            var row = Row(i);
-
-            result.AddRange(row.Data.Take(column));
-        }
-
-        return new Matrix(rows, column)
-        {
-            Data = new ArraySegment<float>(result.ToArray())
-        };
-    }
-
-    public Matrix SplitEnd(int column)
-    {
-        var result = new List<float>();
-
-        var rows = Rows;
-        var columns = Columns;
-
-        for (var i = 0; i < Rows; i++)
-        {
-            var row = Row(i);
-
-            result.AddRange(row.Data.Skip(column - 1).Take(1));
-        }
-
-        return new Matrix(rows, 1)
-        {
-            Data = new ArraySegment<float>(result.ToArray())
-        };
-    }
-
-    public IEnumerable<Matrix> BatchAllRows(int batchSize)
-    {
-        if (batchSize <= 0)
-        {
-            throw new ArgumentException("Batch size must be positive", nameof(batchSize));
-        }
-
-        for (int startRow = 0; startRow < Rows; startRow += batchSize)
-        {
-            yield return BatchView(startRow, batchSize);
-        }
-    }
-
-    public Matrix BatchView(int startRow, int rowCount)
-    {        
-        var availableRows = Rows - startRow;
-        var actualRowCount = Math.Min(rowCount, availableRows);
-
-        return new Matrix(actualRowCount, Columns)
-        {
-            Data = Data.Slice(startRow * Columns, actualRowCount * Columns)
-        };
-    }
-
-    public Matrix Row(int row)
-    {
-        var result = new Matrix(1, Columns)
-        {           
-            Data = Data.Slice(Columns * row, Columns)
-        };
-
-        return result;
-    }
-
-    public void Sum(in Matrix other)
-    {
-        if (Rows != other.Rows)
-        {
-            throw new ArgumentException($"Rows of current: {Rows} do not rows match other Rows: {other.Rows}");
-        }
-
-        if (Columns != other.Columns)
-        {
-            throw new ArgumentException($"Columns of current: {Rows} do not match other Columns: {other.Rows}");
-        }
-
-        for (var row = 0; row < Rows; row++)
-        {
-            for (var column = 0; column < Columns; column++)
+            for (int i = 0; i < Data.Length; i++)
             {
-                Add(row, column, other.At(row, column));
-            }
-        }
-    }
-
-    public float At(int row, int column) => Data[(row * Columns) + column];
-    
-    public void Randomize(float low = 0, float high = 1)
-    {
-        for (var i = 0; i < Rows; i++)
-        {
-            for (var j = 0; j < Columns; j++)
-            {
-                Set(i, j, RandomUtils.GetFloat(1) * (high - low) + low);
-            }            
-        }
-    }
-
-    // Fisher-Yates algorithm
-    public void ShuffleRows(Random rand = null)
-    {
-        rand = rand ?? new Random();
-
-        var cols = Columns;
-        var offset = Data.Offset;
-
-        for (int i = Rows - 1; i > 0; i--)
-        {
-            int j = rand.Next(i + 1);
-            int rowIOffset = offset + i * cols;
-            int rowJOffset = offset + j * cols;
-
-            for (int k = 0; k < cols; k++)
-            {
-                int indexI = rowIOffset + k;
-                int indexJ = rowJOffset + k;
-
-                (Data[indexJ], Data[indexI]) = (Data[indexI], Data[indexJ]);
-            }
-        }
-    }
-
-    public Matrix Reorder(int[] newIndices)
-    {
-        var result = new Matrix(Rows, Columns);
-
-        for (int newRow = 0; newRow < newIndices.Length; newRow++)
-        {
-            int originalRow = newIndices[newRow];
-            for (int col = 0; col < Columns; col++)
-            {
-                result.Set(newRow, col, At(originalRow, col));
+                Data[i] += other.Data[i];
             }
         }
 
-        return result;
-    }
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public float At(int row, int column) => Data[row * Columns + column];
 
-    public void Fill(float value)
-    {
-        for (var i = 0; i < Rows; i++)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void Set(int row, int column, float value) => Data[row * Columns + column] = value;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void Add(int row, int column, float value) => Data[row * Columns + column] += value;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void Sub(int row, int column, float value) => Data[row * Columns + column] -= value;
+
+        public void Divide(int row, int column, float value) => Data[row * Columns + column] /= value;
+
+        public void Randomize(float low = 0, float high = 1)
         {
-            for (var j = 0; j < Columns; j++)
+            for (int i = 0; i < Data.Length; i++)
             {
-                Set(i, j, value);
+                Data[i] = RandomUtils.GetFloat(1) * (high - low) + low;
             }
         }
-    }
 
-    public void Print(string name)
-    {
-        Console.WriteLine($"{name} = [");
-
-        for (var i = 0; i < Rows; i++)
+        public void Fill(float value)
         {
-            for (var j = 0; j < Columns; j++)
-            {
-                var value = At(i, j);
-                Console.Write($"    {value:f5}");
-            }
-
-            Console.SetCursorPosition(0, Console.CursorTop);
-            Console.WriteLine();
+            Array.Fill(Data, value);
         }
 
-        Console.WriteLine($"]");
-    }
-
-    public void Set(int row, int column, float value)
-    {
-        Data[(row * Columns) + column] = value;
-    }
-
-    public void Add(int row, int column, float value)
-    {
-        Data[(row * Columns) + column] += value;
-    }
-
-    public void Sub(int row, int column, float value)
-    {
-        Data[(row * Columns) + column] -= value;
-    }
-
-    public void Divide(int row, int column, float value)
-    {
-        Data[(row * Columns) + column] /= value;
-    }
-
-    public void Clip(float min, float max)
-    {
-        for (var index = 0; index < Data.Count; index++)
+        public void Print(string name)
         {
-            Data[index] = MathF.Max(min, MathF.Min(max, Data[index]));
+            Console.WriteLine($"{name} = [");
+            for (int i = 0; i < Rows; i++)
+            {
+                for (int j = 0; j < Columns; j++)
+                {
+                    Console.Write($"{At(i, j),8:F4}");
+                }
+
+                Console.WriteLine();
+            }
+            Console.WriteLine("]");
+        }
+
+        public void Clip(float min, float max)
+        {
+            for (int i = 0; i < Data.Length; i++)
+            {
+                Data[i] = Math.Clamp(Data[i], min, max);
+            }
+        }
+        
+        public Matrix Reorder(int[] newIndices)
+        {
+            var result = new Matrix(Rows, Columns);
+            for (int newRow = 0; newRow < newIndices.Length; newRow++)
+            {
+                int originalRow = newIndices[newRow];
+                for (int col = 0; col < Columns; col++)
+                    result.Set(newRow, col, At(originalRow, col));
+            }
+            return result;
         }
     }
 }

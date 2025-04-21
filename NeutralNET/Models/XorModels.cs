@@ -23,13 +23,13 @@ internal class XorModels
 
 public class XorAdvanced : IModel
 {
-    public readonly ArraySegment<float> TrainingData = new(
+    public readonly float[] TrainingData = 
     [
         0, 0, 0,
         1, 0, 1,
         0, 1, 1,
         1, 1, 0,
-    ]);
+    ];
 
     public Matrix TrainingInput { get; set; }
     public Matrix TrainingOutput { get; set; }

@@ -5,7 +5,7 @@ namespace NeutralNET.Validators;
 
 public class BitModelValidator(IModelRunner modelRunner) : Validator(modelRunner)
 {
-    private const int BitInput = BitModelUtils.BitInput;
+    private const int BitInput = BitModelUtils.Bits;
     private const int BitLimit = 1 << BitInput;
     
     public override void Validate()
@@ -25,7 +25,7 @@ public class BitModelValidator(IModelRunner modelRunner) : Validator(modelRunner
                 trainingInput.AddRange(aBits);
                 trainingInput.AddRange(bBits);
 
-                Input.Data = new ArraySegment<float>([.. trainingInput]);
+                Input.Data = [.. trainingInput];
                 var outputData = Forward().Data;
 
                 var aBitsText = string.Join("", aBits);
