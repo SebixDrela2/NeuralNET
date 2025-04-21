@@ -223,6 +223,22 @@ public class Matrix
         }
     }
 
+    public Matrix Reorder(int[] newIndices)
+    {
+        var result = new Matrix(Rows, Columns);
+
+        for (int newRow = 0; newRow < newIndices.Length; newRow++)
+        {
+            int originalRow = newIndices[newRow];
+            for (int col = 0; col < Columns; col++)
+            {
+                result.Set(newRow, col, At(originalRow, col));
+            }
+        }
+
+        return result;
+    }
+
     public void Fill(float value)
     {
         for (var i = 0; i < Rows; i++)

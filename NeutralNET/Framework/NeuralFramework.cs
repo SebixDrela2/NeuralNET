@@ -87,11 +87,18 @@ public class NeuralFramework
 
     private void HandleTraining(NeuralFramework gradientFramework, Matrix trainingInput, Matrix trainingOutput)
     {
+        int[] indices = Enumerable.Range(0, trainingInput.Rows).ToArray();
+
         for (var epoch = 0; epoch < Epochs; epoch++)
         {
             float loss = 0;
 
-            foreach (var (inputBatch, outputBatch) in _batchProcessor.GetBatches(trainingInput, trainingOutput, BatchSize))
+            ShuffleIndices(indices);
+
+            var shuffledInput = trainingInput.Reorder(indices);
+            var shuffledOutput = trainingOutput.Reorder(indices);
+
+            foreach (var (inputBatch, outputBatch) in _batchProcessor.GetBatches(shuffledInput, shuffledOutput, BatchSize))
             {
                 ProcessBatch(gradientFramework, inputBatch, outputBatch, ref loss);
             }
@@ -102,6 +109,17 @@ public class NeuralFramework
             {
                 Console.WriteLine($"Epoch{epoch + 1}/{Epochs}:{loss}");
             }
+        }
+    }
+
+    private void ShuffleIndices(int[] indices)
+    {
+        var rand = new Random();
+
+        for (int i = indices.Length - 1; i > 0; i--)
+        {
+            int j = rand.Next(i + 1);
+            (indices[j], indices[i]) = (indices[i], indices[j]);
         }
     }
 

@@ -8,7 +8,7 @@ internal class Program
 {
     static void Main(string[] args)
     {
-        int[] architecture = [10, 15, 15, 10];
+        int[] architecture = [12, 20, 20, 12];
     
         var model = new BitModel();
         var neuralNetwork = new NeuralNetwork(architecture, model);
