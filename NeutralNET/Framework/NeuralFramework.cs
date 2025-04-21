@@ -88,10 +88,10 @@ public class NeuralFramework
 
             ShuffleIndices(indices);
 
-            var shuffledInput = trainingInput.Reorder(indices);
-            var shuffledOutput = trainingOutput.Reorder(indices);
+            var position = GetMatrixesPositioned(trainingInput, trainingOutput, indices);
 
-            foreach (var (inputBatch, outputBatch) in _batchProcessor.GetBatches(shuffledInput, shuffledOutput, _config.BatchSize))
+            foreach (var (inputBatch, outputBatch) 
+                in _batchProcessor.GetBatches(position.MatrixInput, position.MatrixOutput, _config.BatchSize))
             {
                 ProcessBatch(gradientFramework, inputBatch, outputBatch, ref loss);
             }
@@ -103,6 +103,16 @@ public class NeuralFramework
                 Console.WriteLine($"Epoch ({epoch + 1}/{_config.Epochs}) Loss: {loss}");
             }
         }
+    }
+
+    private (Matrix MatrixInput, Matrix MatrixOutput) GetMatrixesPositioned(Matrix input, Matrix output, int[] indices)
+    {
+        if (_config.WithShuffle)
+        {
+            return (input.Reorder(indices), output.Reorder(indices));
+        }
+
+        return (input, output);
     }
 
     private void ShuffleIndices(int[] indices)

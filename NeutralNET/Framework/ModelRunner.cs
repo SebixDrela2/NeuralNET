@@ -7,6 +7,7 @@ public interface IModelRunner
     Matrix Input { get; init; }
     Func<Matrix> Forward { get; init; }
 }
+
 public class ModelRunner : IModelRunner
 {
     public required Matrix Input { get; init; }

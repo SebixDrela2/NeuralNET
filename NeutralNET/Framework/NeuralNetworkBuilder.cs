@@ -48,6 +48,13 @@ public class NeuralNetworkBuilder
         return this;
     }
 
+    public NeuralNetworkBuilder WithShuffle(bool shuffle)
+    {
+        _config.WithShuffle = shuffle;
+
+        return this;
+    }
+
     public NeuralNetwork Build()
     {
         if (_config.Architecture == null || _config.Architecture.Length == 0)
