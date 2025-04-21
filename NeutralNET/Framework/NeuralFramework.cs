@@ -135,9 +135,9 @@ public class NeuralFramework
             MatrixNeurons[0].CopyDataFrom(trainingInput.Row(index));
             Forward();
             
-            for (var m = 0; m < Count ; m++)
+            for (var j = 0; j < Count ; j++)
             {
-                gradient.MatrixNeurons[m].Fill(0);
+                gradient.MatrixNeurons[j].Fill(0);
             }
 
             ComputeOutputLayer(gradient, trainingOutput, index);
@@ -242,7 +242,7 @@ public class NeuralFramework
         }
     }
 
-    public void ZeroOut()
+    private void ZeroOut()
     {
         for (var i = 0; i < Count; i++)
         {
