@@ -288,7 +288,7 @@ public class NeuralFramework
     }
 
     [Obsolete]
-    public void FiniteDifference(
+    private void FiniteDifference(
         NeuralFramework gradient, 
         float epsillon, 
         Matrix trainingInput, 
