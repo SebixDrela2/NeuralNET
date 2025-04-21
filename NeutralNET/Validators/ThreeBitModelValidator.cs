@@ -1,7 +1,6 @@
 ﻿
 
 using NeutralNET.Framework;
-using NeutralNET.Models;
 
 namespace NeutralNET.Validators;
 
@@ -12,8 +11,9 @@ public class ThreeBitModelValidator : Validator
 
     public ThreeBitModelValidator(IModelRunner modelRunner) : base(modelRunner)
     {
-        Model = new BitModel();
+        
     }
+
     public override void Validate()
     {
         var trainingInput = new List<float>();
