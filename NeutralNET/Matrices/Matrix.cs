@@ -131,6 +131,30 @@ public class Matrix
         };
     }
 
+    public IEnumerable<Matrix> BatchAllRows(int batchSize)
+    {
+        if (batchSize <= 0)
+        {
+            throw new ArgumentException("Batch size must be positive", nameof(batchSize));
+        }
+
+        for (int startRow = 0; startRow < Rows; startRow += batchSize)
+        {
+            yield return BatchView(startRow, batchSize);
+        }
+    }
+
+    public Matrix BatchView(int startRow, int rowCount)
+    {        
+        var availableRows = Rows - startRow;
+        var actualRowCount = Math.Min(rowCount, availableRows);
+
+        return new Matrix(actualRowCount, Columns)
+        {
+            Data = Data.Slice(startRow * Columns, actualRowCount * Columns)
+        };
+    }
+
     public Matrix Row(int row)
     {
         var result = new Matrix(1, Columns)
@@ -160,21 +184,6 @@ public class Matrix
                 Add(row, column, other.At(row, column));
             }
         }
-    }
-
-    public Matrix BatchView(int startRow, int batchSize)
-    {
-        if (startRow + batchSize > Rows)
-        {
-            throw new ArgumentException(
-                    $"Batch would exceed matrix rows. Available: {Rows}, Requested: {startRow + batchSize}"
-                );
-        }
-
-        return new Matrix(batchSize, Columns)
-        {
-            Data = new ArraySegment<float>(Data.Array, Data.Offset + startRow * Columns, batchSize * Columns)
-        };
     }
 
     public float At(int row, int column) => Data[(row * Columns) + column];

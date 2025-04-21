@@ -2,20 +2,19 @@
 using NeutralNET.Models;
 using NeutralNET.Validators;
 
-namespace NeutralTest
-{
-    internal class Program
-    {
-        static void Main(string[] args)
-        {
-            int[] architecture = [8, 12, 12, 8];
-        
-            var model = new BitModel();
-            var neuralNetwork = new NeuralNetwork(architecture, model);
-            var modelRunner = neuralNetwork.Run();
+namespace NeutralTest;
 
-            var validator = new BitModelValidator(modelRunner);
-            validator.Validate();
-        }
+internal class Program
+{
+    static void Main(string[] args)
+    {
+        int[] architecture = [10, 15, 15, 10];
+    
+        var model = new BitModel();
+        var neuralNetwork = new NeuralNetwork(architecture, model);
+        var modelRunner = neuralNetwork.Run();
+
+        var validator = new BitModelValidator(modelRunner);
+        validator.Validate();
     }
 }

@@ -7,10 +7,13 @@ public class NeuralFramework
 {
     public readonly int Count;
 
-    private const int TrainingCount = 200 * 200;
+    private const int Epochs = 2000;
+    private const int BatchSize = 100;
 
     private const float Rate = 1e-2f;
     private const float WeightDecay = 1e-4f;
+
+    private MatrixBatchProcessor _batchProcessor;
 
     private ArraySegment<Matrix> _matrixNeurons;
     private ArraySegment<Matrix> _matrixWeights;
@@ -46,6 +49,8 @@ public class NeuralFramework
             _matrixBiases[i - 1] = new Matrix(1, _architecture[i]);
             _matrixNeurons[i] = new Matrix(1, _architecture[i]);
         }
+
+        _batchProcessor = new MatrixBatchProcessor();
     }
     
     public void Print(string name)
@@ -63,21 +68,13 @@ public class NeuralFramework
     
     public IModelRunner Run(NeuralFramework gradientFramework, IModel model)
     {
-        _matrixNeurons[0].CopyDataFrom(model.TrainingInput.Row(1));
+        var trainingInput = model.TrainingInput;
+        var trainingOutput = model.TrainingOutput;
+
+        _matrixNeurons[0].CopyDataFrom(trainingInput.Row(0));
 
         RandomizeWeights();
-
-        for (var index = 0; index < TrainingCount; index++)
-        {
-            BackPropagate(gradientFramework, model.TrainingInput, model.TrainingOutput);
-            Learn(gradientFramework);
-
-            if (index % 100 is 0)
-            {
-                var loss = Loss(model.TrainingInput, model.TrainingOutput);
-                Console.WriteLine($"Loss {index + 1}:{loss}");
-            }
-        }
+        HandleTraining(gradientFramework, trainingInput, trainingOutput);
 
         Console.WriteLine();
 
@@ -86,6 +83,38 @@ public class NeuralFramework
             Input = _matrixNeurons[0],
             Forward = Forward
         };
+    }
+
+    private void HandleTraining(NeuralFramework gradientFramework, Matrix trainingInput, Matrix trainingOutput)
+    {
+        for (var epoch = 0; epoch < Epochs; epoch++)
+        {
+            float loss = 0;
+
+            foreach (var (inputBatch, outputBatch) in _batchProcessor.GetBatches(trainingInput, trainingOutput, BatchSize))
+            {
+                ProcessBatch(gradientFramework, inputBatch, outputBatch, ref loss);
+            }
+
+            loss /= BatchSize;
+
+            if (epoch % 100 is 0)
+            {
+                Console.WriteLine($"Epoch{epoch + 1}/{Epochs}:{loss}");
+            }
+        }
+    }
+
+    private void ProcessBatch(
+        NeuralFramework gradientFramework, 
+        Matrix inputBatch, 
+        Matrix outputBatch,
+        ref float loss)
+    {
+        BackPropagate(gradientFramework, inputBatch, outputBatch);
+        Learn(gradientFramework);
+
+        loss += Loss(inputBatch, outputBatch);
     }
 
     private void Learn(NeuralFramework gradient)
