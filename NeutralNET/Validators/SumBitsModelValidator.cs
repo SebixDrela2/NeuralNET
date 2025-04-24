@@ -11,6 +11,8 @@ public class SumBitsModelValidator(IModelRunner modelRunner) : Validator(modelRu
     public override void Validate()
     {
         var trainingInput = new List<float>();
+        (int Correct, int Incorrect, int Total) counters = default;
+        counters.Total = BitLimit * BitLimit;
 
         for (var a = 0; a < BitLimit; a++)
         {
@@ -33,20 +35,29 @@ public class SumBitsModelValidator(IModelRunner modelRunner) : Validator(modelRu
 
                 var expectedBits = string.Join("", sumBits);
                 var actualBits = string.Join("", outputData.Select(element => element > 0.8f ? '1' : '0'));
-                
-                var resultText = "TRUE";
 
-                if (expectedBits != actualBits)
-                {
-                    resultText = "FALSE";
-                }
+                bool isCorrect = expectedBits == actualBits;
+                ref var c = ref isCorrect ? ref counters.Correct : ref counters.Incorrect; 
+                ++c;
+                var resultMessage = isCorrect
+                    ? $"\e[92m  Correct: {aBitsText} + {bBitsText} = {expectedBits}, Predicted: {actualBits}\e[0m"
+                    : $"\e[91mIncorrect: {aBitsText} + {bBitsText} = {expectedBits}, Predicted: {actualBits}\e[0m";
 
-                var resultMessage = resultText == "TRUE"
-                    ? $"Correct: {aBitsText} + {bBitsText} = {expectedBits}, Predicted: {actualBits}"
-                    : $"Incorrect: {aBitsText} + {bBitsText} = {expectedBits}, Predicted: {actualBits}";
-
-                Console.WriteLine(resultMessage);
+                // Console.WriteLine(resultMessage);
             }
+        }
+
+        var ratio = (double)counters.Correct / counters.Total;
+        Console.WriteLine($"results: {counters.Correct}/{counters.Total} ({ratio:P2})");
+        
+        foreach (var (lines, trace) in Matrices.Matrix.Traces)
+        {
+            Console.WriteLine();
+            Console.WriteLine(lines);
+        }
+        foreach (var (w, h) in Matrices.Matrix.Sizes.Order())
+        {
+            Console.WriteLine($"Matrix {w}x{h}");
         }
     }
    

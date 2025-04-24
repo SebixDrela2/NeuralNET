@@ -1,20 +1,55 @@
 ﻿using NeutralNET.Stuff;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 
 namespace NeutralNET.Matrices;
 
 public class Matrix
 {
+    private static int AllocCounter = 0;
+    public static Dictionary<string, StackTrace> Traces = [];
+    public static HashSet<(int Width, int Height)> Sizes = [];
+    
     public int Rows { get; }
     public int Columns { get; }
     public float[] Data { get; set; }
+    public Span<float> Span => Data;
     public float FirstElement => Data[0];
+
+    // [Conditional("DEBUG")]
+    private static void LogOrigin(int rows, int columns)
+    {
+        var i = AllocCounter++;
+        
+        // switch (i)
+        // {
+        //     case > 1_000_000 when (i % 1_000_000) is not 0:
+        //     case > 100_000 when (i % 100_000) is not 0:
+        //     case > 10_000 when (i % 10_000) is not 0:
+        //     case > 1_000 when (i % 1_000) is not 0:
+        //     case > 100 when (i % 100) is not 0:
+        //     case > 10 when (i % 10) is not 0:
+        //         break;
+        //     default:
+        //         Console.WriteLine($"NEW ARRAY CREATED {i}");
+        //         break;
+        // }
+
+        var stack = new StackTrace();
+        var frames = string.Join("\n", stack.GetFrames().Reverse()
+            .Select(x => $"{x.GetMethod()?.DeclaringType?.FullName}.{x.GetMethod()?.Name}"));
+        Traces.TryAdd(frames, stack);
+
+        Sizes.Add((columns, rows));
+    }
 
     public Matrix(int rows, int columns)
     {
         Rows = rows;
         Columns = columns;
+        
         Data = new float[rows * columns];
+        // LogOrigin(rows, columns);
     }
 
     public Matrix this[int row] => Row(row);
@@ -22,21 +57,21 @@ public class Matrix
     public void ApplySigmoid()
     {
         for (int i = 0; i < Data.Length; i++)
-            Data[i] = 1f / (1f + MathF.Exp(-Data[i]));
+            Data[i] = 1f / (1f + float.Exp(-Data[i]));
     }
 
     public void ApplyReLU()
     {
         for (int i = 0; i < Data.Length; i++)
-            Data[i] = Math.Max(0.01f * Data[i], Data[i]); // Leaky ReLU
+            Data[i] = float.Max(0.01f * Data[i], Data[i]); // Leaky ReLU
     }
 
-    public Matrix Dot(in Matrix other)
+    public void Dot(Matrix other, Matrix result)
     {
         if (Columns != other.Rows)
             throw new ArgumentException("Dimension mismatch");
 
-        var result = new Matrix(Rows, other.Columns);
+        //var result = new Matrix(Rows, other.Columns);
 
         for (int row = 0; row < Rows; row++)
         {
@@ -48,9 +83,16 @@ public class Matrix
                 result.Set(row, col, sum);
             }
         }
-        return result;
+
+        //return result;
     }
 
+    public Memory<float> GetRowMemory(int row) => Data.AsMemory(row * Columns, Columns);
+    public Span<float> GetRowSpan(int row) => Data.AsSpan(row * Columns, Columns);
+    public void CopyRowFrom(Matrix other, int row)
+    {
+        other.GetRowSpan(row).CopyTo(Span);
+    }
     public void CopyDataFrom(Matrix other)
     {
         if (Rows != other.Rows || Columns != other.Columns)
@@ -78,22 +120,22 @@ public class Matrix
         return result;
     }
 
-    public IEnumerable<Matrix> BatchAllRows(int batchSize)
-    {
-        if (batchSize <= 0)
-        {
-            throw new ArgumentException("Batch size must be positive");
-        }
+    // public IEnumerable<Matrix> BatchAllRows(int batchSize)
+    // {
+    //     if (batchSize <= 0)
+    //     {
+    //         throw new ArgumentException("Batch size must be positive");
+    //     }
 
-        for (int startRow = 0; startRow < Rows; startRow += batchSize)
-        {
-            yield return BatchView(startRow, batchSize);
-        }
-    }
+    //     for (int startRow = 0; startRow < Rows; startRow += batchSize)
+    //     {
+    //         yield return BatchView(startRow, batchSize);
+    //     }
+    // }
 
     public Matrix BatchView(int startRow, int rowCount)
     {
-        var actualRows = Math.Min(rowCount, Rows - startRow);
+        var actualRows = int.Min(rowCount, Rows - startRow);
         var result = new Matrix(actualRows, Columns);
         Buffer.BlockCopy(Data, startRow * Columns * sizeof(float),
                        result.Data, 0,
@@ -112,7 +154,7 @@ public class Matrix
         return result;
     }
 
-    public void Sum(in Matrix other)
+    public void Sum(Matrix other)
     {
         if (Rows != other.Rows || Columns != other.Columns)
         {
