@@ -64,7 +64,7 @@ public class NeuralFramework
         var trainingInput = model.TrainingInput;
         var trainingOutput = model.TrainingOutput;
 
-        _matrixNeurons[0].CopyDataFrom(trainingInput.Row(0));
+        _matrixNeurons[0].CopyRowFrom(trainingInput, 0);
 
         RandomizeWeights();
         HandleTraining(gradientFramework, trainingInput, trainingOutput);
@@ -80,25 +80,31 @@ public class NeuralFramework
 
     private void HandleTraining(NeuralFramework gradientFramework, Matrix trainingInput, Matrix trainingOutput)
     {
-        int[] indices = Enumerable.Range(0, trainingInput.Rows).ToArray();
+        var rng = new Random();
+        int[] indices = [.. Enumerable.Range(0, trainingInput.Rows)];
 
         for (var epoch = 0; epoch < _config.Epochs; epoch++)
         {
             float loss = 0;
 
-            ShuffleIndices(indices);
+            if (_config.WithShuffle) rng.Shuffle(indices);
 
-            var position = GetMatrixesPositioned(trainingInput, trainingOutput, indices);
+            // var position = GetMatrixesPositioned(trainingInput, trainingOutput, indices);
+            var rows = indices.Select(i => (
+                Input: trainingInput.GetRowMemory(i),
+                Output: trainingOutput.GetRowMemory(i)
+            ));
+            var batches = _batchProcessor.GetBatches(
+                rows,
+                trainingInput.Rows,
+                _config.BatchSize
+            );
 
-            foreach (var (inputBatch, outputBatch) 
-                in _batchProcessor.GetBatches(position.MatrixInput, position.MatrixOutput, _config.BatchSize))
-            {
-                ProcessBatch(gradientFramework, inputBatch, outputBatch, ref loss);
-            }
+            foreach (var batch in batches) ProcessBatch(gradientFramework, batch, ref loss);
 
             loss /= _config.BatchSize;
 
-            if (epoch % 100 is 0)
+            if (epoch % _config.BatchSize is 0)
             {
                 Console.WriteLine($"Epoch ({epoch}/{_config.Epochs}) Loss: {loss}");
             }
@@ -115,27 +121,25 @@ public class NeuralFramework
         return (input, output);
     }
 
-    private void ShuffleIndices(int[] indices)
-    {
-        var rand = new Random();
-
-        for (int i = indices.Length - 1; i > 0; i--)
-        {
-            int j = rand.Next(i + 1);
-            (indices[j], indices[i]) = (indices[i], indices[j]);
-        }
-    }
+    // private void ShuffleIndices(Random rngSource, int[] indices)
+    // {
+    //     //rngSource.Shuffle()
+    //     for (int i = indices.Length - 1; i > 0; i--)
+    //     {
+    //         int j = rngSource.Next(i + 1);
+    //         (indices[j], indices[i]) = (indices[i], indices[j]);
+    //     }
+    // }
 
     private void ProcessBatch(
         NeuralFramework gradientFramework, 
-        Matrix inputBatch, 
-        Matrix outputBatch,
+        IEnumerable<(Memory<float> Input, Memory<float> Output)> batch,
         ref float loss)
     {
-        BackPropagate(gradientFramework, inputBatch, outputBatch);
+        BackPropagate(gradientFramework, batch);
         Learn(gradientFramework);
 
-        loss += Loss(inputBatch, outputBatch);
+        loss += Loss(batch);
     }
 
     private void Learn(NeuralFramework gradient)
@@ -170,44 +174,49 @@ public class NeuralFramework
 
     private void BackPropagate(
         NeuralFramework gradient,
-        Matrix trainingInput,
-        Matrix trainingOutput)
+        IEnumerable<(Memory<float> Input, Memory<float> Output)> batch)
     {
-        if (trainingInput.Rows != trainingOutput.Rows)
-        {
-            throw new NotImplementedException($"Training input rows: {trainingInput.Rows} is not training output rows: {trainingOutput.Rows}");
-        }
+        // if (trainingInput.Rows != trainingOutput.Rows)
+        // {
+        //     throw new NotImplementedException($"Training input rows: {trainingInput.Rows} is not training output rows: {trainingOutput.Rows}");
+        // }
 
-        if (_matrixNeurons[Count].Columns != trainingOutput.Columns)
-        {
-            throw new NotImplementedException($"Output columns: {_matrixNeurons[Count].Columns} is not training output columns: {trainingOutput.Columns}");
-        }
+        // if (_matrixNeurons[Count].Columns != trainingOutput.Columns)
+        // {
+        //     throw new NotImplementedException($"Output columns: {_matrixNeurons[Count].Columns} is not training output columns: {trainingOutput.Columns}");
+        // }
 
         gradient.ZeroOut();
 
-        for (var index = 0; index < trainingInput.Rows; index++)
+        int n = 0;
+        foreach (var pair in batch)
         {
-            _matrixNeurons[0].CopyDataFrom(trainingInput.Row(index));
+            var inputRow = pair.Input.Span;
+            var outputRow = pair.Output.Span;
+
+            inputRow.CopyTo(_matrixNeurons[0].Span);
             Forward();
-            
+
             for (var j = 0; j < Count ; j++)
             {
                 gradient._matrixNeurons[j].Fill(0);
             }
 
-            ComputeOutputLayer(gradient, trainingOutput, index);
+            ComputeOutputLayer(gradient, outputRow);
             PropagateToPreviousLayer(gradient);
+            ++n;
         }
 
-        NormalizeGradients(gradient, trainingInput);
+        NormalizeGradients(gradient, n);
     }
 
-    private void ComputeOutputLayer(NeuralFramework gradient, in Matrix trainingOutput, int index)
+    private void ComputeOutputLayer(NeuralFramework gradient, Span<float> outputRow)
     {
-        for (var j = 0; j < trainingOutput.Columns; j++)
+        var n = outputRow.Length;
+        for(int i = 0; i < n; ++i)
         {
-            var difference = _matrixNeurons[Count].At(0, j) - trainingOutput.At(index, j);
-            gradient._matrixNeurons[Count].Set(0, j, difference);
+            var difference = _matrixNeurons[Count].Span[i] - outputRow[i];
+            gradient._matrixNeurons[Count].Span[i] = difference;
         }
     }
 
@@ -215,22 +224,22 @@ public class NeuralFramework
     {       
         for (int layerIdx = Count; layerIdx > 0; layerIdx--)
         {            
-            var currentActivations = _matrixNeurons[layerIdx].Row(0).Data;
-            var currentErrors = gradient._matrixNeurons[layerIdx].Row(0).Data;
+            var currentActivations = _matrixNeurons[layerIdx].GetRowSpan(0);
+            var currentErrors = gradient._matrixNeurons[layerIdx].GetRowSpan(0);
 
             BackPropagateLayer(layerIdx, gradient, currentActivations, currentErrors);
         }
     }
 
     private void BackPropagateLayer(
-    int layerIndex,
-    NeuralFramework gradient,
-    ArraySegment<float> currentActivations,
-    ArraySegment<float> currentErrors)
+        int layerIndex,
+        NeuralFramework gradient,
+        ReadOnlySpan<float> currentActivations,
+        ReadOnlySpan<float> currentErrors)
     {
         bool isOutputLayer = layerIndex == Count;
 
-        for (int neuronIdx = 0; neuronIdx < currentActivations.Count; neuronIdx++)
+        for (int neuronIdx = 0; neuronIdx < currentActivations.Length; neuronIdx++)
         {
             float activation = currentActivations[neuronIdx];
             float error = currentErrors[neuronIdx];
@@ -255,7 +264,9 @@ public class NeuralFramework
         }
     }
 
-    private void NormalizeGradients(NeuralFramework gradient, in Matrix trainingInput)
+    private void NormalizeGradients(
+        NeuralFramework gradient,
+        int rowN)
     {
         for (var i = 0; i < gradient.Count; i++)
         {
@@ -263,7 +274,7 @@ public class NeuralFramework
             {
                 for (var k = 0; k < gradient._matrixWeights[i].Columns; k++)
                 {
-                    gradient._matrixWeights[i].Divide(j, k, trainingInput.Rows);
+                    gradient._matrixWeights[i].Divide(j, k, rowN);
                 }
             }
 
@@ -271,7 +282,7 @@ public class NeuralFramework
             {
                 for (var k = 0; k < gradient._matrixBiases[i].Columns; k++)
                 {
-                    gradient._matrixBiases[i].Divide(j, k, trainingInput.Rows);
+                    gradient._matrixBiases[i].Divide(j, k, rowN);
                 }
             }
         }
@@ -294,13 +305,14 @@ public class NeuralFramework
         Matrix trainingInput, 
         Matrix trainingOutput)
     {
-        var loss = Loss(trainingInput, trainingOutput);
+        throw new NotSupportedException();
+        // var loss = Loss(trainingInput, trainingOutput);
 
-        for (var i = 0; i < Count; i++)
-        {
-            ComputeGradient(_matrixWeights, gradient._matrixWeights, trainingInput, trainingOutput, epsillon, loss, i);
-            ComputeGradient(_matrixBiases, gradient._matrixBiases, trainingInput, trainingOutput, epsillon, loss, i);           
-        }
+        // for (var i = 0; i < Count; i++)
+        // {
+        //     ComputeGradient(_matrixWeights, gradient._matrixWeights, trainingInput, trainingOutput, epsillon, loss, i);
+        //     ComputeGradient(_matrixBiases, gradient._matrixBiases, trainingInput, trainingOutput, epsillon, loss, i);           
+        // }
     }
 
     private void ZeroOut()
@@ -323,62 +335,65 @@ public class NeuralFramework
         float loss,
         int index)
     {
-        for (var j = 0; j < matrixes[index].Rows; j++)
-        {
-            for (var k = 0; k < matrixes[index].Columns; k++)
-            {
-                var temp = matrixes[index].At(j, k);
+        throw new NotSupportedException();
+        // for (var j = 0; j < matrixes[index].Rows; j++)
+        // {
+        //     for (var k = 0; k < matrixes[index].Columns; k++)
+        //     {
+        //         var temp = matrixes[index].At(j, k);
 
-                matrixes[index].Add(j, k, epsillon);
+        //         matrixes[index].Add(j, k, epsillon);
 
-                var computedLoss = (Loss(trainingInput, trainingOutput) - loss) / epsillon;
-                gradientMatrixes[index].Set(j, k, computedLoss);
+        //         var computedLoss = (Loss(trainingInput, trainingOutput) - loss) / epsillon;
+        //         gradientMatrixes[index].Set(j, k, computedLoss);
 
-                matrixes[index].Set(j, k, temp);
-            }
-        }
+        //         matrixes[index].Set(j, k, temp);
+        //     }
+        // }
     }
 
-    private float Loss(Matrix trainingInput, Matrix trainingOutput)
+    private float Loss(IEnumerable<(Memory<float> Input, Memory<float> Output)> batch)
     {
-        if (trainingInput.Rows != trainingOutput.Rows)
-        {
-            throw new NotImplementedException($"Training input rows: {trainingInput.Rows} is not training output rows: {trainingOutput.Rows}");
-        }
+        // if (trainingInput.Rows != trainingOutput.Rows)
+        // {
+        //     throw new NotImplementedException($"Training input rows: {trainingInput.Rows} is not training output rows: {trainingOutput.Rows}");
+        // }
 
-        if (trainingOutput.Columns != _matrixNeurons[Count].Columns)
-        {
-            throw new NotImplementedException($"Training output columns: {trainingInput.Rows} is not matrix output Columns: {_matrixNeurons[Count].Columns}");
-        }
+        // if (trainingOutput.Columns != _matrixNeurons[Count].Columns)
+        // {
+        //     throw new NotImplementedException($"Training output columns: {trainingInput.Rows} is not matrix output Columns: {_matrixNeurons[Count].Columns}");
+        // }
 
         var loss = 0f;
-        var outputColumns = trainingOutput.Columns;
-
-        for (var i = 0; i < trainingInput.Rows; i++)
+        //var outputColumns = trainingOutput.Columns;
+        int n = 0;
+        foreach (var pair in batch)
         {
-            var inputRow = trainingInput.Row(i);
-            var outputRow = trainingOutput.Row(i);
-
-            _matrixNeurons[0].CopyDataFrom(inputRow);
+            var inputRow = pair.Input.Span;
+            var outputRow = pair.Output.Span;
+            var outputColumns = outputRow.Length;
             
+            inputRow.CopyTo(_matrixNeurons[0].Span);
             Forward();
 
-            for (var j = 0; j < outputColumns; j++)
+            for (int j = 0; j < outputColumns; ++j)
             {
-                float distance = _matrixNeurons[Count].At(0, j) - outputRow.At(0, j);
-
+                float distance = _matrixNeurons[Count].Span[j] - outputRow[j];
                 loss += distance * distance;
             }
+
+            ++n;
         }
 
-        return loss / trainingInput.Rows;
+        return loss / n;
     }
 
     private Matrix Forward()
     {
         for (var i = 0; i < Count; i++)
         {
-            _matrixNeurons[i + 1] = _matrixNeurons[i].Dot(_matrixWeights[i]);
+            //_matrixNeurons[i + 1] = _matrixNeurons[i].Dot(_matrixWeights[i]);
+            _matrixNeurons[i].Dot(_matrixWeights[i], _matrixNeurons[i + 1]);
             _matrixNeurons[i + 1].Sum(_matrixBiases[i]);
 
             if (i < Count - 1)
