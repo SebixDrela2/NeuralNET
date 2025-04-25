@@ -1,4 +1,5 @@
 ﻿using NeutralNET.Stuff;
+using NeutralNET.Utils;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 
@@ -20,20 +21,20 @@ public class Matrix
     private static void LogOrigin(int rows, int columns)
     {
         var i = AllocCounter++;
-        
-        // switch (i)
-        // {
-        //     case > 1_000_000 when (i % 1_000_000) is not 0:
-        //     case > 100_000 when (i % 100_000) is not 0:
-        //     case > 10_000 when (i % 10_000) is not 0:
-        //     case > 1_000 when (i % 1_000) is not 0:
-        //     case > 100 when (i % 100) is not 0:
-        //     case > 10 when (i % 10) is not 0:
-        //         break;
-        //     default:
-        //         Console.WriteLine($"NEW ARRAY CREATED {i}");
-        //         break;
-        // }
+
+        switch (i)
+        {
+            case > 1_000_000 when (i % 1_000_000) is not 0:
+            case > 100_000 when (i % 100_000) is not 0:
+            case > 10_000 when (i % 10_000) is not 0:
+            case > 1_000 when (i % 1_000) is not 0:
+            case > 100 when (i % 100) is not 0:
+            case > 10 when (i % 10) is not 0:
+                break;
+            default:
+                Console.WriteLine($"NEW ARRAY CREATED {i}");
+                break;
+        }
 
         var stack = new StackTrace();
         var frames = string.Join("\n", stack.GetFrames().Reverse()
@@ -49,7 +50,7 @@ public class Matrix
         Columns = columns;
         
         Data = new float[rows * columns];
-        // LogOrigin(rows, columns);
+        //LogOrigin(rows, columns);
     }
 
     public Matrix this[int row] => Row(row);
@@ -57,21 +58,25 @@ public class Matrix
     public void ApplySigmoid()
     {
         for (int i = 0; i < Data.Length; i++)
+        {
             Data[i] = 1f / (1f + float.Exp(-Data[i]));
+        }
     }
 
     public void ApplyReLU()
     {
         for (int i = 0; i < Data.Length; i++)
-            Data[i] = float.Max(0.01f * Data[i], Data[i]); // Leaky ReLU
+        {
+            Data[i] = float.Max(0.01f * Data[i], Data[i]);
+        }
     }
 
     public void Dot(Matrix other, Matrix result)
     {
         if (Columns != other.Rows)
+        {
             throw new ArgumentException("Dimension mismatch");
-
-        //var result = new Matrix(Rows, other.Columns);
+        }
 
         for (int row = 0; row < Rows; row++)
         {
@@ -82,9 +87,7 @@ public class Matrix
                     sum += At(row, k) * other.At(k, col);
                 result.Set(row, col, sum);
             }
-        }
-
-        //return result;
+        }       
     }
 
     public Memory<float> GetRowMemory(int row) => Data.AsMemory(row * Columns, Columns);
@@ -106,33 +109,30 @@ public class Matrix
     public Matrix SplitStart(int column)
     {
         var result = new Matrix(Rows, column);
+
         for (int i = 0; i < Rows; i++)
+        {
             for (int j = 0; j < column; j++)
+            {
                 result.Set(i, j, At(i, j));
+            }
+        }
+
         return result;
     }
 
     public Matrix SplitEnd(int column)
     {
         var result = new Matrix(Rows, 1);
+
         for (int i = 0; i < Rows; i++)
+        {
             result.Set(i, 0, At(i, column - 1));
+        }
+
         return result;
     }
-
-    // public IEnumerable<Matrix> BatchAllRows(int batchSize)
-    // {
-    //     if (batchSize <= 0)
-    //     {
-    //         throw new ArgumentException("Batch size must be positive");
-    //     }
-
-    //     for (int startRow = 0; startRow < Rows; startRow += batchSize)
-    //     {
-    //         yield return BatchView(startRow, batchSize);
-    //     }
-    // }
-
+    
     public Matrix BatchView(int startRow, int rowCount)
     {
         var actualRows = int.Min(rowCount, Rows - startRow);
@@ -197,6 +197,7 @@ public class Matrix
     public void Print(string name)
     {
         Console.WriteLine($"{name} = [");
+
         for (int i = 0; i < Rows; i++)
         {
             for (int j = 0; j < Columns; j++)
@@ -206,6 +207,7 @@ public class Matrix
 
             Console.WriteLine();
         }
+
         Console.WriteLine("]");
     }
 
@@ -220,12 +222,17 @@ public class Matrix
     public Matrix Reorder(int[] newIndices)
     {
         var result = new Matrix(Rows, Columns);
+
         for (int newRow = 0; newRow < newIndices.Length; newRow++)
         {
-            int originalRow = newIndices[newRow];
+            var originalRow = newIndices[newRow];
+
             for (int col = 0; col < Columns; col++)
+            {
                 result.Set(newRow, col, At(originalRow, col));
+            }
         }
+
         return result;
     }
 }
