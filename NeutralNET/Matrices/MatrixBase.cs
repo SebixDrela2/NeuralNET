@@ -73,36 +73,25 @@ public abstract class MatrixBase
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ApplyReLUVectorized()
     {
-        if (Avx.IsSupported && Data.Length >= Vector256<float>.Count)
+        Span<float> dataSpan = Data.AsSpan();
+        int i = 0;
+
+        Vector256<float> zero = Vector256<float>.Zero;
+        Vector256<float> alpha = Vector256.Create(0.01f);
+
+        for (; i <= dataSpan.Length - Vector256<float>.Count; i += Vector256<float>.Count)
         {
-            Span<float> dataSpan = Data.AsSpan();
-            int i = 0;
+            Vector256<float> vec = Vector256.LoadUnsafe(ref dataSpan[i]);
+            Vector256<float> mask = Avx.CompareGreaterThan(vec, zero);
+            Vector256<float> scaled = Avx.Multiply(vec, alpha);
+            Vector256<float> result = Avx.BlendVariable(scaled, vec, mask);
 
-            Vector256<float> zero = Vector256<float>.Zero;
-            Vector256<float> alpha = Vector256.Create(0.01f);
-
-            for (; i <= dataSpan.Length - Vector256<float>.Count; i += Vector256<float>.Count)
-            {
-                Vector256<float> vec = Vector256.LoadUnsafe(ref dataSpan[i]);
-                Vector256<float> mask = Avx.CompareGreaterThan(vec, zero);
-                Vector256<float> scaled = Avx.Multiply(vec, alpha);
-                Vector256<float> result = Avx.BlendVariable(scaled, vec, mask);
-
-                result.StoreUnsafe(ref dataSpan[i]);
-            }
-
-            for (; i < dataSpan.Length; i++)
-            {
-                dataSpan[i] = (dataSpan[i] > 0) ? dataSpan[i] : (0.01f * dataSpan[i]);
-            }
+            result.StoreUnsafe(ref dataSpan[i]);
         }
-        else
+
+        for (; i < dataSpan.Length; i++)
         {
-            Span<float> dataSpan = Data.AsSpan();
-            for (int i = 0; i < dataSpan.Length; i++)
-            {
-                dataSpan[i] = MathF.Max(0.01f * dataSpan[i], dataSpan[i]);
-            }
+            dataSpan[i] = (dataSpan[i] > 0) ? dataSpan[i] : (0.01f * dataSpan[i]);
         }
     }
 

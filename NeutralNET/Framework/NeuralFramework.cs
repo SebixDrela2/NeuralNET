@@ -399,32 +399,44 @@ public class NeuralFramework
 
     private float Loss(IEnumerable<(Memory<float> Input, Memory<float> Output)> batch)
     {
-        var loss = 0f;       
-        var count = 0;
-
+        float totalLoss = 0f;
+        int count = 0;
         var realFirstNeuron = _matrixNeurons[0].Span;
         var realLastNeuron = _matrixNeurons[Count];
 
         foreach (var pair in batch)
         {
-            var inputRow = pair.Input.Span;
-            var outputRow = pair.Output.Span;
-            var outputColumns = outputRow.Length;
-            
-            inputRow.CopyTo(realFirstNeuron);
-
+            pair.Input.Span.CopyTo(realFirstNeuron);
             Forward();
 
-            for (int j = 0; j < outputColumns; ++j)
+            var outputRow = pair.Output.Span;
+            var predicted = realLastNeuron.Span;
+            float batchLoss = 0f;
+            int j = 0;
+
+            var lossVec = Vector256<float>.Zero;
+            while (j <= outputRow.Length - Vector256<float>.Count)
             {
-                float distance = realLastNeuron.Span[j] - outputRow[j];
-                loss += distance * distance;
+                var predVec = Vector256.LoadUnsafe(ref MemoryMarshal.GetReference(predicted), (nuint)j);
+                var targetVec = Vector256.LoadUnsafe(ref MemoryMarshal.GetReference(outputRow), (nuint)j);
+                var diff = Avx.Subtract(predVec, targetVec);
+                lossVec = Avx.Add(lossVec, Avx.Multiply(diff, diff));
+                j += Vector256<float>.Count;
             }
 
-            ++count;
+            batchLoss += Vector256.Sum(lossVec);
+
+            for (; j < outputRow.Length; j++)
+            {
+                float diff = predicted[j] - outputRow[j];
+                batchLoss += diff * diff;
+            }
+
+            totalLoss += batchLoss;
+            count++;
         }
 
-        return loss / count;
+        return totalLoss / count;
     }
 
     private Matrix Forward()
