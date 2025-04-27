@@ -6,7 +6,7 @@ using System.Runtime.InteropServices;
 
 namespace NeutralNET.Matrices;
 
-public abstract unsafe class MatrixBase
+public abstract unsafe class MatrixBase : IDisposable
 {
     public static int AllocCounter = 0;
     public static Dictionary<string, StackTrace> Traces = [];
