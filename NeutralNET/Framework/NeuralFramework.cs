@@ -191,19 +191,19 @@ public class NeuralFramework
         int remaining = aSpan.Length;
 
         var factorVec = Vector256.Create(factor);
-        var rateVec = Vector256.Create(rate);
+        var rateVec = Vector256.Create(-rate);
 
         while (remaining >= 8)
         {
             var aVec = Vector256.LoadUnsafe(ref aRef);
             var bVec = Vector256.LoadUnsafe(ref bRef);
 
-            var result = Vector256.FusedMultiplyAdd(
-                aVec, factorVec, Avx.Multiply(bVec, Vector256.Negate(rateVec))
+            var result = Avx.Add(
+                Avx.Multiply(aVec, factorVec),
+                Avx.Multiply(bVec, rateVec)
             );
 
-            Vector256.StoreUnsafe(result, ref aRef);
-
+            result.StoreUnsafe(ref aRef);
             aRef = ref Unsafe.Add(ref aRef, 8);
             bRef = ref Unsafe.Add(ref bRef, 8);
             remaining -= 8;
