@@ -2,6 +2,7 @@
 using System.Runtime.Intrinsics.X86;
 using System.Runtime.Intrinsics;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 
 namespace NeutralNET.Matrices;
 
@@ -28,9 +29,22 @@ public abstract class MatrixBase
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ApplySigmoid()
     {
-        for (int i = 0; i < Data.Length; i++)
+        ref float ptr = ref MemoryMarshal.GetReference(Span);
+        int i = 0;
+
+        var one = Vector256.Create(1.0f);
+        var half = Vector256.Create(0.5f);
+        while (i <= Span.Length - Vector256<float>.Count)
         {
-            Data[i] = 1f / (1f + float.Exp(-Data[i]));
+            var x = Vector256.LoadUnsafe(ref ptr, (nuint)i);
+            var sigmoid = Avx.Divide(one, Avx.Add(one, Vector256.Exp(Avx.Multiply(x, Vector256.Create(-1.0f)))));
+            sigmoid.StoreUnsafe(ref ptr, (nuint)i);
+            i += Vector256<float>.Count;
+        }
+
+        for (; i < Span.Length; i++)
+        {
+            Unsafe.Add(ref ptr, i) = 1.0f / (1.0f + float.Exp(-Unsafe.Add(ref ptr, i)));
         }
     }
 
