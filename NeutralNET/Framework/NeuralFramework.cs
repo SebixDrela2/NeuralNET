@@ -110,7 +110,7 @@ public class NeuralFramework
              
              foreach (var batch in batches)
              {            
-                 ProcessBatch(gradientFramework, batch, ref loss);
+                 loss += ProcessBatch(gradientFramework, batch);
              
                  batchProcessCount++;
              }
@@ -127,15 +127,14 @@ public class NeuralFramework
         }
     }
 
-    private void ProcessBatch(
+    private float ProcessBatch(
         NeuralFramework gradientFramework, 
-        IEnumerable<(Memory<float> Input, Memory<float> Output)> batch,
-        ref float loss)
+        IEnumerable<(Memory<float> Input, Memory<float> Output)> batch)
     {
         BackPropagate(gradientFramework, batch);
         Learn(gradientFramework);
 
-        loss += Loss(batch);
+        return Loss(batch);
     }
 
     private void Learn(NeuralFramework gradient)
@@ -161,8 +160,8 @@ public class NeuralFramework
 
         var a = rate;
         var weightDecay = _config.WeightDecay;
-        var A = matrixes[index].Data;
-        var B = gradientMatrixes[index].Data;
+        var A = matrixes[index].Span;
+        var B = gradientMatrixes[index].Span;
 
         var totalLength = matrixes[index].Rows * matrixes[index].Columns;
 
@@ -184,8 +183,8 @@ public class NeuralFramework
         var weightDecay = _config.WeightDecay;
         float factor = 1.0f - rate * weightDecay;
 
-        var aSpan = matrixes[index].Data.AsSpan();
-        var bSpan = gradientMatrixes[index].Data.AsSpan();
+        var aSpan = matrixes[index].Span;
+        var bSpan = gradientMatrixes[index].Span;
 
         ref float aRef = ref MemoryMarshal.GetReference(aSpan);
         ref float bRef = ref MemoryMarshal.GetReference(bSpan);
@@ -199,10 +198,7 @@ public class NeuralFramework
             var aVec = Vector256.LoadUnsafe(ref aRef);
             var bVec = Vector256.LoadUnsafe(ref bRef);
 
-            var result = Avx.Add(
-                Avx.Multiply(aVec, factorVec),
-                Avx.Multiply(bVec, rateVec)
-            );
+            var result = Fma.MultiplyAdd(bVec, rateVec, Avx.Multiply(aVec, factorVec));
 
             result.StoreUnsafe(ref aRef);
             aRef = ref Unsafe.Add(ref aRef, 8);
@@ -530,7 +526,7 @@ public class NeuralFramework
 
                 if (index >= Count)
                 {
-                    _matrixNeurons[Count].ApplySigmoid();
+                    _matrixNeurons[Count].ApplySigmoidVectorized();
                     break;
                 }
 

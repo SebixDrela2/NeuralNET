@@ -47,24 +47,23 @@ public class XorAdvanced : IModel
     {
         A0.DotVectorized(W1, A1); // TODO: WORK?
         A1.Sum(B1);
-        A1.ApplySigmoid();
+        A1.ApplySigmoidVectorized();
 
         A1.DotVectorized(W2, A2); // TODO: WORK?
         A2.Sum(B2);
-        A2.ApplySigmoid();
+        A2.ApplySigmoidVectorized();
 
-        return A2.FirstElement;
+        return A2.Span[0];
     }
 
     public void Prepare()
     {
-        var trainingData = new Matrix(4, 3)
-        {
-            Data = TrainingData
-        };
+        var trainingData = new Matrix(4, 3);
 
+        TrainingData.AsSpan().CopyTo(trainingData.Span);
+        
         TrainingInput = trainingData.SplitStart(2);
-        TrainingOutput = trainingData.SplitEnd(3);
+        TrainingOutput = trainingData.SplitEnd(1);
     }
 
     public void Run(int x1, int x2)

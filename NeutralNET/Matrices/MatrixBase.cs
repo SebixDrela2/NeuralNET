@@ -6,28 +6,49 @@ using System.Runtime.InteropServices;
 
 namespace NeutralNET.Matrices;
 
-public abstract class MatrixBase
+public abstract unsafe class MatrixBase
 {
     public static int AllocCounter = 0;
     public static Dictionary<string, StackTrace> Traces = [];
     public static HashSet<(int Width, int Height)> Sizes = [];
 
+    protected readonly float* _alignedData;
+    private bool _disposed;
+
     public int Rows { get; }
     public int Columns { get; }
-    public float[] Data { get; set; }
-    public Span<float> Span => Data;
-    public float FirstElement => Data[0];
+    public Span<float> Span => new(_alignedData, Rows * Columns);
 
     public MatrixBase(int rows, int columns)
     {
         Rows = rows;
         Columns = columns;
 
-        Data = new float[rows * columns];
+        nuint byteCount = (nuint)(rows * columns * sizeof(float));
+        const uint alignment = 32;
+        _alignedData = (float*)NativeMemory.AlignedAlloc(byteCount, alignment);
+
+        new Span<float>(_alignedData, rows * columns).Clear();
     }
 
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+
+        NativeMemory.AlignedFree(_alignedData);
+        _disposed = true;
+    }
+
+    ~MatrixBase() => Dispose(false);
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void ApplySigmoid()
+    public void ApplySigmoidVectorized()
     {
         ref float ptr = ref MemoryMarshal.GetReference(Span);
         int i = 0;
@@ -36,8 +57,8 @@ public abstract class MatrixBase
         var half = Vector256.Create(0.5f);
         while (i <= Span.Length - Vector256<float>.Count)
         {
-            var x = Vector256.LoadUnsafe(ref ptr, (nuint)i);
-            var sigmoid = Avx.Divide(one, Avx.Add(one, Vector256.Exp(Avx.Multiply(x, Vector256.Create(-1.0f)))));
+            var vec = Vector256.LoadUnsafe(ref ptr, (nuint)i);
+            var sigmoid = Avx.Divide(one, Avx.Add(one, Vector256.Exp(Avx.Multiply(vec, Vector256.Create(-1.0f)))));
             sigmoid.StoreUnsafe(ref ptr, (nuint)i);
             i += Vector256<float>.Count;
         }
@@ -49,9 +70,9 @@ public abstract class MatrixBase
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void ApplyTanh()
+    public void ApplyTanhVectorized()
     {
-        Span<float> data = Data.AsSpan();
+        Span<float> data = Span;
 
         if (Avx.IsSupported)
         {
@@ -87,7 +108,7 @@ public abstract class MatrixBase
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ApplyReLUVectorized()
     {
-        Span<float> dataSpan = Data.AsSpan();
+        Span<float> dataSpan = Span;
         int i = 0;
 
         Vector256<float> zero = Vector256<float>.Zero;

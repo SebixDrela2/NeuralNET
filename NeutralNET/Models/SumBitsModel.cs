@@ -1,5 +1,8 @@
 ﻿using NeutralNET.Matrices;
 using NeutralNET.Stuff;
+using System.Collections.Generic;
+using System.Linq;
+using System.Runtime.CompilerServices;
 
 namespace NeutralNET.Models;
 
@@ -10,40 +13,49 @@ public class SumBitsModel : IModel
     private const int BitLimit = 1 << BitInput;
     private const int BitRows = 1 << BitOutput;
 
-    public Matrix TrainingInput { get;  set; }
-    public Matrix TrainingOutput { get; set ; }
+    public Matrix TrainingInput { get; set; }
+    public Matrix TrainingOutput { get; set; }
 
     public SumBitsModel()
     {
-        var trainingInput = new List<float>();
-        var trainingOutput = new List<float>();
+        const int inputColumns = BitInput * 2;
+        const int outputColumns = BitOutput;
 
-        for (var a = 0; a < BitLimit;  a++)
+        TrainingInput = new Matrix(BitRows, inputColumns);
+        TrainingOutput = new Matrix(BitRows, outputColumns);
+
+        var inputSpan = TrainingInput.Span;
+        var outputSpan = TrainingOutput.Span;
+
+        int inputIndex = 0;
+        int outputIndex = 0;
+
+        for (var a = 0; a < BitLimit; a++)
         {
             for (var b = 0; b < BitLimit; b++)
             {
                 var sum = a + b;
 
-                var aBits = Convert.ToString(a, 2).PadLeft(BitInput, '0').Select(x => x == '1' ? 1f : 0f);
-                var bBits = Convert.ToString(b, 2).PadLeft(BitInput, '0').Select(x => x == '1' ? 1f : 0f);
-                var sumBits = Convert.ToString(sum, 2).PadLeft(BitInput * 2, '0').Select(x => x == '1' ? 1f : 0f);
+                // Write input bits (a + b)
+                ConvertToBits(a, BitInput, inputSpan, ref inputIndex);
+                ConvertToBits(b, BitInput, inputSpan, ref inputIndex);
 
-                trainingInput.AddRange(aBits);
-                trainingInput.AddRange(bBits);
-                trainingOutput.AddRange(sumBits);
-
-                //Console.WriteLine($"Training input: {string.Join("", aBits)} + {string.Join("", bBits)} = {string.Join("", sumBits)}");
+                // Write output bits (sum)
+                ConvertToBits(sum, BitOutput, outputSpan, ref outputIndex);
             }
         }
+    }
 
-        TrainingInput = new Matrix(BitRows, BitOutput)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void ConvertToBits(int number, int bitLength, Span<float> target, ref int index)
+    {
+        string binary = Convert.ToString(number, 2).PadLeft(bitLength, '0');
+        foreach (char c in binary)
         {
-            Data = trainingInput.ToArray()
-        };
+            if (index >= target.Length)
+                throw new InvalidOperationException($"Index {index} out of bounds for target span of length {target.Length}");
 
-        TrainingOutput = new Matrix(BitRows, BitOutput)
-        {
-            Data = trainingOutput.ToArray()
-        };
+            target[index++] = c == '1' ? 1f : 0f;
+        }
     }
 }
