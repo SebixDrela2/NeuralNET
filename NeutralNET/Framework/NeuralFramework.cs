@@ -150,7 +150,8 @@ public class NeuralFramework
         }
     }
 
-    private void LearnInternalA(
+    [Obsolete]
+    private void LearnInternal(
     ReadOnlySpan<Matrix> matrixes,
     ReadOnlySpan<Matrix> gradientMatrixes,
     float rate,
