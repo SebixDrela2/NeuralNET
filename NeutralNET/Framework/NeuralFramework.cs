@@ -180,52 +180,39 @@ public class NeuralFramework
     float rate,
     int index)
     {
-        var a = rate;
         var weightDecay = _config.WeightDecay;
+        float factor = 1.0f - rate * weightDecay;
+
         var aSpan = matrixes[index].Data.AsSpan();
         var bSpan = gradientMatrixes[index].Data.AsSpan();
 
-        float factor = 1.0f - rate * weightDecay;
+        ref float aRef = ref MemoryMarshal.GetReference(aSpan);
+        ref float bRef = ref MemoryMarshal.GetReference(bSpan);
+        int remaining = aSpan.Length;
 
-        if (Avx.IsSupported)
+        var factorVec = Vector256.Create(factor);
+        var rateVec = Vector256.Create(rate);
+
+        while (remaining >= 8)
         {
-            ref float aRef = ref MemoryMarshal.GetReference(aSpan);
-            ref float bRef = ref MemoryMarshal.GetReference(bSpan);
-            int remaining = aSpan.Length;
+            var aVec = Vector256.LoadUnsafe(ref aRef);
+            var bVec = Vector256.LoadUnsafe(ref bRef);
 
-            var factorVec = Vector256.Create(factor);
-            var rateVec = Vector256.Create(rate);
+            var result = Vector256.FusedMultiplyAdd(
+                aVec, factorVec, Avx.Multiply(bVec, Vector256.Negate(rateVec))
+            );
 
-            while (remaining >= 8)
-            {
-                var aVec = Vector256.LoadUnsafe(ref aRef);
-                var bVec = Vector256.LoadUnsafe(ref bRef);
+            Vector256.StoreUnsafe(result, ref aRef);
 
-                var result = Avx.Subtract(
-                    Avx.Multiply(aVec, factorVec),
-                    Avx.Multiply(bVec, rateVec)
-                );
-
-                Vector256.StoreUnsafe(result, ref aRef);
-
-                aRef = ref Unsafe.Add(ref aRef, 8);
-                bRef = ref Unsafe.Add(ref bRef, 8);
-                remaining -= 8;
-            }
-
-            for (int i = 0; i < remaining; i++)
-            {
-                Unsafe.Add(ref aRef, i) =
-                    Unsafe.Add(ref aRef, i) * factor -
-                    rate * Unsafe.Add(ref bRef, i);
-            }
+            aRef = ref Unsafe.Add(ref aRef, 8);
+            bRef = ref Unsafe.Add(ref bRef, 8);
+            remaining -= 8;
         }
-        else
+
+        for (int i = 0; i < remaining; i++)
         {
-            for (var i = 0; i < aSpan.Length; i++)
-            {
-                aSpan[i] = aSpan[i] * factor - rate * bSpan[i];
-            }
+            Unsafe.Add(ref aRef, i) =
+                Unsafe.Add(ref aRef, i) * factor - rate * Unsafe.Add(ref bRef, i);
         }
     }
 
@@ -255,7 +242,7 @@ public class NeuralFramework
             ++rowCount;
         }
 
-        NormalizeGradients(gradient, rowCount);
+        NormalizeGradientsVectorized(gradient, rowCount);
     }
 
     private void ComputeOutputLayer(NeuralFramework gradient, Span<float> outputRow)
@@ -319,63 +306,35 @@ public class NeuralFramework
         }
     }
 
-    private void NormalizeGradients(
-        NeuralFramework gradient,
-        int rowNumber)
+    private void NormalizeGradientsVectorized(NeuralFramework gradient, int rowNumber)
     {
-        for (var i = 0; i < gradient.Count; i++)
-        {          
-            for (int j = 0, weightsDataIndex = 0; j < gradient._matrixWeights[i].Rows; j++)
-            {
-                for (var k = 0; k < gradient._matrixWeights[i].Columns; k++, weightsDataIndex++)
-                {
-                    gradient._matrixWeights[i].Data[weightsDataIndex] /= rowNumber;
-                }
-            }
-
-            for (int j = 0, biasesDataIndex = 0; j < gradient._matrixBiases[i].Rows; j++)
-            {
-                for (var k = 0; k < gradient._matrixBiases[i].Columns; k++, biasesDataIndex++)
-                {
-                    gradient._matrixBiases[i].Data[biasesDataIndex] /= rowNumber;
-                }
-            }
-        }
-    }
-
-    private void NormalizeGradientsVectorized(
-        NeuralFramework gradient,
-        int rowNumber)
-    {
-        Vector256<float> vector;
-        Vector256<float> vector2 = Vector256.Create((float)rowNumber);
+        var divisorVec = Vector256.Create((float)rowNumber);
+        var divisorScalar = (float)rowNumber;
 
         for (var i = 0; i < gradient.Count; i++)
         {
-            nuint lenghtDaniel = (nuint)(gradient._matrixWeights[i].Rows * gradient._matrixWeights[i].Columns);
-            var data = gradient._matrixWeights[i].Data;
+            NormalizeArray(gradient._matrixWeights[i].Span, divisorVec, divisorScalar);
+            NormalizeArray(gradient._matrixBiases[i].Span, divisorVec, divisorScalar);
+        }
+    }
 
-            //if (lenghtDaniel % Vector256<float>.Count != 0)
-            //{
-            //    throw new NotImplementedException();
-            //}
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void NormalizeArray(Span<float> data, Vector256<float> divisorVec, float divisorScalar)
+    {
+        int simdLength = Vector256<float>.Count;
+        int i = 0;
 
-            ref var referenceArray = ref MemoryMarshal.GetArrayDataReference(data);
+        while (i <= data.Length - simdLength)
+        {
+            var vec = Vector256.LoadUnsafe(ref MemoryMarshal.GetReference(data), (nuint)i);
+            vec = Avx.Divide(vec, divisorVec);
+            vec.StoreUnsafe(ref MemoryMarshal.GetReference(data), (nuint)i);
+            i += simdLength;
+        }
 
-            for (nuint offset = 0; offset < lenghtDaniel; offset += (nuint)Vector256<float>.Count)
-            {
-                vector = Vector256.LoadUnsafe(ref referenceArray, offset);
-                vector = Avx.Divide(vector, vector2);
-                vector.StoreUnsafe(ref referenceArray, offset);
-            }
-            
-            for (var j = 0; j < gradient._matrixBiases[i].Rows; j++)
-            {
-                for (var k = 0; k < gradient._matrixBiases[i].Columns; k++)
-                {
-                    gradient._matrixBiases[i].Divide(j, k, rowNumber);
-                }
-            }
+        for (; i < data.Length; i++)
+        {
+            data[i] /= divisorScalar;
         }
     }
 
