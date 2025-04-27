@@ -245,6 +245,7 @@ public class NeuralFramework
         NormalizeGradientsVectorized(gradient, rowCount);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void ComputeOutputLayer(NeuralFramework gradient, Span<float> outputRow)
     {
         var realLastMatrixNeuron = _matrixNeurons[Count].Span;
@@ -316,6 +317,7 @@ public class NeuralFramework
         }
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void NormalizeGradientsVectorized(NeuralFramework gradient, int rowNumber)
     {
         var divisorVec = Vector256.Create((float)rowNumber);
