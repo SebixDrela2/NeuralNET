@@ -184,6 +184,7 @@ public class NeuralFramework
         var weightDecay = _config.WeightDecay;
         var aSpan = matrixes[index].Data.AsSpan();
         var bSpan = gradientMatrixes[index].Data.AsSpan();
+
         float factor = 1.0f - rate * weightDecay;
 
         if (Avx.IsSupported)
@@ -475,7 +476,7 @@ public class NeuralFramework
 
             while(true)
             {
-                _matrixNeurons[index].Dot(_matrixWeights[index], _matrixNeurons[index + 1]);
+                _matrixNeurons[index].DotVectorized(_matrixWeights[index], _matrixNeurons[index + 1]);
                 _matrixNeurons[index + 1].Sum(_matrixBiases[index]);
 
                 index++;
@@ -486,7 +487,7 @@ public class NeuralFramework
                     break;
                 }
 
-                _matrixNeurons[index].ApplyReLU();
+                _matrixNeurons[index].ApplyReLUVectorized();
             }
         }
         

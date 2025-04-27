@@ -1,5 +1,4 @@
 ﻿using NeutralNET.Stuff;
-using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics.X86;
 using System.Runtime.Intrinsics;
@@ -7,88 +6,50 @@ using System.Runtime.InteropServices;
 
 namespace NeutralNET.Matrices;
 
-public class Matrix
-{
-    public static Dictionary<string, StackTrace> Traces = [];
-    public static HashSet<(int Width, int Height)> Sizes = [];
-    
-    public int Rows { get; }
-    public int Columns { get; }
-    public float[] Data { get; set; }
-    public Span<float> Span => Data;
-    public float FirstElement => Data[0];
-
-    // [Conditional("DEBUG")]
-    //private static void LogOrigin(int rows, int columns)
-    //{
-    //    var i = AllocCounter++;
-
-    //    switch (i)
-    //    {
-    //        case > 1_000_000 when (i % 1_000_000) is not 0:
-    //        case > 100_000 when (i % 100_000) is not 0:
-    //        case > 10_000 when (i % 10_000) is not 0:
-    //        case > 1_000 when (i % 1_000) is not 0:
-    //        case > 100 when (i % 100) is not 0:
-    //        case > 10 when (i % 10) is not 0:
-    //            break;
-    //        default:
-    //            Console.WriteLine($"NEW ARRAY CREATED {i}");
-    //            break;
-    //    }
-
-    //    var stack = new StackTrace();
-    //    var frames = string.Join("\n", stack.GetFrames().Reverse()
-    //        .Select(x => $"{x.GetMethod()?.DeclaringType?.FullName}.{x.GetMethod()?.Name}"));
-    //    Traces.TryAdd(frames, stack);
-
-    //    Sizes.Add((columns, rows));
-    //}
-
-    public Matrix(int rows, int columns)
-    {
-        Rows = rows;
-        Columns = columns;
-        
-        Data = new float[rows * columns];
-        //LogOrigin(rows, columns);
-    }
-    
-    public void ApplySigmoid()
-    {
-        for (int i = 0; i < Data.Length; i++)
-        {
-            Data[i] = 1f / (1f + float.Exp(-Data[i]));
-        }
-    }
-
-    public void ApplyReLU()
-    {
-        for (int i = 0; i < Data.Length; i++)
-        {
-            Data[i] = float.Max(0.01f * Data[i], Data[i]);
-        }
-    }
-
-    public void Dot(Matrix other, Matrix result)
+public class Matrix(int rows, int columns) : MatrixBase(rows, columns)
+{       
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void DotVectorized(Matrix other, Matrix result)
     {
         var cols = Columns;
         var otherCols = other.Columns;
+        var vecSize = Vector256<float>.Count;
 
-        for (int row = 0; row < Rows; ++row)
+        for (int row = 0; row < Rows; row++)
         {
-            for (int col = 0; col < otherCols; ++col)
+            Span<float> thisRow = Data.AsSpan(row * cols, cols);
+            Span<float> resultRow = result.Data.AsSpan(row * otherCols, otherCols);
+
+            int vectorizableCols = otherCols - (otherCols % vecSize);
+            
+            for (int col = 0; col < vectorizableCols; col += vecSize)
+            {
+                Vector256<float> sum = Vector256<float>.Zero;
+
+                for (int k = 0; k < cols; k++)
+                {
+                    float a = thisRow[k];
+                    Span<float> otherElements = other.Data.AsSpan(k * otherCols + col, vecSize);
+
+                    Vector256<float> b = Vector256.LoadUnsafe(ref otherElements[0]);
+                    Vector256<float> av = Vector256.Create(a);
+
+                    sum = Avx.Add(sum, Avx.Multiply(av, b));
+                }
+                
+                sum.StoreUnsafe(ref resultRow[col]);
+            }
+            
+            for (int col = vectorizableCols; col < otherCols; col++)
             {
                 float sum = 0f;
-
-                for (int k = 0; k < cols; ++k)
+                for (int k = 0; k < cols; k++)
                 {
-                    sum = float.FusedMultiplyAdd(At(row, k), other.At(k, col), sum);
+                    sum += thisRow[k] * other.Span[k * otherCols + col];
                 }
-
-                result.Set(row, col, sum);
+                resultRow[col] = sum;
             }
-        }       
+        }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

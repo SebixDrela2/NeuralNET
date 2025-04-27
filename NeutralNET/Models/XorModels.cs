@@ -45,11 +45,11 @@ public class XorAdvanced : IModel
 
     public float Forward()
     {
-        A0.Dot(W1, A1); // TODO: WORK?
+        A0.DotVectorized(W1, A1); // TODO: WORK?
         A1.Sum(B1);
         A1.ApplySigmoid();
 
-        A1.Dot(W2, A2); // TODO: WORK?
+        A1.DotVectorized(W2, A2); // TODO: WORK?
         A2.Sum(B2);
         A2.ApplySigmoid();
 
