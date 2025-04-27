@@ -247,13 +247,23 @@ public class NeuralFramework
 
     private void ComputeOutputLayer(NeuralFramework gradient, Span<float> outputRow)
     {
-        var realLastMatrixNeuron = _matrixNeurons[Count];
-        var gradientLastMatrixNeuron = gradient._matrixNeurons[Count];
+        var realLastMatrixNeuron = _matrixNeurons[Count].Span;
+        var gradientLastMatrixNeuron = gradient._matrixNeurons[Count].Span;
 
-        for (int index = 0; index < outputRow.Length; ++index)
+        int i = 0;
+
+        while (i <= outputRow.Length - Vector256<float>.Count)
         {
-            var difference = realLastMatrixNeuron.Span[index] - outputRow[index];
-            gradientLastMatrixNeuron.Span[index] = difference;
+            var predVec = Vector256.LoadUnsafe(ref MemoryMarshal.GetReference(realLastMatrixNeuron), (nuint)i);
+            var targetVec = Vector256.LoadUnsafe(ref MemoryMarshal.GetReference(outputRow), (nuint)i);
+            var diff = Avx.Subtract(predVec, targetVec);
+            Vector256.StoreUnsafe(diff, ref MemoryMarshal.GetReference(gradientLastMatrixNeuron), (nuint)i);
+            i += Vector256<float>.Count;
+        }
+
+        for (; i < outputRow.Length; i++)
+        {
+            gradientLastMatrixNeuron[i] = realLastMatrixNeuron[i] - outputRow[i];
         }
     }
 
