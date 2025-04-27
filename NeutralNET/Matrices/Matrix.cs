@@ -11,43 +11,44 @@ public class Matrix(int rows, int columns) : MatrixBase(rows, columns)
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void DotVectorized(Matrix other, Matrix result)
     {
-        var cols = Columns;
-        var otherCols = other.Columns;
-        var vecSize = Vector256<float>.Count;
-
-        for (int row = 0; row < Rows; row++)
+        int inFeatures = Columns;
+        int outFeatures = other.Rows;
+        int batchSize = Rows;
+        int vecSize = Vector256<float>.Count;
+        
+        for (int row = 0; row < batchSize; row++)
         {
-            Span<float> thisRow = Data.AsSpan(row * cols, cols);
-            Span<float> resultRow = result.Data.AsSpan(row * otherCols, otherCols);
+            Span<float> inputRow = GetRowSpan(row);
+            Span<float> resultRow = result.GetRowSpan(row);
 
-            int vectorizableCols = otherCols - (otherCols % vecSize);
-            
-            for (int col = 0; col < vectorizableCols; col += vecSize)
+            for (int neuronIdx = 0; neuronIdx < outFeatures; neuronIdx++)
             {
-                Vector256<float> sum = Vector256<float>.Zero;
+                Span<float> weights = other.GetRowSpan(neuronIdx);
 
-                for (int k = 0; k < cols; k++)
-                {
-                    float a = thisRow[k];
-                    Span<float> otherElements = other.Data.AsSpan(k * otherCols + col, vecSize);
-
-                    Vector256<float> b = Vector256.LoadUnsafe(ref otherElements[0]);
-                    Vector256<float> av = Vector256.Create(a);
-
-                    sum = Avx.Add(sum, Avx.Multiply(av, b));
-                }
-                
-                sum.StoreUnsafe(ref resultRow[col]);
-            }
-            
-            for (int col = vectorizableCols; col < otherCols; col++)
-            {
                 float sum = 0f;
-                for (int k = 0; k < cols; k++)
+                int k = 0;
+
+                if (Avx.IsSupported)
                 {
-                    sum += thisRow[k] * other.Span[k * otherCols + col];
+                    Vector256<float> sumVec = Vector256<float>.Zero;
+                    int vectorizable = inFeatures - (inFeatures % vecSize);
+
+                    for (; k < vectorizable; k += vecSize)
+                    {
+                        var inputVec = Vector256.LoadUnsafe(ref inputRow[k]);
+                        var weightVec = Vector256.LoadUnsafe(ref weights[k]);
+                        sumVec = Avx.Add(sumVec, Avx.Multiply(inputVec, weightVec));
+                    }
+
+                    sum += Vector256.Sum(sumVec);
                 }
-                resultRow[col] = sum;
+
+                for (; k < inFeatures; k++)
+                {
+                    sum += inputRow[k] * weights[k];
+                }
+
+                resultRow[neuronIdx] = sum;
             }
         }
     }
