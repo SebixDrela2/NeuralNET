@@ -49,20 +49,17 @@ public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns), I
                 float sum = 0f;
                 int k = 0;
 
-                if (Avx.IsSupported)
+                Vector256<float> sumVec = Vector256<float>.Zero;
+                int vectorizable = inFeatures - (inFeatures % vecSize);
+
+                for (; k < vectorizable; k += vecSize)
                 {
-                    Vector256<float> sumVec = Vector256<float>.Zero;
-                    int vectorizable = inFeatures - (inFeatures % vecSize);
-
-                    for (; k < vectorizable; k += vecSize)
-                    {
-                        var inputVec = Vector256.LoadUnsafe(ref inputRow[k]);
-                        var weightVec = Vector256.LoadUnsafe(ref weights[k]);
-                        sumVec = Avx.Add(sumVec, Avx.Multiply(inputVec, weightVec));
-                    }
-
-                    sum += Vector256.Sum(sumVec);
+                    var inputVec = Vector256.LoadUnsafe(ref inputRow[k]);
+                    var weightVec = Vector256.LoadUnsafe(ref weights[k]);
+                    sumVec = Avx.Add(sumVec, Avx.Multiply(inputVec, weightVec));
                 }
+
+                sum += Vector256.Sum(sumVec);
 
                 for (; k < inFeatures; k++)
                 {
