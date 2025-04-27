@@ -54,7 +54,6 @@ public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns), I
                     Vector256<float> sumVec = Vector256<float>.Zero;
                     int vectorizable = inFeatures - (inFeatures % vecSize);
 
-                    // Use safe vector loading
                     for (; k < vectorizable; k += vecSize)
                     {
                         var inputVec = Vector256.LoadUnsafe(ref inputRow[k]);
@@ -65,7 +64,6 @@ public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns), I
                     sum += Vector256.Sum(sumVec);
                 }
 
-                // Process remaining elements
                 for (; k < inFeatures; k++)
                 {
                     sum += inputRow[k] * weights[k];
