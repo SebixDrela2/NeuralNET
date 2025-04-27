@@ -194,9 +194,23 @@ public class Matrix(int rows, int columns) : MatrixBase(rows, columns)
 
     public void Clip(float min, float max)
     {
-        for (int i = 0; i < Data.Length; i++)
+        var span = Span;
+        ref float ptr = ref MemoryMarshal.GetReference(span);
+        int i = 0;
+
+        var minVec = Vector256.Create(min);
+        var maxVec = Vector256.Create(max);
+        while (i <= span.Length - Vector256<float>.Count)
         {
-            Data[i] = Math.Clamp(Data[i], min, max);
+            var vec = Vector256.LoadUnsafe(ref ptr, (nuint)i);
+            vec = Avx.Min(Avx.Max(vec, minVec), maxVec);
+            Vector256.StoreUnsafe(vec, ref ptr, (nuint)i);
+            i += Vector256<float>.Count;
+        }
+
+        for (; i < span.Length; i++)
+        {
+            ptr = Math.Clamp(ptr, min, max);
         }
     }
 }
