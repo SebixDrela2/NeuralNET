@@ -3,7 +3,9 @@
 public class MatrixBatchProcessor
 {
     public IEnumerable<IEnumerable<(Memory<float> Input, Memory<float> Output)>> GetBatches(
-        IEnumerable<(Memory<float> Input, Memory<float> Output)> rows,
+        Matrix trainingInput,
+        Matrix trainingOutput,
+        int[] indices,
         int rowCount,
         int batchSize)
     {
@@ -14,24 +16,23 @@ public class MatrixBatchProcessor
         {
             yield break;
         }
-
-        using var en = rows.GetEnumerator();
-        int n;
-
-        for (n = rowCount; n > batchSize; n -= batchSize)
+        
+        for (var indicesIndex = 0; indicesIndex < indices.Length; indicesIndex += batchSize)
         {
-            yield return EnumerateInBatch(batchSize).ToArray();
+            yield return EnumerateInBatch(
+                indicesIndex, 
+                int.Min(indices.Length - indicesIndex, batchSize));
         }
 
-        yield return EnumerateInBatch(n).ToArray();
-
-        IEnumerable<(Memory<float> Input, Memory<float> Output)> EnumerateInBatch(int count)
-        {
-            while(count > 0)
+        IEnumerable<(Memory<float> Input, Memory<float> Output)> EnumerateInBatch(int indicesOffset, int length)
+        {            
+            for (var index = 0; index < length; index++)
             {
-                if (!en.MoveNext()) throw new IndexOutOfRangeException();
-                --count;
-                yield return en.Current;
+                var i = indices[index + indicesOffset];
+
+                yield return (
+                    Input: trainingInput.GetRowMemory(i),
+                    Output: trainingOutput.GetRowMemory(i));
             }
         }
     }

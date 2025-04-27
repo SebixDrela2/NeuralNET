@@ -32,7 +32,7 @@ public class SumBitsModel : IModel
                 trainingInput.AddRange(bBits);
                 trainingOutput.AddRange(sumBits);
 
-                Console.WriteLine($"Training input: {string.Join("", aBits)} + {string.Join("", bBits)} = {string.Join("", sumBits)}");
+                //Console.WriteLine($"Training input: {string.Join("", aBits)} + {string.Join("", bBits)} = {string.Join("", sumBits)}");
             }
         }
 
