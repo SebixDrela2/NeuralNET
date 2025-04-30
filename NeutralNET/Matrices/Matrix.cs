@@ -7,28 +7,7 @@ using System.Runtime.Intrinsics.X86;
 namespace NeutralNET.Matrices;
 
 public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns), IDisposable
-{
-    private sealed class UnmanagedMemoryManager : MemoryManager<float>
-    {
-        private readonly float* _pointer;
-        private readonly int _length;
-
-        public UnmanagedMemoryManager(float* pointer, int length)
-        {
-            _pointer = pointer;
-            _length = length;
-        }
-
-        public override Span<float> GetSpan() => new Span<float>(_pointer, _length);
-
-        public override MemoryHandle Pin(int elementIndex = 0) =>
-            new MemoryHandle(_pointer + elementIndex);
-
-        public override void Unpin() { }
-
-        protected override void Dispose(bool disposing) { }
-    }
-
+{   
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void DotVectorized(Matrix other, Matrix result)
     {
@@ -75,13 +54,11 @@ public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns), I
     public Span<float> GetRowSpan(int row) => Span.Slice(row * Columns, Columns);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]   
-    public Memory<float> GetRowMemory(int row)
+    public MatrixPointer GetRowMatrixPointer(int row)
     {
-        unsafe
-        {
-            float* rowPtr = _alignedData + row * Columns;
-            return new UnmanagedMemoryManager(rowPtr, Columns).Memory;
-        }
+        float* rowPtr = _alignedData + row * Columns;
+
+        return new MatrixPointer(rowPtr, Columns);
     }
     public void CopyRowFrom(Matrix other, int row)
     {
@@ -128,11 +105,9 @@ public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns), I
     {
         var span = Span;
         var otherSpan = other.Span;
+        var i = 0;
 
-        int vectorSize = Vector256<float>.Count;
-        int i = 0;
-
-        for (; i <= span.Length - vectorSize; i += vectorSize)
+        for (; i <= span.Length - Vector256<float>.Count; i += Vector256<float>.Count)
         {
             var va = Vector256.LoadAligned((float*)Unsafe.AsPointer(ref span[i]));
             var vb = Vector256.LoadAligned((float*)Unsafe.AsPointer(ref otherSpan[i]));

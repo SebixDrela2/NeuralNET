@@ -16,8 +16,15 @@ public abstract unsafe class MatrixBase : IDisposable
     private bool _disposed;
 
     public int Rows { get; }
+
+    //Obsolete
     public int Columns { get; }
-    public Span<float> Span => new(_alignedData, Rows * Columns);
+    public int AllocatedColumns  => Columns;
+    public int UsedColumns => Columns;
+    public int Count => Rows * Columns;
+
+    public Span<float> Span => new(_alignedData, Count);
+    public MatrixPointer Pointer => new(_alignedData, Count);
 
     public MatrixBase(int rows, int columns)
     {
@@ -39,13 +46,14 @@ public abstract unsafe class MatrixBase : IDisposable
 
     protected virtual void Dispose(bool disposing)
     {
-        if (_disposed) return;
+        if (_disposed)
+        {
+            return;
+        }
 
         NativeMemory.AlignedFree(_alignedData);
         _disposed = true;
-    }
-
-    ~MatrixBase() => Dispose(false);
+    }    
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ApplySigmoidVectorized()
@@ -55,6 +63,7 @@ public abstract unsafe class MatrixBase : IDisposable
 
         var one = Vector256.Create(1.0f);
         var half = Vector256.Create(0.5f);
+
         while (i <= Span.Length - Vector256<float>.Count)
         {
             var vec = Vector256.LoadUnsafe(ref ptr, (nuint)i);

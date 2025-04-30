@@ -16,6 +16,7 @@ internal class Program
             .WithBatchSize(BatchSize)
             .WithLearningRate(0.01f)
             .WithWeightDecay(1e-5f)
+            .WithShuffle(true)
             .WithModel(new SumBitsModel())
             .Build();
 

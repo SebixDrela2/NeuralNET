@@ -12,14 +12,16 @@ public class SumBitsModel : IModel
     private const int BitOutput = BitInput * 2;
     private const int BitLimit = 1 << BitInput;
     private const int BitRows = 1 << BitOutput;
-
     public Matrix TrainingInput { get; set; }
     public Matrix TrainingOutput { get; set; }
 
     public SumBitsModel()
     {
-        const int inputColumns = BitInput * 2;
-        const int outputColumns = BitOutput;
+        var inputColumns = BitInput * 2;
+        var outputColumns = BitOutput;
+
+        //outputColumns += (outputColumns & UnalignedBits) != 0 ? 32 : 0;
+        //outputColumns &= ~UnalignedBits;
 
         TrainingInput = new Matrix(BitRows, inputColumns);
         TrainingOutput = new Matrix(BitRows, outputColumns);
@@ -36,11 +38,9 @@ public class SumBitsModel : IModel
             {
                 var sum = a + b;
 
-                // Write input bits (a + b)
                 ConvertToBits(a, BitInput, inputSpan, ref inputIndex);
                 ConvertToBits(b, BitInput, inputSpan, ref inputIndex);
 
-                // Write output bits (sum)
                 ConvertToBits(sum, BitOutput, outputSpan, ref outputIndex);
             }
         }
