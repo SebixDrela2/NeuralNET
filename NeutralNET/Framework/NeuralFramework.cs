@@ -129,7 +129,7 @@ public class NeuralFramework
 
     private float ProcessBatch(
         NeuralFramework gradientFramework, 
-        IEnumerable<(MatrixPointer Input, MatrixPointer Output)> batch)
+        IEnumerable<(MatrixRow Input, MatrixRow Output)> batch)
     {
         BackPropagate(gradientFramework, batch);
         Learn(gradientFramework);
@@ -215,7 +215,7 @@ public class NeuralFramework
 
     private void BackPropagate(
         NeuralFramework gradient,
-        IEnumerable<(MatrixPointer Input, MatrixPointer Output)> batch)
+        IEnumerable<(MatrixRow Input, MatrixRow Output)> batch)
     {       
         gradient.ZeroOut();
 
@@ -240,7 +240,7 @@ public class NeuralFramework
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void ComputeOutputLayer(NeuralFramework gradient, MatrixPointer output)
+    private void ComputeOutputLayer(NeuralFramework gradient, MatrixElement output)
     {
         var realLastMatrixNeuron = _matrixNeurons[Count].Pointer;
         var gradientLastMatrixNeuron = gradient._matrixNeurons[Count].Pointer;
@@ -250,7 +250,7 @@ public class NeuralFramework
         while (i <= output.Count - Vector256<float>.Count)
         {
             var predVec = realLastMatrixNeuron.LoadVectorAligned(i);
-            var targetVec = output.LoadVectorUnAligned(i);
+            var targetVec = output.LoadVectorUnaligned(i);
             var diff = Avx.Subtract(predVec, targetVec);
             Vector256.StoreUnsafe(diff, ref gradientLastMatrixNeuron.Reference, (nuint)i);
             i += Vector256<float>.Count;
@@ -277,8 +277,8 @@ public class NeuralFramework
     private void BackPropagateLayerVectorized(
     int layerIndex,
     NeuralFramework gradient,
-    MatrixPointer currentActivations,
-    MatrixPointer currentErrors)
+    MatrixElement currentActivations,
+    MatrixElement currentErrors)
     {
         var gradientLayerIndexNeuron = gradient._matrixNeurons[layerIndex - 1];
         var gradientLayerIndexBias = gradient._matrixBiases[layerIndex - 1];
@@ -466,7 +466,7 @@ public class NeuralFramework
         // }
     }
 
-    private float Loss(IEnumerable<(MatrixPointer Input, MatrixPointer Output)> batch)
+    private float Loss(IEnumerable<(MatrixRow Input, MatrixRow Output)> batch)
     {
         var totalLoss = 0f;
         var count = 0;
@@ -484,10 +484,10 @@ public class NeuralFramework
             var j = 0;
 
             var lossVec = Vector256<float>.Zero;
-            while (j <= outputRow.Count - Vector256<float>.Count)
+            while (j <= outputRow.Columns - Vector256<float>.Count)
             {
                 var predVec = Vector256.LoadUnsafe(ref MemoryMarshal.GetReference(predicted), (nuint)j);
-                var targetVec = Vector256.LoadUnsafe(ref outputRow.Reference, (nuint)j);
+                var targetVec = outputRow.LoadVectorUnaligned(j);
                 var diff = Avx.Subtract(predVec, targetVec);
                 lossVec = Avx.Add(lossVec, Avx.Multiply(diff, diff));
                 j += Vector256<float>.Count;
@@ -495,7 +495,7 @@ public class NeuralFramework
 
             batchLoss += Vector256.Sum(lossVec);
 
-            for (; j < outputRow.Count; j++)
+            for (; j < outputRow.Columns; j++)
             {
                 float diff = predicted[j] - outputRow[j];
                 batchLoss += diff * diff;

@@ -16,36 +16,36 @@ public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns), I
         int batchSize = Rows;
         int vecSize = Vector256<float>.Count;
 
-        for (int row = 0; row < batchSize; row++)
+        var inputRow = GetMatrixRow(0);
+        var resultRow = result.GetMatrixRow(0);
+
+        for (int row = 0; row < batchSize; row++, ++inputRow, ++resultRow)
         {
-            Span<float> inputRow = GetRowSpan(row);
-            Span<float> resultRow = result.GetRowSpan(row);
+            var weights = other.GetMatrixRow(0);
 
-            for (int neuronIdx = 0; neuronIdx < outFeatures; neuronIdx++)
-            {
-                Span<float> weights = other.GetRowSpan(neuronIdx);
+            for (int neuronIdx = 0; neuronIdx < outFeatures; neuronIdx++, ++weights)
+            {               
+                var sum = 0f;
+                var k = 0;
 
-                float sum = 0f;
-                int k = 0;
-
-                Vector256<float> sumVec = Vector256<float>.Zero;
-                int vectorizable = inFeatures - (inFeatures % vecSize);
+                var sumVec = Vector256<float>.Zero;
+                var vectorizable = inFeatures - (inFeatures % vecSize);
 
                 for (; k < vectorizable; k += vecSize)
                 {
-                    var inputVec = Vector256.LoadUnsafe(ref inputRow[k]);
-                    var weightVec = Vector256.LoadUnsafe(ref weights[k]);
-                    sumVec = Avx.Add(sumVec, Avx.Multiply(inputVec, weightVec));
+                    var inputVec = inputRow.LoadVectorAligned(k);
+                    var weightVec = weights.LoadVectorUnaligned(k);
+                    sumVec = Fma.MultiplyAdd(inputVec, weightVec, sumVec);
                 }
 
                 sum += Vector256.Sum(sumVec);
 
                 for (; k < inFeatures; k++)
                 {
-                    sum += inputRow[k] * weights[k];
+                    sum += inputRow.Span[k] * weights.Span[k];
                 }
 
-                resultRow[neuronIdx] = sum;
+                resultRow.Span[neuronIdx] = sum;
             }
         }
     }
@@ -53,13 +53,14 @@ public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns), I
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Span<float> GetRowSpan(int row) => Span.Slice(row * Columns, Columns);
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]   
-    public MatrixPointer GetRowMatrixPointer(int row)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public MatrixRow GetMatrixRow(int row)
     {
-        float* rowPtr = _alignedData + row * Columns;
+        float* rowPtr = row * ColumnsStride + _alignedData;
 
-        return new MatrixPointer(rowPtr, Columns);
+        return new MatrixRow(rowPtr, row, Columns, ColumnsStride);
     }
+
     public void CopyRowFrom(Matrix other, int row)
     {
         other.GetRowSpan(row).CopyTo(GetRowSpan(row));
@@ -142,16 +143,16 @@ public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns), I
     public ref float At(int row, int column) => ref Span[row * Columns + column];
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Set(int row, int column, float value) => Span[row * Columns + column] = value;
+    public void Set(int row, int column, float value) => At(row, column) = value;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Add(int row, int column, float value) => Span[row * Columns + column] += value;
+    public void Add(int row, int column, float value) => At(row, column) += value;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Sub(int row, int column, float value) => Span[row * Columns + column] -= value;
+    public void Sub(int row, int column, float value) => At(row, column) -= value;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Divide(int row, int column, float value) => Span[row * Columns + column] /= value;
+    public void Divide(int row, int column, float value) => At(row, column) /= value;
 
     public void Randomize(float low = 0, float high = 1)
     {

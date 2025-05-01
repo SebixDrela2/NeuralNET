@@ -1,10 +1,11 @@
 ﻿using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 
 namespace NeutralNET.Matrices;
 
-public readonly unsafe struct MatrixPointer(float* pointer, int length)
+public readonly unsafe struct MatrixElement(float* pointer, int length)
 {
     public const int UnalignedBits = 31;
 
@@ -18,11 +19,12 @@ public readonly unsafe struct MatrixPointer(float* pointer, int length)
 
     public ref float this[int index] => ref Pointer[index];
     
-    public void CopyTo(MatrixPointer other)
+    public void CopyTo(MatrixElement other)
     {
         NativeMemory.Copy(Pointer, other.Pointer, ByteLenght);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Vector256<float> LoadVectorAligned(int index)
     {
         AssertAligned();
@@ -30,7 +32,8 @@ public readonly unsafe struct MatrixPointer(float* pointer, int length)
         return Vector256.LoadAligned(Pointer + index);
     }
 
-    public Vector256<float> LoadVectorUnAligned(int index) => Vector256.LoadUnsafe(ref Reference, (nuint)index);
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public Vector256<float> LoadVectorUnaligned(int index) => Vector256.LoadUnsafe(ref Reference, (nuint)index);
 
     [Conditional("DEBUG")]
     private void AssertAligned()

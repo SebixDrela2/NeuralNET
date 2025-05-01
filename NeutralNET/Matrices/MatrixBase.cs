@@ -15,27 +15,28 @@ public abstract unsafe class MatrixBase : IDisposable
     protected readonly float* _alignedData;
     private bool _disposed;
 
-    public int Rows { get; }
+    public int Rows;
 
     //Obsolete
-    public int Columns { get; }
-    public int AllocatedColumns  => Columns;
+    protected int Columns;
+    public int ColumnsStride  => Columns;
     public int UsedColumns => Columns;
-    public int Count => Rows * Columns;
+    public int Count;
 
     public Span<float> Span => new(_alignedData, Count);
-    public MatrixPointer Pointer => new(_alignedData, Count);
+    public MatrixElement Pointer => new(_alignedData, Count);
 
     public MatrixBase(int rows, int columns)
     {
         Rows = rows;
         Columns = columns;
+        Count = Columns * Rows;
 
         nuint byteCount = (nuint)(rows * columns * sizeof(float));
         const uint alignment = 32;
         _alignedData = (float*)NativeMemory.AlignedAlloc(byteCount, alignment);
 
-        new Span<float>(_alignedData, rows * columns).Clear();
+        Span.Clear();
     }
 
     public void Dispose()

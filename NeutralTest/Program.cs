@@ -12,7 +12,7 @@ internal class Program
         const int BatchSize = 64;
         var network = new NeuralNetworkBuilder()
             .WithArchitecture(Bits * 2, 32, 32, Bits * 2)
-            .WithEpochs(3000)
+            .WithEpochs(30000)
             .WithBatchSize(BatchSize)
             .WithLearningRate(0.01f)
             .WithWeightDecay(1e-5f)

@@ -2,7 +2,7 @@
 
 public class MatrixBatchProcessor
 {
-    public IEnumerable<IEnumerable<(MatrixPointer Input, MatrixPointer Output)>> GetBatches(
+    public IEnumerable<IEnumerable<(MatrixRow Input, MatrixRow Output)>> GetBatches(
         Matrix trainingInput,
         Matrix trainingOutput,
         int[] indices,
@@ -24,15 +24,15 @@ public class MatrixBatchProcessor
                 int.Min(indices.Length - indicesIndex, batchSize));
         }
 
-        IEnumerable<(MatrixPointer Input, MatrixPointer Output)> EnumerateInBatch(int indicesOffset, int length)
+        IEnumerable<(MatrixRow Input, MatrixRow Output)> EnumerateInBatch(int indicesOffset, int length)
         {            
             for (var index = 0; index < length; index++)
             {
                 var i = indices[index + indicesOffset];
 
                 yield return (
-                    Input: trainingInput.GetRowMatrixPointer(i),
-                    Output: trainingOutput.GetRowMatrixPointer(i));
+                    Input: trainingInput.GetMatrixRow(i),
+                    Output: trainingOutput.GetMatrixRow(i));
             }
         }
     }
