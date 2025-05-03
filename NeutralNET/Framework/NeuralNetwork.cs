@@ -9,11 +9,11 @@ public class NeuralNetwork
         _config = config;
     }
 
-    public IModelRunner Run()
+    public void Run()
     {
         var neuralFramework = new NeuralFramework(_config);
         var gradientFramework = new NeuralFramework(_config);
 
-        return neuralFramework.Run(gradientFramework, _config.Model);
+        neuralFramework.Run(gradientFramework, _config.Model);
     }
 }

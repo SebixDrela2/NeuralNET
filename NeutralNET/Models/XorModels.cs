@@ -21,7 +21,7 @@ internal class XorModels
     public double BiasThree = RandomUtils.GetDouble(1);
 }
 
-public class XorAdvanced : IModel
+public class XorAdvanced
 {
     public readonly float[] TrainingData = 
     [

@@ -3,7 +3,6 @@ using NeutralNET.Models;
 using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 
@@ -66,7 +65,7 @@ public unsafe class NeuralFramework
         Console.WriteLine("]");
     }
     
-    public IModelRunner Run(NeuralFramework gradientFramework, IModel model)
+    public void Run(NeuralFramework gradientFramework, IModel model)
     {
         var trainingInput = model.TrainingInput;
         var trainingOutput = model.TrainingOutput;
@@ -78,11 +77,8 @@ public unsafe class NeuralFramework
 
         HandleTraining(gradientFramework, trainingInput, trainingOutput);
 
-        return new ModelRunner
-        {
-            Input = _matrixNeurons[0],
-            Forward = Forward
-        };
+        model.TrainingInput = _matrixNeurons[0];
+        model.Forward = Forward;
     }
 
     private void HandleTraining(NeuralFramework gradientFramework, Matrix trainingInput, Matrix trainingOutput)

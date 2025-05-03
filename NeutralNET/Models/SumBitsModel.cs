@@ -1,10 +1,11 @@
 ﻿using NeutralNET.Matrices;
 using NeutralNET.Stuff;
+using NeutralNET.Validators;
 using System.Runtime.CompilerServices;
 
 namespace NeutralNET.Models;
 
-public class SumBitsModel : IModel
+public class SumBitsModel : IModel, IValidator
 {
     private const int BitInput = BitModelUtils.Bits;
     private const int BitOutput = BitInput + 1;
@@ -14,18 +15,20 @@ public class SumBitsModel : IModel
     public Matrix TrainingOutput { get; set; }
 
     public uint[] TrainingOutputStrideMask { get; }
+    public Func<Matrix> Forward { get; set; } = null!;
+
     public SumBitsModel()
     {      
         var inputColumns = BitInput * 2;
         var outputColumns = BitOutput;
 
-        //outputColumns += (outputColumns & UnalignedBits) != 0 ? 32 : 0;
-        //outputColumns &= ~UnalignedBits;
-
         TrainingInput = new Matrix(BitRows, inputColumns);
         TrainingOutput = new Matrix(BitRows, outputColumns);
         TrainingOutputStrideMask = TrainingOutput.StrideMask;
+    }
 
+    public void Prepare()
+    {
         var inputSpan = TrainingInput;
         var outputSpan = TrainingOutput.SpanWithGarbage;
 
@@ -41,9 +44,59 @@ public class SumBitsModel : IModel
                 ConvertToBits(a, BitInput, rowSpanInput[..BitInput]);
                 ConvertToBits(b, BitInput, rowSpanInput[BitInput..]);
 
-                ConvertToBits(sum, BitOutput, TrainingOutput.GetRowSpan(index));               
+                ConvertToBits(sum, BitOutput, TrainingOutput.GetRowSpan(index));
             }
         }
+    }
+
+    public void Validate()
+    {
+        var trainingInput = new List<float>();
+        (int Correct, int Incorrect, int Total) counters = default;
+        counters.Total = BitLimit * BitLimit;
+
+        Span<float> inputSpan = TrainingInput.SpanWithGarbage;
+
+        for (var a = 0; a < BitLimit; a++)
+        {
+            for (var b = 0; b < BitLimit; b++)
+            {
+                var sum = a + b;
+                var aBits = Convert.ToString(a, 2).PadLeft(BitInput, '0').Select(x => x == '1' ? 1f : 0f);
+                var bBits = Convert.ToString(b, 2).PadLeft(BitInput, '0').Select(x => x == '1' ? 1f : 0f);
+                var sumBits = Convert.ToString(sum, 2).PadLeft(BitOutput, '0').Select(x => x == '1' ? 1f : 0f).ToArray();
+
+                trainingInput.Clear();
+                trainingInput.AddRange(aBits);
+                trainingInput.AddRange(bBits);
+
+
+                for (int i = 0; i < trainingInput.Count; i++)
+                {
+                    inputSpan[i] = trainingInput[i];
+                }
+
+                var outputData = Forward().GetRowSpan(0).ToArray();
+
+                var aBitsText = string.Join("", aBits);
+                var bBitsText = string.Join("", bBits);
+
+                var expectedBits = string.Join("", sumBits);
+                var actualBits = string.Join("", outputData.Select(element => element > 0.8f ? '1' : '0'));
+
+                bool isCorrect = expectedBits == actualBits;
+                ref var c = ref isCorrect ? ref counters.Correct : ref counters.Incorrect;
+                ++c;
+
+                var resultMessage = isCorrect
+                    ? $"\e[92m  Correct: {aBitsText} + {bBitsText} = {expectedBits}, Predicted: {actualBits}\e[0m"
+                    : $"\e[91mIncorrect: {aBitsText} + {bBitsText} = {expectedBits}, Predicted: {actualBits}\e[0m";
+
+                Console.WriteLine(resultMessage);
+            }
+        }
+
+        Console.WriteLine($"Validation: {counters.Correct}/{counters.Total} correct");
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

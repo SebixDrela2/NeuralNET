@@ -4,8 +4,9 @@ namespace NeutralNET.Models;
 
 public interface IModel
 {
-    public Matrix TrainingInput { get; set; }
-    public Matrix TrainingOutput { get; set; }
-
-    public uint[] TrainingOutputStrideMask { get; }
+    Matrix TrainingInput { get; set; }
+    Matrix TrainingOutput { get; set; }
+    Func<Matrix> Forward { get; set; }
+    void Prepare();
+    uint[] TrainingOutputStrideMask { get; }
 }
