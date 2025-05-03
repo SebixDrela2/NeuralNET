@@ -1,17 +1,18 @@
 ﻿using NeutralNET.Stuff;
-using System.Buffers;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 
 namespace NeutralNET.Matrices;
 
-public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns), IDisposable
+public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns)
 {   
+    // TODO: UNVECTORIZE
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void DotVectorized(Matrix other, Matrix result)
     {
-        int inFeatures = Columns;
+        int inFeatures = UsedColumns;
         int outFeatures = other.Rows;
         int batchSize = Rows;
         int vecSize = Vector256<float>.Count;
@@ -34,7 +35,7 @@ public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns), I
                 for (; k < vectorizable; k += vecSize)
                 {
                     var inputVec = inputRow.LoadVectorAligned(k);
-                    var weightVec = weights.LoadVectorUnaligned(k);
+                    var weightVec = weights.LoadVectorAligned(k);
                     sumVec = Fma.MultiplyAdd(inputVec, weightVec, sumVec);
                 }
 
@@ -51,14 +52,14 @@ public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns), I
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public Span<float> GetRowSpan(int row) => Span.Slice(row * Columns, Columns);
+    public Span<float> GetRowSpan(int row) => SpanWithGarbage.Slice(row * ColumnsStride, UsedColumns);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public MatrixRow GetMatrixRow(int row)
     {
-        float* rowPtr = row * ColumnsStride + _alignedData;
+        float* rowPtr = row * ColumnsStride + Pointer;
 
-        return new MatrixRow(rowPtr, row, Columns, ColumnsStride);
+        return new MatrixRow(rowPtr, UsedColumns, ColumnsStride);
     }
 
     public void CopyRowFrom(Matrix other, int row)
@@ -68,7 +69,7 @@ public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns), I
 
     public void CopyDataFrom(Matrix other)
     {
-        other.Span.CopyTo(Span);
+        NativeMemory.Copy(other.Pointer, Pointer, (nuint)AllocatedLength * sizeof(float));
     }
 
     public Matrix SplitStart(int column)
@@ -95,43 +96,16 @@ public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns), I
         return result;
     }
 
-    public Matrix Row(int row)
-    {
-        var result = new Matrix(1, Columns);
-        GetRowSpan(row).CopyTo(result.Span);
-        return result;
-    }
-
-    public void SumVec(Matrix other)
-    {
-        var span = Span;
-        var otherSpan = other.Span;
-        var i = 0;
-
-        for (; i <= span.Length - Vector256<float>.Count; i += Vector256<float>.Count)
-        {
-            var va = Vector256.LoadAligned((float*)Unsafe.AsPointer(ref span[i]));
-            var vb = Vector256.LoadAligned((float*)Unsafe.AsPointer(ref otherSpan[i]));
-            var sum = Avx.Add(va, vb);
-
-            sum.StoreAligned((float*)Unsafe.AsPointer(ref span[i]));
-        }
-
-        for (; i < span.Length; i++)
-        {
-            span[i] += otherSpan[i];
-        }
-    }
-
+    // TODO: OPTIMIZE
     public void Sum(Matrix other)
     {
-        if (Rows != other.Rows || Columns != other.Columns)
+        if (Rows != other.Rows || UsedColumns != other.UsedColumns)
         {
             throw new ArgumentException("Dimension mismatch");
         }
 
-        var span = Span;
-        var otherSpan = other.Span;
+        var span = SpanWithGarbage;
+        var otherSpan = other.SpanWithGarbage;
 
         for (int i = 0; i < span.Length; i++)
         {
@@ -140,7 +114,7 @@ public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns), I
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public ref float At(int row, int column) => ref Span[row * Columns + column];
+    public ref float At(int row, int column) => ref Pointer[row * ColumnsStride + column];
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Set(int row, int column, float value) => At(row, column) = value;
@@ -151,27 +125,18 @@ public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns), I
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Sub(int row, int column, float value) => At(row, column) -= value;
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Divide(int row, int column, float value) => At(row, column) /= value;
-
     public void Randomize(float low = 0, float high = 1)
     {
-        var span = Span;
+        var span = SpanWithGarbage;
         for (int i = 0; i < span.Length; i++)
         {
             span[i] = RandomUtils.GetFloat(1) * (high - low) + low;
         }
     }
 
-    public new void Clear()
+    public void Clear()
     {
-        var span = Span;
-        span.Clear();
-    }
-
-    public void Fill(float value)
-    {
-        Span.Fill(value);
+        NativeMemory.Clear(Pointer, (nuint)AllocatedLength * sizeof(float));
     }
 
     public void Print(string name)
@@ -191,25 +156,27 @@ public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns), I
         Console.WriteLine("]");
     }
 
-    public void Clip(float min, float max)
+    public void Clamp(float min, float max)
     {
-        var span = Span;
         int vectorSize = Vector256<float>.Count;
         int i = 0;
+
+        float* ptr = Pointer;
+        float* end = ptr + AllocatedLength;
 
         var minVec = Vector256.Create(min);
         var maxVec = Vector256.Create(max);
 
-        for (; i <= span.Length - vectorSize; i += vectorSize)
+        for (; ptr != end; ptr += Vector256<float>.Count)
         {
-            var vec = Vector256.LoadAligned((float*)Unsafe.AsPointer(ref span[i]));
-            vec = Avx.Min(Avx.Max(vec, minVec), maxVec);
-            vec.StoreAligned((float*)Unsafe.AsPointer(ref span[i]));
+            var vec = Vector256.LoadAligned(ptr);
+            vec = Vector256.ClampNative(vec, minVec, maxVec);         
+            vec.StoreAligned(ptr);
         }
 
-        for (; i < span.Length; i++)
-        {
-            span[i] = Math.Clamp(span[i], min, max);
-        }
+        //for (; i < span.Length; i++)
+        //{
+        //    span[i] = Math.Clamp(span[i], min, max);
+        //}
     }
 }

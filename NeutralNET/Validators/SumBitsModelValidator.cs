@@ -14,7 +14,7 @@ public class SumBitsModelValidator(IModelRunner modelRunner) : Validator(modelRu
         (int Correct, int Incorrect, int Total) counters = default;
         counters.Total = BitLimit * BitLimit;
         
-        Span<float> inputSpan = Input.Span;
+        Span<float> inputSpan = Input.SpanWithGarbage;
 
         for (var a = 0; a < BitLimit; a++)
         {
@@ -36,7 +36,8 @@ public class SumBitsModelValidator(IModelRunner modelRunner) : Validator(modelRu
                 }
                 
                 var outputData = new float[BitInput * 2];
-                Forward().Span.CopyTo(outputData);
+                var span = Forward().GetRowSpan(0);
+                span.CopyTo(outputData);
                 
                 var aBitsText = string.Join("", aBits);
                 var bBitsText = string.Join("", bBits);
@@ -52,7 +53,7 @@ public class SumBitsModelValidator(IModelRunner modelRunner) : Validator(modelRu
                     ? $"\e[92m  Correct: {aBitsText} + {bBitsText} = {expectedBits}, Predicted: {actualBits}\e[0m"
                     : $"\e[91mIncorrect: {aBitsText} + {bBitsText} = {expectedBits}, Predicted: {actualBits}\e[0m";
 
-                // Console.WriteLine(resultMessage);
+                Console.WriteLine(resultMessage);
             }
         }
 

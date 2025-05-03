@@ -9,13 +9,14 @@ using System.Runtime.Intrinsics.X86;
 
 namespace NeutralNET.Framework;
 
-public class NeuralFramework
+public unsafe class NeuralFramework
 {
     private MatrixBatchProcessor _batchProcessor = null!;
 
     private Matrix[] _matrixNeurons = null!;
     private Matrix[] _matrixWeights = null!;
     private Matrix[] _matrixBiases = null!;
+    private uint[] _trainingOutputStrideMask = null!;
 
     private readonly NeuralNetworkConfig _config;
 
@@ -44,11 +45,11 @@ public class NeuralFramework
 
         for (var i = 1; i < _config.Architecture.Length; i++)
         {
-            _matrixWeights[i - 1] = new Matrix(_config.Architecture[i], _matrixNeurons[i - 1].Columns);
+            _matrixWeights[i - 1] = new Matrix(_config.Architecture[i], _matrixNeurons[i - 1].UsedColumns);
             _matrixBiases[i - 1] = new Matrix(1, _config.Architecture[i]);
             _matrixNeurons[i] = new Matrix(1, _config.Architecture[i]);
         }
-
+        
         _batchProcessor = new MatrixBatchProcessor();
     }
     
@@ -69,6 +70,7 @@ public class NeuralFramework
     {
         var trainingInput = model.TrainingInput;
         var trainingOutput = model.TrainingOutput;
+        _trainingOutputStrideMask = model.TrainingOutputStrideMask;
 
         _matrixNeurons[0].CopyRowFrom(trainingInput, 0);
 
@@ -141,8 +143,8 @@ public class NeuralFramework
     {
         for (var i = 0; i < Count; i++)
         {
-            gradient._matrixWeights[i].Clip(-1f, 1f);
-            gradient._matrixBiases[i].Clip(-1f, 1f);
+            gradient._matrixWeights[i].Clamp(-1f, 1f);
+            gradient._matrixBiases[i].Clamp(-1f, 1f);
 
             LearnInternalVectorized(_matrixWeights.AsSpan(), gradient._matrixWeights.AsSpan(), _config.LearningRate, i);
             LearnInternalVectorized(_matrixBiases.AsSpan(), gradient._matrixBiases.AsSpan(), _config.LearningRate, i);
@@ -156,22 +158,24 @@ public class NeuralFramework
     float rate,
     int index)
     {
-        var totalIndex = 0;
+        throw new NotSupportedException("Old Learn Internal Activated.");
 
-        var a = rate;
-        var weightDecay = _config.WeightDecay;
-        var A = matrixes[index].Span;
-        var B = gradientMatrixes[index].Span;
+        //var totalIndex = 0;
 
-        var totalLength = matrixes[index].Rows * matrixes[index].Columns;
+        //var a = rate;
+        //var weightDecay = _config.WeightDecay;
+        //var A = matrixes[index].Span;
+        //var B = gradientMatrixes[index].Span;
 
-        float factor = 1.0f - rate * weightDecay;
+        //var totalLength = matrixes[index].Rows * matrixes[index].Columns;
 
-        for (var i = 0; i < totalLength; i++)
-        {
-            //A[i] = A[i] - rate * (weightDecay * A[i] + B[i]);
-            A[i] = A[i] * factor - rate * B[i];
-        }       
+        //float factor = 1.0f - rate * weightDecay;
+
+        //for (var i = 0; i < totalLength; i++)
+        //{
+        //    A[i] = A[i] - rate * (weightDecay * A[i] + B[i]);
+        //    A[i] = A[i] * factor - rate * B[i];
+        //}       
     }
 
     private void LearnInternalVectorized(
@@ -183,33 +187,32 @@ public class NeuralFramework
         var weightDecay = _config.WeightDecay;
         float factor = 1.0f - rate * weightDecay;
 
-        var aSpan = matrixes[index].Span;
-        var bSpan = gradientMatrixes[index].Span;
+        float* aPtr = matrixes[index].Pointer;
+        float* bPtr = gradientMatrixes[index].Pointer;
+        float* aEnd = aPtr + matrixes[index].AllocatedLength;
 
-        ref float aRef = ref MemoryMarshal.GetReference(aSpan);
-        ref float bRef = ref MemoryMarshal.GetReference(bSpan);
-        int remaining = aSpan.Length;
-
-        var factorVec = Vector256.Create(factor);
-        var rateVec = Vector256.Create(-rate);
-
-        while (remaining >= 8)
+        if (Avx2.IsSupported)
         {
-            var aVec = Vector256.LoadUnsafe(ref aRef);
-            var bVec = Vector256.LoadUnsafe(ref bRef);
+            var factorVec = Vector256.Create(factor);
+            var rateVec = Vector256.Create(-rate);
 
-            var result = Fma.MultiplyAdd(bVec, rateVec, Avx.Multiply(aVec, factorVec));
+            for (; aPtr != aEnd; aPtr += Vector256<float>.Count, bPtr += Vector256<float>.Count)
+            {
+                var aVec = Vector256.LoadAligned(aPtr);
+                var bVec = Vector256.LoadAligned(bPtr);
 
-            result.StoreUnsafe(ref aRef);
-            aRef = ref Unsafe.Add(ref aRef, 8);
-            bRef = ref Unsafe.Add(ref bRef, 8);
-            remaining -= 8;
+                var result = Fma.MultiplyAdd(bVec, rateVec, Avx.Multiply(aVec, factorVec));
+
+                result.StoreAligned(aPtr);
+            }
         }
-
-        for (int i = 0; i < remaining; i++)
+        else
         {
-            Unsafe.Add(ref aRef, i) =
-                Unsafe.Add(ref aRef, i) * factor - rate * Unsafe.Add(ref bRef, i);
+            for (int i = 0; i < matrixes[index].AllocatedLength; i++)
+            {
+                aPtr[i] =
+                    aPtr[i] * factor - rate * bPtr[i];
+            }
         }
     }
 
@@ -240,34 +243,38 @@ public class NeuralFramework
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void ComputeOutputLayer(NeuralFramework gradient, MatrixElement output)
+    private void ComputeOutputLayer(NeuralFramework gradient, MatrixRow output)
     {
-        var realLastMatrixNeuron = _matrixNeurons[Count].Pointer;
-        var gradientLastMatrixNeuron = gradient._matrixNeurons[Count].Pointer;
+        var aPtr = _matrixNeurons[Count].Pointer;
+        var bPtr = gradient._matrixNeurons[Count].Pointer;
+        var cPtr = output.Pointer;
+        float* aEnd = aPtr + _matrixNeurons[Count].AllocatedLength;
 
-        int i = 0;
-
-        while (i <= output.Count - Vector256<float>.Count)
+        if (Avx2.IsSupported)
         {
-            var predVec = realLastMatrixNeuron.LoadVectorAligned(i);
-            var targetVec = output.LoadVectorUnaligned(i);
-            var diff = Avx.Subtract(predVec, targetVec);
-            Vector256.StoreUnsafe(diff, ref gradientLastMatrixNeuron.Reference, (nuint)i);
-            i += Vector256<float>.Count;
+            for (; aPtr != aEnd; aPtr += Vector256<float>.Count, bPtr += Vector256<float>.Count, cPtr += Vector256<float>.Count)
+            {
+                var predVec = Vector256.LoadAligned(aPtr);
+                var targetVec = Vector256.LoadAligned(cPtr);
+                var diff = Avx.Subtract(predVec, targetVec);
+                diff.StoreAligned(bPtr);
+            }
         }
-
-        for (; i < output.Count; i++)
+        else
         {
-            gradientLastMatrixNeuron[i] = realLastMatrixNeuron[i] - output[i];
+            for (; aPtr < aEnd; ++aPtr, ++bPtr, ++cPtr)
+            {
+                *bPtr = *aPtr - *cPtr;
+            }
         }
     }
 
     private void PropagateToPreviousLayer(NeuralFramework gradient)
     {       
         for (int layerIdx = Count; layerIdx > 0; layerIdx--)
-        {            
-            var currentActivations = _matrixNeurons[layerIdx].Pointer;
-            var currentErrors = gradient._matrixNeurons[layerIdx].Pointer;
+        {
+            var currentActivations = _matrixNeurons[layerIdx];
+            var currentErrors = gradient._matrixNeurons[layerIdx];
 
             BackPropagateLayerVectorized(layerIdx, gradient, currentActivations, currentErrors);
         }
@@ -277,101 +284,79 @@ public class NeuralFramework
     private void BackPropagateLayerVectorized(
     int layerIndex,
     NeuralFramework gradient,
-    MatrixElement currentActivations,
-    MatrixElement currentErrors)
+    Matrix currentActivations,
+    Matrix currentErrors)
     {
-        var gradientLayerIndexNeuron = gradient._matrixNeurons[layerIndex - 1];
-        var gradientLayerIndexBias = gradient._matrixBiases[layerIndex - 1];
+        var prevNeuronGradients = gradient._matrixNeurons[layerIndex - 1].Pointer;
+        var gradientLayerIndexBias = gradient._matrixBiases[layerIndex - 1].Pointer;
         var gradientLayerIndexWeight = gradient._matrixWeights[layerIndex - 1];
 
-        var realLayerIndexNeuron = _matrixNeurons[layerIndex - 1];
+        var lastRealNeuronMatrix = _matrixNeurons[layerIndex - 1];
+        var prevActivations = lastRealNeuronMatrix.Pointer;
+        var prevActivationsEnd = prevActivations + lastRealNeuronMatrix.ColumnsStride;
         var realLayerIndexWeight = _matrixWeights[layerIndex - 1];
+      
+        var neuronCount = currentActivations.UsedColumns;
 
-        var prevActivations = realLayerIndexNeuron.GetRowSpan(0);
-        var vectorSize = Vector256<float>.Count;
+        var weights = realLayerIndexWeight.Pointer;
+        var weightsGradients = gradientLayerIndexWeight.Pointer;
 
-        for (var neuronIdx = 0; neuronIdx < currentActivations.Count; neuronIdx++)
+        for (var neuronIdx = 0; neuronIdx < neuronCount; neuronIdx++)
         {
-            var activation = currentActivations[neuronIdx];
-            var error = currentErrors[neuronIdx];
+            var activation = currentActivations.Pointer[neuronIdx];
+            var error = currentErrors.Pointer[neuronIdx];
+
             var neuronGradient = CalculateNeuronGradient(activation, error);
 
-            gradientLayerIndexBias.Add(0, neuronIdx, neuronGradient);
+            gradientLayerIndexBias[neuronIdx] += neuronGradient;
 
-            var weights = realLayerIndexWeight.GetRowSpan(neuronIdx);
-            var weightGradients = gradientLayerIndexWeight.GetRowSpan(neuronIdx);
-            var prevNeuronGradients = gradientLayerIndexNeuron.GetRowSpan(0);
-
-            int prevNeuronIdx = 0;
-
-            Vector256<float> ngVec = Vector256.Create(neuronGradient);
-            int upperBound = prevActivations.Length - vectorSize;
-
-            prevNeuronIdx = AccumulateVectorizedGradients(
-                prevActivations, 
-                vectorSize, 
-                weights, 
-                weightGradients, 
-                prevNeuronGradients, 
-                prevNeuronIdx, 
-                ngVec, 
-                upperBound);
-
-            while (prevNeuronIdx < prevActivations.Length)
-            {
-                weightGradients[prevNeuronIdx] += neuronGradient * prevActivations[prevNeuronIdx];
-                prevNeuronGradients[prevNeuronIdx] += neuronGradient * weights[prevNeuronIdx];
-                prevNeuronIdx++;
-            }
+            AccumulateVectorizedGradients(prevActivations, prevActivationsEnd, ref weights, ref weightsGradients, prevNeuronGradients, neuronGradient);           
         }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static int AccumulateVectorizedGradients(
-        Span<float> prevActivations, 
-        int vectorSize, 
-        Span<float> weights, 
-        Span<float> weightGradients, 
-        Span<float> prevNeuronGradients, 
-        int prevNeuronIdx, 
-        Vector256<float> ngVec, 
-        int upperBound)
+    private static void AccumulateVectorizedGradients(
+        float* aPtr,
+        float* aEnd,
+        ref float* bPtr, 
+        ref float* cPtr, 
+        float* dPtr, 
+        float neuronGradient)
     {
-        while (prevNeuronIdx <= upperBound)
+        var ngVec = Vector256.Create(neuronGradient);
+        
+        if (Avx2.IsSupported)
         {
-            var paVec = Vector256.LoadUnsafe(
-                ref MemoryMarshal.GetReference(prevActivations), (nuint)prevNeuronIdx
-            );
-            var wVec = Vector256.LoadUnsafe(
-                ref MemoryMarshal.GetReference(weights), (nuint)prevNeuronIdx
-            );
+            for (; aPtr != aEnd;
+                aPtr += Vector256<float>.Count,
+                bPtr += Vector256<float>.Count,
+                cPtr += Vector256<float>.Count,
+                dPtr += Vector256<float>.Count)
+            {
+                var paVec = Vector256.LoadAligned(aPtr);
+                var wVec = Vector256.LoadAligned(bPtr);
 
-            var wGrad = Avx.Multiply(ngVec, paVec);
-            var pGrad = Avx.Multiply(ngVec, wVec);
+                var wGrad = Avx.Multiply(ngVec, paVec);
+                var pGrad = Avx.Multiply(ngVec, wVec);
 
-            var existingWGrad = Vector256.LoadUnsafe(
-                ref MemoryMarshal.GetReference(weightGradients), (nuint)prevNeuronIdx
-            );
-            var existingPGrad = Vector256.LoadUnsafe(
-                ref MemoryMarshal.GetReference(prevNeuronGradients), (nuint)prevNeuronIdx
-            );
+                var existingWGrad = Vector256.LoadAligned(cPtr);
+                var existingPGrad = Vector256.LoadAligned(dPtr);
 
-            Vector256.StoreUnsafe(
-                Avx.Add(existingWGrad, wGrad),
-                ref MemoryMarshal.GetReference(weightGradients),
-                (nuint)prevNeuronIdx
-            );
+                var grad = Avx.Add(existingWGrad, wGrad);
+                grad.StoreAligned(cPtr);
 
-            Vector256.StoreUnsafe(
-                Avx.Add(existingPGrad, pGrad),
-                ref MemoryMarshal.GetReference(prevNeuronGradients),
-                (nuint)prevNeuronIdx
-            );
-
-            prevNeuronIdx += vectorSize;
+                grad = Avx.Add(existingPGrad, pGrad);
+                grad.StoreAligned(dPtr);
+            }
         }
-
-        return prevNeuronIdx;
+        else
+        {
+            for (; aPtr != aEnd; ++aPtr, ++bPtr, ++cPtr, ++dPtr)
+            {
+                *cPtr += neuronGradient * (*aPtr);
+                *dPtr += neuronGradient * (*bPtr);
+            }
+        }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -382,29 +367,28 @@ public class NeuralFramework
 
         for (var i = 0; i < gradient.Count; i++)
         {
-            NormalizeArray(gradient._matrixWeights[i].Span, divisorVec, divisorScalar);
-            NormalizeArray(gradient._matrixBiases[i].Span, divisorVec, divisorScalar);
+            NormalizeArray(gradient._matrixWeights[i], divisorVec, divisorScalar);
+            NormalizeArray(gradient._matrixBiases[i], divisorVec, divisorScalar);
         }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void NormalizeArray(Span<float> data, Vector256<float> divisorVec, float divisorScalar)
+    private static void NormalizeArray(Matrix matrix, Vector256<float> divisorVec, float divisorScalar)
     {
-        int simdLength = Vector256<float>.Count;
-        int i = 0;
+        var ptr = matrix.Pointer;
+        float* end = ptr + matrix.AllocatedLength;
 
-        while (i <= data.Length - simdLength)
+        for (; ptr != end; ptr += Vector256<float>.Count)
         {
-            var vec = Vector256.LoadUnsafe(ref MemoryMarshal.GetReference(data), (nuint)i);
+            var vec = Vector256.LoadAligned(ptr);
             vec = Avx.Divide(vec, divisorVec);
-            vec.StoreUnsafe(ref MemoryMarshal.GetReference(data), (nuint)i);
-            i += simdLength;
+            vec.StoreAligned(ptr);          
         }
 
-        for (; i < data.Length; i++)
-        {
-            data[i] /= divisorScalar;
-        }
+        //for (; i < data.Length; i++)
+        //{
+        //    data[i] /= divisorScalar;
+        //}
     }
 
     private float CalculateNeuronGradient(float activation, float error)
@@ -470,36 +454,58 @@ public class NeuralFramework
     {
         var totalLoss = 0f;
         var count = 0;
-        var realFirstNeuron = _matrixNeurons[0].Pointer;
-        var realLastNeuron = _matrixNeurons[Count];
+
+        var realFirstNeuronMatrix = _matrixNeurons[0];
+        var realLastNeuronMatrix = _matrixNeurons[Count];
+
+        var aPtr = realFirstNeuronMatrix.Pointer;
+        var realFirstNeuronPtr = realLastNeuronMatrix.Pointer;
+
+        var sumMask = Vector256.Create(_trainingOutputStrideMask).AsSingle();
 
         foreach (var pair in batch)
         {
-            pair.Input.CopyTo(realFirstNeuron);
+            var bPtr = realFirstNeuronPtr;
+
+            pair.Input.CopyTo(aPtr);
             Forward();
 
+            var cPtr = pair.Output.Pointer;
+            var cEnd = cPtr + pair.Output.Stride;
+
             var outputRow = pair.Output;
-            var predicted = realLastNeuron.Span;
+            var predicted = realLastNeuronMatrix;
             var batchLoss = 0f;
             var j = 0;
 
             var lossVec = Vector256<float>.Zero;
-            while (j <= outputRow.Columns - Vector256<float>.Count)
+            //while (j <= outputRow.Columns - Vector256<float>.Count)
+            //{
+            //    var predVec = Vector256.LoadUnsafe(ref MemoryMarshal.GetReference(predicted), (nuint)j);
+            //    var targetVec = outputRow.LoadVectorUnaligned(j);
+            //    var diff = Avx.Subtract(predVec, targetVec);
+            //    lossVec = Avx.Add(lossVec, Avx.Multiply(diff, diff));
+            //    j += Vector256<float>.Count;
+            //}
+
+            //batchLoss += Vector256.Sum(lossVec);
+
+            //for (; j < outputRow.Columns; j++)
+            //{
+            //    float diff = predicted[j] - outputRow.Span[j];
+            //    batchLoss += diff * diff;
+            //}
+            
+            for (; cPtr != cEnd; bPtr += Vector256<float>.Count, cPtr += Vector256<float>.Count)
             {
-                var predVec = Vector256.LoadUnsafe(ref MemoryMarshal.GetReference(predicted), (nuint)j);
-                var targetVec = outputRow.LoadVectorUnaligned(j);
+                var predVec = Vector256.LoadAligned(bPtr);
+                var targetVec = Vector256.LoadAligned(cPtr);
                 var diff = Avx.Subtract(predVec, targetVec);
                 lossVec = Avx.Add(lossVec, Avx.Multiply(diff, diff));
-                j += Vector256<float>.Count;
             }
 
+            lossVec = Avx.And(lossVec, sumMask);
             batchLoss += Vector256.Sum(lossVec);
-
-            for (; j < outputRow.Columns; j++)
-            {
-                float diff = predicted[j] - outputRow[j];
-                batchLoss += diff * diff;
-            }
 
             totalLoss += batchLoss;
             count++;

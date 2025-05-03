@@ -34,6 +34,8 @@ public class XorAdvanced : IModel
     public Matrix TrainingInput { get; set; } = null!;
     public Matrix TrainingOutput { get; set; } = null!;
 
+    public uint[] TrainingOutputStrideMask => throw new NotImplementedException();
+
     public Matrix A0 = new Matrix(1, 2);
     public Matrix A1 = new Matrix(2, 2);
     public Matrix A2 = new Matrix(2, 2);
@@ -53,14 +55,14 @@ public class XorAdvanced : IModel
         A2.Sum(B2);
         A2.ApplySigmoidVectorized();
 
-        return A2.Span[0];
+        return A2.SpanWithGarbage[0];
     }
 
     public void Prepare()
     {
         var trainingData = new Matrix(4, 3);
 
-        TrainingData.AsSpan().CopyTo(trainingData.Span);
+        TrainingData.AsSpan().CopyTo(trainingData.SpanWithGarbage);
         
         TrainingInput = trainingData.SplitStart(2);
         TrainingOutput = trainingData.SplitEnd(1);
@@ -118,7 +120,7 @@ public class XorAdvanced : IModel
     {
         for (var i = 0; i < matrix.Rows; i++)
         {
-            for (var j = 0; j < matrix.Columns; j++)
+            for (var j = 0; j < matrix.UsedColumns; j++)
             {
                 matrix.Sub(i, j, rate * gradient.At(i, j));
             }
@@ -149,7 +151,7 @@ public class XorAdvanced : IModel
     {
         for (var i = 0; i < matrix.Rows; i++)
         {
-            for (var j = 0; j < matrix.Columns; j++)
+            for (var j = 0; j < matrix.UsedColumns; j++)
             {
                 float originalValue = matrix.At(i, j);
 
@@ -175,15 +177,15 @@ public class XorAdvanced : IModel
 
         for (var i = 0; i < trainingInput.Rows; i++)
         {
-            var inputRow = trainingInput.Row(i);
-            var outputRow = trainingOutput.Row(i);
+            var inputRow = trainingInput.GetRowSpan(i);
+            var outputRow = trainingOutput.GetRowSpan(i);
 
-            A0.CopyDataFrom(inputRow);
+            A0.GetRowSpan(0).CopyTo(inputRow);
             var output = Forward();
 
-            for (var j = 0; j < trainingOutput.Columns; j++)
+            for (var j = 0; j < trainingOutput.UsedColumns; j++)
             {
-                var distance = output - outputRow.At(0, j);
+                var distance = output - outputRow[j];
 
                 cost += distance * distance;
             }

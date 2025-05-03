@@ -18,7 +18,8 @@ public readonly unsafe struct MatrixElement(float* pointer, int length)
     public nuint ByteLenght => sizeof(float) * (nuint)Count;
 
     public ref float this[int index] => ref Pointer[index];
-    
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void CopyTo(MatrixElement other)
     {
         NativeMemory.Copy(Pointer, other.Pointer, ByteLenght);

@@ -1,7 +1,5 @@
 ﻿using NeutralNET.Matrices;
 using NeutralNET.Stuff;
-using System.Collections.Generic;
-using System.Linq;
 using System.Runtime.CompilerServices;
 
 namespace NeutralNET.Models;
@@ -15,8 +13,9 @@ public class SumBitsModel : IModel
     public Matrix TrainingInput { get; set; }
     public Matrix TrainingOutput { get; set; }
 
+    public uint[] TrainingOutputStrideMask { get; }
     public SumBitsModel()
-    {
+    {      
         var inputColumns = BitInput * 2;
         var outputColumns = BitOutput;
 
@@ -25,31 +24,36 @@ public class SumBitsModel : IModel
 
         TrainingInput = new Matrix(BitRows, inputColumns);
         TrainingOutput = new Matrix(BitRows, outputColumns);
+        TrainingOutputStrideMask = TrainingOutput.StrideMask;
 
-        var inputSpan = TrainingInput.Span;
-        var outputSpan = TrainingOutput.Span;
+        var inputSpan = TrainingInput;
+        var outputSpan = TrainingOutput.SpanWithGarbage;
 
         int inputIndex = 0;
         int outputIndex = 0;
+        var i = 0;
 
         for (var a = 0; a < BitLimit; a++)
         {
-            for (var b = 0; b < BitLimit; b++)
+            for (var b = 0; b < BitLimit; b++, ++i)
             {
                 var sum = a + b;
+                var rowSpanInput = TrainingInput.GetRowSpan(i);
 
-                ConvertToBits(a, BitInput, inputSpan, ref inputIndex);
-                ConvertToBits(b, BitInput, inputSpan, ref inputIndex);
+                ConvertToBits(a, BitInput, rowSpanInput[..BitInput]);
+                ConvertToBits(b, BitInput, rowSpanInput[BitInput..]);
 
-                ConvertToBits(sum, BitOutput, outputSpan, ref outputIndex);
+                ConvertToBits(sum, BitOutput, TrainingOutput.GetRowSpan(i));               
             }
         }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void ConvertToBits(int number, int bitLength, Span<float> target, ref int index)
+    private static void ConvertToBits(int number, int bitLength, Span<float> target)
     {
         string binary = Convert.ToString(number, 2).PadLeft(bitLength, '0');
+        var index = 0;
+
         foreach (char c in binary)
         {
             if (index >= target.Length)
