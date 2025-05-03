@@ -43,7 +43,8 @@ public abstract unsafe class MatrixBase : IDisposable
 
         Pointer = (float*)NativeMemory.AlignedAlloc(byteCount, ByteAlignment);
         var strideMask = new uint[Vector256<float>.Count];
-        var computation = UsedColumns & AlignmentMask;
+        var computation = (UsedColumns & AlignmentMask);
+        computation = computation is 0 ? Alignment : computation;
 
         for (var i = 0; i < computation; ++i)
         {

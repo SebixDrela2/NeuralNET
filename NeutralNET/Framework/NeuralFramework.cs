@@ -124,7 +124,7 @@ public unsafe class NeuralFramework
                 var elasped = stopWatch.Elapsed;
                 var timePerSecond = batchProcessCount / elasped.TotalSeconds;
 
-                Console.WriteLine($"Epoch ({epoch}/{_config.Epochs}) Loss: {loss} BPC:{timePerSecond:F2}/s TB:{batchProcessCount} TP:{elasped}");
+                Console.WriteLine($"Epoch ({epoch}/{_config.Epochs}) Loss: {loss} BPS:{timePerSecond:F2}/s TB:{batchProcessCount} TP:{elasped}");
              }
         }
     }
@@ -142,12 +142,9 @@ public unsafe class NeuralFramework
     private void Learn(NeuralFramework gradient)
     {
         for (var i = 0; i < Count; i++)
-        {
-            gradient._matrixWeights[i].Clamp(-1f, 1f);
-            gradient._matrixBiases[i].Clamp(-1f, 1f);
-
-            LearnInternalVectorized(_matrixWeights.AsSpan(), gradient._matrixWeights.AsSpan(), _config.LearningRate, i);
-            LearnInternalVectorized(_matrixBiases.AsSpan(), gradient._matrixBiases.AsSpan(), _config.LearningRate, i);
+        {           
+            LearnInternalVectorized(_matrixWeights.AsSpan(), gradient._matrixWeights.AsSpan(), i);
+            LearnInternalVectorized(_matrixBiases.AsSpan(), gradient._matrixBiases.AsSpan(), i);
         }
     }
 
@@ -181,11 +178,10 @@ public unsafe class NeuralFramework
     private void LearnInternalVectorized(
     ReadOnlySpan<Matrix> matrixes,
     ReadOnlySpan<Matrix> gradientMatrixes,
-    float rate,
     int index)
     {
         var weightDecay = _config.WeightDecay;
-        float factor = 1.0f - rate * weightDecay;
+        float factor = 1.0f - _config.LearningRate * weightDecay;
 
         float* aPtr = matrixes[index].Pointer;
         float* bPtr = gradientMatrixes[index].Pointer;
@@ -194,7 +190,7 @@ public unsafe class NeuralFramework
         if (Avx2.IsSupported)
         {
             var factorVec = Vector256.Create(factor);
-            var rateVec = Vector256.Create(-rate);
+            var rateVec = Vector256.Create(-_config.LearningRate);
 
             for (; aPtr != aEnd; aPtr += Vector256<float>.Count, bPtr += Vector256<float>.Count)
             {
@@ -211,7 +207,7 @@ public unsafe class NeuralFramework
             for (int i = 0; i < matrixes[index].AllocatedLength; i++)
             {
                 aPtr[i] =
-                    aPtr[i] * factor - rate * bPtr[i];
+                    aPtr[i] * factor - _config.LearningRate * bPtr[i];
             }
         }
     }

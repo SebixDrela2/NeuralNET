@@ -7,9 +7,9 @@ namespace NeutralNET.Models;
 public class SumBitsModel : IModel
 {
     private const int BitInput = BitModelUtils.Bits;
-    private const int BitOutput = BitInput * 2;
+    private const int BitOutput = BitInput + 1;
     private const int BitLimit = 1 << BitInput;
-    private const int BitRows = 1 << BitOutput;
+    private const int BitRows = 1 << (BitInput * 2);
     public Matrix TrainingInput { get; set; }
     public Matrix TrainingOutput { get; set; }
 
@@ -29,21 +29,19 @@ public class SumBitsModel : IModel
         var inputSpan = TrainingInput;
         var outputSpan = TrainingOutput.SpanWithGarbage;
 
-        int inputIndex = 0;
-        int outputIndex = 0;
-        var i = 0;
+        var index = 0;
 
         for (var a = 0; a < BitLimit; a++)
         {
-            for (var b = 0; b < BitLimit; b++, ++i)
+            for (var b = 0; b < BitLimit; b++, ++index)
             {
                 var sum = a + b;
-                var rowSpanInput = TrainingInput.GetRowSpan(i);
+                var rowSpanInput = TrainingInput.GetRowSpan(index);
 
                 ConvertToBits(a, BitInput, rowSpanInput[..BitInput]);
                 ConvertToBits(b, BitInput, rowSpanInput[BitInput..]);
 
-                ConvertToBits(sum, BitOutput, TrainingOutput.GetRowSpan(i));               
+                ConvertToBits(sum, BitOutput, TrainingOutput.GetRowSpan(index));               
             }
         }
     }

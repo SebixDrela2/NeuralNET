@@ -7,6 +7,7 @@ public class SumBitsModelValidator(IModelRunner modelRunner) : Validator(modelRu
 {
     private const int BitInput = BitModelUtils.Bits;
     private const int BitLimit = 1 << BitInput;
+    private const int BitOutput = BitInput + 1;
 
     public override void Validate()
     {
@@ -23,7 +24,7 @@ public class SumBitsModelValidator(IModelRunner modelRunner) : Validator(modelRu
                 var sum = a + b;
                 var aBits = Convert.ToString(a, 2).PadLeft(BitInput, '0').Select(x => x == '1' ? 1f : 0f);
                 var bBits = Convert.ToString(b, 2).PadLeft(BitInput, '0').Select(x => x == '1' ? 1f : 0f);
-                var sumBits = Convert.ToString(sum, 2).PadLeft(BitInput * 2, '0').Select(x => x == '1' ? 1f : 0f).ToArray();
+                var sumBits = Convert.ToString(sum, 2).PadLeft(BitOutput, '0').Select(x => x == '1' ? 1f : 0f).ToArray();
               
                 trainingInput.Clear();
                 trainingInput.AddRange(aBits);
@@ -35,9 +36,7 @@ public class SumBitsModelValidator(IModelRunner modelRunner) : Validator(modelRu
                     inputSpan[i] = trainingInput[i];
                 }
                 
-                var outputData = new float[BitInput * 2];
-                var span = Forward().GetRowSpan(0);
-                span.CopyTo(outputData);
+                var outputData = Forward().GetRowSpan(0).ToArray();
                 
                 var aBitsText = string.Join("", aBits);
                 var bBitsText = string.Join("", bBits);
