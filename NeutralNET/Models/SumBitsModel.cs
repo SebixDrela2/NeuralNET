@@ -24,7 +24,7 @@ public class SumBitsModel : IModel, IValidator
 
         TrainingInput = new Matrix(BitRows, inputColumns);
         TrainingOutput = new Matrix(BitRows, outputColumns);
-        TrainingOutputStrideMask = TrainingOutput.StrideMask;
+        TrainingOutputStrideMask = TrainingOutput.StrideMasks;
     }
 
     public void Prepare()

@@ -25,8 +25,8 @@ internal class Program
         model.Prepare();
 
         var network = new NeuralNetworkBuilder()
-            .WithArchitecture(bits * 2, 20, 20, bits + 1)
-            .WithEpochs(1000)
+            .WithArchitecture(bits * 2, 32, 32, bits + 1)
+            .WithEpochs(3000)
             .WithBatchSize(BatchSize)
             .WithLearningRate(0.01f)
             .WithWeightDecay(1e-5f)

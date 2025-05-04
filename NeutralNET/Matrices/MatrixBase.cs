@@ -26,7 +26,7 @@ public abstract unsafe class MatrixBase : IDisposable
     public int UsedColumns;
     public int LogicalLength;
     public int AllocatedLength;
-    public uint[] StrideMask;
+    public uint[] StrideMasks;
     public Span<float> SpanWithGarbage => new(Pointer, AllocatedLength);  
 
     public MatrixBase(int rows, int columns)
@@ -51,12 +51,12 @@ public abstract unsafe class MatrixBase : IDisposable
             strideMask[i] = ~0u;
         }
 
-        StrideMask = strideMask;
+        StrideMasks = strideMask;
         SpanWithGarbage.Clear();
     }
 
     public void Dispose() => NativeMemory.AlignedFree(Pointer);
-
+    
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ApplySigmoidVectorized()
     {

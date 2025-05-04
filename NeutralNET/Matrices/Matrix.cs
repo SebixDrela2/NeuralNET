@@ -156,29 +156,5 @@ public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns)
         Console.WriteLine("]");
     }
 
-    public override string ToString() => $"{Rows}x{UsedColumns}";
-
-    public void Clamp(float min, float max)
-    {
-        int vectorSize = Vector256<float>.Count;
-        int i = 0;
-
-        float* ptr = Pointer;
-        float* end = ptr + AllocatedLength;
-
-        var minVec = Vector256.Create(min);
-        var maxVec = Vector256.Create(max);
-
-        for (; ptr != end; ptr += Vector256<float>.Count)
-        {
-            var vec = Vector256.LoadAligned(ptr);
-            vec = Vector256.ClampNative(vec, minVec, maxVec);         
-            vec.StoreAligned(ptr);
-        }
-
-        //for (; i < span.Length; i++)
-        //{
-        //    span[i] = Math.Clamp(span[i], min, max);
-        //}
-    }
+    public override string ToString() => $"{Rows}x{UsedColumns}";   
 }

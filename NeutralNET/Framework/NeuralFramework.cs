@@ -10,12 +10,11 @@ namespace NeutralNET.Framework;
 
 public unsafe class NeuralFramework
 {
-    private MatrixBatchProcessor _batchProcessor = null!;
+    private readonly NeuralNetworkConfig _config;
 
+    private MatrixBatchProcessor _batchProcessor = null!;
     private Architecture _architecture = null!;
     private uint[] _trainingOutputStrideMask = null!;
-
-    private readonly NeuralNetworkConfig _config;
 
     public NeuralFramework(NeuralNetworkConfig config)
     {
@@ -123,8 +122,8 @@ public unsafe class NeuralFramework
     {
         for (var i = 0; i < _architecture.Count; i++)
         {           
-            LearnInternalVectorized(_architecture.MatrixWeights.AsSpan(), gradient.MatrixWeights.AsSpan(), i);
-            LearnInternalVectorized(_architecture.MatrixBiases.AsSpan(), gradient.MatrixBiases.AsSpan(), i);
+            LearnInternalVectorized(_architecture.MatrixWeights, gradient.MatrixWeights, i);
+            LearnInternalVectorized(_architecture.MatrixBiases, gradient.MatrixBiases, i);
         }
     }
 
@@ -156,8 +155,8 @@ public unsafe class NeuralFramework
     }
 
     private void LearnInternalVectorized(
-    ReadOnlySpan<Matrix> matrixes,
-    ReadOnlySpan<Matrix> gradientMatrixes,
+    Matrix[] matrixes,
+    Matrix[] gradientMatrixes,
     int index)
     {
         var weightDecay = _config.WeightDecay;
@@ -184,7 +183,7 @@ public unsafe class NeuralFramework
         }
         else
         {
-            for (int i = 0; i < matrixes[index].AllocatedLength; i++)
+            for (var i = 0; i < matrixes[index].AllocatedLength; i++)
             {
                 aPtr[i] =
                     aPtr[i] * factor - _config.LearningRate * bPtr[i];
@@ -262,10 +261,10 @@ public unsafe class NeuralFramework
     Architecture gradient,
     Matrix currentActivations,
     Matrix currentErrors)
-    {
+    {        
         var prevNeuronGradients = gradient.MatrixNeurons[layerIndex - 1].Pointer;
         var gradientLayerIndexBias = gradient.MatrixBiases[layerIndex - 1].Pointer;
-        var gradientLayerIndexWeight = gradient.MatrixWeights[layerIndex - 1];
+        var weightsGradient = gradient.MatrixWeights[layerIndex - 1].Pointer;
 
         var lastRealNeuronMatrix = _architecture.MatrixNeurons[layerIndex - 1];
         var prevActivations = lastRealNeuronMatrix.Pointer;
@@ -275,7 +274,6 @@ public unsafe class NeuralFramework
         var neuronCount = currentActivations.UsedColumns;
 
         var weights = realLayerIndexWeight.Pointer;
-        var weightsGradients = gradientLayerIndexWeight.Pointer;
 
         for (var neuronIdx = 0; neuronIdx < neuronCount; neuronIdx++)
         {
@@ -286,7 +284,7 @@ public unsafe class NeuralFramework
 
             gradientLayerIndexBias[neuronIdx] += neuronGradient;
 
-            AccumulateVectorizedGradients(prevActivations, prevActivationsEnd, ref weights, ref weightsGradients, prevNeuronGradients, neuronGradient);           
+            AccumulateVectorizedGradients(prevActivations, prevActivationsEnd, ref weights, ref weightsGradient, prevNeuronGradients, neuronGradient);           
         }
     }
 
@@ -354,23 +352,25 @@ public unsafe class NeuralFramework
         var ptr = matrix.Pointer;
         float* end = ptr + matrix.AllocatedLength;
 
-        for (; ptr != end; ptr += Vector256<float>.Count)
+        if (Avx2.IsSupported)
         {
-            var vec = Vector256.LoadAligned(ptr);
-            vec = Avx.Divide(vec, divisorVec);
-            vec.StoreAligned(ptr);          
+            for (; ptr != end; ptr += Vector256<float>.Count)
+            {
+                var vec = Vector256.LoadAligned(ptr);
+                vec = Avx.Divide(vec, divisorVec);
+                vec.StoreAligned(ptr);
+            }
         }
-
-        //for (; i < data.Length; i++)
-        //{
-        //    data[i] /= divisorScalar;
-        //}
+        else
+        {
+            for (; ptr < end; ptr++)
+            {
+                *ptr /= divisorScalar;
+            }
+        }
     }
 
-    private float CalculateNeuronGradient(float activation, float error)
-    {
-        return 2 * error * (activation > 0 ? 1 : 0);
-    }
+    private float CalculateNeuronGradient(float activation, float error) => 2 * error * (activation > 0 ? 1 : 0);
 
     [Obsolete]
     private void FiniteDifference(
@@ -442,7 +442,6 @@ public unsafe class NeuralFramework
             var outputRow = pair.Output;
             var predicted = realLastNeuronMatrix;
             var batchLoss = 0f;
-            var j = 0;
 
             var lossVec = Vector256<float>.Zero;
             //while (j <= outputRow.Columns - Vector256<float>.Count)
