@@ -156,6 +156,8 @@ public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns)
         Console.WriteLine("]");
     }
 
+    public override string ToString() => $"{Rows}x{UsedColumns}";
+
     public void Clamp(float min, float max)
     {
         int vectorSize = Vector256<float>.Count;

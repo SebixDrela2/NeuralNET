@@ -12,8 +12,6 @@ public class NeuralNetwork
     public void Run()
     {
         var neuralFramework = new NeuralFramework(_config);
-        var gradientFramework = new NeuralFramework(_config);
-
-        neuralFramework.Run(gradientFramework, _config.Model);
+        neuralFramework.Run(_config.Model);
     }
 }
