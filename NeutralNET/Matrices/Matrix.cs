@@ -51,6 +51,37 @@ public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns)
         }
     }
 
+    [Obsolete]
+    public Matrix Dot(Matrix other)
+    {
+        if (UsedColumns != other.Rows)
+        {
+            throw new ArgumentException($"Rows of current: {Rows} do not match other Columns {other.UsedColumns}");
+        }
+        var innerColumnSize = UsedColumns;
+        var result = new Matrix(Rows, other.UsedColumns);
+
+        for (var row = 0; row < result.Rows; row++)
+        {
+            for (var column = 0; column < result.UsedColumns; column++)
+            {
+                result.Set(row, column, 0);
+
+                for (var k = 0; k < innerColumnSize; k++)
+                {
+                    var innerAt = At(row, k);
+                    var outerAt = other.At(k, column);
+                    var multipliedResult = innerAt * outerAt;
+
+                    result.Add(row, column, multipliedResult);
+                }
+            }
+
+        }
+
+        return result;
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Span<float> GetRowSpan(int row) => SpanWithGarbage.Slice(row * ColumnsStride, UsedColumns);
 
@@ -71,31 +102,7 @@ public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns)
     {
         NativeMemory.Copy(other.Pointer, Pointer, (nuint)AllocatedLength * sizeof(float));
     }
-
-    public Matrix SplitStart(int column)
-    {
-        var result = new Matrix(Rows, column);
-
-        for (int i = 0; i < Rows; i++)
-        {
-            GetRowSpan(i).Slice(0, column).CopyTo(result.GetRowSpan(i));
-        }
-
-        return result;
-    }
-
-    public Matrix SplitEnd(int column)
-    {
-        var result = new Matrix(Rows, 1);
-
-        for (int i = 0; i < Rows; i++)
-        {
-            result.Set(i, 0, GetRowSpan(i)[column - 1]);
-        }
-
-        return result;
-    }
-
+    
     // TODO: OPTIMIZE
     public void Sum(Matrix other)
     {

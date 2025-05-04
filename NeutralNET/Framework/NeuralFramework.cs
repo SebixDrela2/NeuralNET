@@ -185,8 +185,7 @@ public unsafe class NeuralFramework
         {
             for (var i = 0; i < matrixes[index].AllocatedLength; i++)
             {
-                aPtr[i] =
-                    aPtr[i] * factor - _config.LearningRate * bPtr[i];
+                aPtr[i] = aPtr[i] * factor - _config.LearningRate * bPtr[i];
             }
         }
     }

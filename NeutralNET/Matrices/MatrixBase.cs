@@ -72,9 +72,9 @@ public abstract unsafe class MatrixBase : IDisposable
             sigmoid.StoreAligned(ptr);
         }
 
-        //for (; i < SpanWithGarbage.Length; i++)
+        //for (var i = 0; i < SpanWithGarbage.Length; i++)
         //{
-        //    Unsafe.Add(ref ptr, i) = 1.0f / (1.0f + float.Exp(-Unsafe.Add(ref ptr, i)));
+        //    ptr[i] = 1.0f / (1.0f + float.Exp(-ptr[i]));
         //}
     }
 
@@ -133,9 +133,9 @@ public abstract unsafe class MatrixBase : IDisposable
             result.StoreAligned(ptr);
         }
 
-        //for (; i < dataSpan.Length; i++)
+        //for (var i = 0; ptr != end; i++)
         //{
-        //    dataSpan[i] = (dataSpan[i] > 0) ? dataSpan[i] : (0.01f * dataSpan[i]);
+        //    ptr[i] = (ptr[i] > 0) ? ptr[i] : (0.01f * ptr[i]);
         //}
     }
 

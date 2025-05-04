@@ -1,5 +1,6 @@
 ﻿using NeutralNET.Matrices;
 using NeutralNET.Stuff;
+using System;
 
 namespace NeutralNET.Models;
 
@@ -21,7 +22,7 @@ internal class XorModels
     public double BiasThree = RandomUtils.GetDouble(1);
 }
 
-public class XorAdvanced
+public unsafe class XorAdvanced
 {
     public readonly float[] TrainingData = 
     [
@@ -37,8 +38,6 @@ public class XorAdvanced
     public uint[] TrainingOutputStrideMask => throw new NotImplementedException();
 
     public Matrix A0 = new Matrix(1, 2);
-    public Matrix A1 = new Matrix(2, 2);
-    public Matrix A2 = new Matrix(2, 2);
 
     public Matrix W1 = new Matrix(2, 2);
     public Matrix B1 = new Matrix(1, 2);
@@ -47,36 +46,43 @@ public class XorAdvanced
 
     public float Forward()
     {
-        A0.DotVectorized(W1, A1); // TODO: WORK?
+        var A1 = A0.Dot(W1); // TODO: WORK?
         A1.Sum(B1);
-        A1.ApplySigmoidVectorized();
+        A1.ApplyReLUVectorized();
 
-        A1.DotVectorized(W2, A2); // TODO: WORK?
+        var A2 = A1.Dot(W2); // TODO: WORK?
         A2.Sum(B2);
         A2.ApplySigmoidVectorized();
 
-        return A2.SpanWithGarbage[0];
+        return A2.Pointer[0];
     }
 
     public void Prepare()
     {
-        var trainingData = new Matrix(4, 3);
+        TrainingInput = new Matrix(4, 2);
 
-        TrainingData.AsSpan().CopyTo(trainingData.SpanWithGarbage);
-        
-        TrainingInput = trainingData.SplitStart(2);
-        TrainingOutput = trainingData.SplitEnd(1);
+        TrainingData.AsSpan(0, 2).CopyTo(TrainingInput.GetRowSpan(0));
+        TrainingData.AsSpan(3, 2).CopyTo(TrainingInput.GetRowSpan(1));
+        TrainingData.AsSpan(6, 2).CopyTo(TrainingInput.GetRowSpan(2));
+        TrainingData.AsSpan(9, 2).CopyTo(TrainingInput.GetRowSpan(3));
+
+        TrainingOutput = new Matrix(4, 1);
+
+        TrainingOutput.GetRowSpan(0)[0] = TrainingData[2];
+        TrainingOutput.GetRowSpan(1)[0] = TrainingData[5];
+        TrainingOutput.GetRowSpan(2)[0] = TrainingData[8];
+        TrainingOutput.GetRowSpan(3)[0] = TrainingData[11];
     }
 
     public void Run(int x1, int x2)
     {
-        float epsillon = 1e-1f;
-        float rate = 1e-0f;
+        float epsillon = 1e-4f;
+        float rate = 1e-2f;
 
-        W1.Randomize();
-        B1.Randomize();
-        W2.Randomize();
-        B2.Randomize();
+        W1.Randomize(-1f, 1f);
+        B1.Randomize(-1f, 1f);
+        W2.Randomize(-1f, 1f);
+        B2.Randomize(-1f, 1f);
 
         A0.Set(0, 0, x1);
         A0.Set(0, 1, x2);
@@ -87,7 +93,7 @@ public class XorAdvanced
 
         var gradient = new XorAdvanced();
 
-        for (var i = 0; i < 2000 * 1000; i++)
+        for (var i = 0; i < 200 * 1000; i++)
         {
             var loss = Loss(TrainingInput, TrainingOutput);
             Console.WriteLine($"Loss: {loss}");
@@ -180,7 +186,7 @@ public class XorAdvanced
             var inputRow = trainingInput.GetRowSpan(i);
             var outputRow = trainingOutput.GetRowSpan(i);
 
-            A0.GetRowSpan(0).CopyTo(inputRow);
+            trainingInput.GetRowSpan(i).CopyTo(A0.GetRowSpan(0));
             var output = Forward();
 
             for (var j = 0; j < trainingOutput.UsedColumns; j++)
