@@ -6,11 +6,11 @@ using System.Runtime.Intrinsics.X86;
 
 namespace NeutralNET.Matrices;
 
-public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns)
+public unsafe class NeuralMatrix(int rows, int columns) : NeuralMatrixBase(rows, columns)
 {   
     // TODO: UNVECTORIZE
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void DotVectorized(Matrix other, Matrix result)
+    public void DotVectorized(NeuralMatrix other, NeuralMatrix result)
     {
         int inFeatures = UsedColumns;
         int outFeatures = other.Rows;
@@ -52,14 +52,14 @@ public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns)
     }
 
     [Obsolete]
-    public Matrix Dot(Matrix other)
+    public NeuralMatrix Dot(NeuralMatrix other)
     {
         if (UsedColumns != other.Rows)
         {
             throw new ArgumentException($"Rows of current: {Rows} do not match other Columns {other.UsedColumns}");
         }
         var innerColumnSize = UsedColumns;
-        var result = new Matrix(Rows, other.UsedColumns);
+        var result = new NeuralMatrix(Rows, other.UsedColumns);
 
         for (var row = 0; row < result.Rows; row++)
         {
@@ -93,18 +93,18 @@ public unsafe class Matrix(int rows, int columns) : MatrixBase(rows, columns)
         return new MatrixRow(rowPtr, UsedColumns, ColumnsStride);
     }
 
-    public void CopyRowFrom(Matrix other, int row)
+    public void CopyRowFrom(NeuralMatrix other, int row)
     {
         other.GetRowSpan(row).CopyTo(GetRowSpan(row));
     }
 
-    public void CopyDataFrom(Matrix other)
+    public void CopyDataFrom(NeuralMatrix other)
     {
         NativeMemory.Copy(other.Pointer, Pointer, (nuint)AllocatedLength * sizeof(float));
     }
     
     // TODO: OPTIMIZE
-    public void Sum(Matrix other)
+    public void Sum(NeuralMatrix other)
     {
         if (Rows != other.Rows || UsedColumns != other.UsedColumns)
         {

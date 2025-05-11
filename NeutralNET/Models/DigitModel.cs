@@ -1,0 +1,70 @@
+﻿using NeutralNET.Matrices;
+using NeutralNET.Stuff;
+using NeutralNET.Validators;
+
+namespace NeutralNET.Models;
+
+public class DigitModel : IModel, IValidator
+{
+    public const int PixelCount = 16 * 16;
+    public const int DigitLimit = 10;
+
+    public NeuralMatrix TrainingInput { get; set; }
+    public NeuralMatrix TrainingOutput { get; set; }
+    public Func<NeuralMatrix> Forward { get; set; }
+
+    public uint[] TrainingOutputStrideMask { get; }
+
+    private readonly string[] _fontNames = ["Arial", "Arial Black", "Courier New", "Georgia", "Helvetica", "Times New Roman", "Trebuchet MS", "Verdana", "Tahoma", "Palatino Linotype", "Lucida Console", "Comic Sans MS", "Impact", "Lucida Sans Unicode", "Calibri"];      
+    private readonly int _rowCount;
+
+    public DigitModel()
+    {
+        _rowCount = _fontNames.Length * DigitLimit;
+
+        TrainingInput = new NeuralMatrix(_rowCount, PixelCount);
+        TrainingOutput = new NeuralMatrix(_rowCount, 1);
+        TrainingOutputStrideMask = TrainingOutput.StrideMasks;      
+    }
+
+    public void Prepare()
+    {
+        var index = 0;
+
+        for (var j = 0; j < _fontNames.Length; j++)
+        {
+            var pixelStructs = GraphicsUtils.GetDigitsDataSet(_fontNames[j]);
+
+            for (var pixelIndex = 0; pixelIndex < DigitLimit; ++pixelIndex, ++index)
+            {
+                var inputRow = TrainingInput.GetRowSpan(index);
+                var pixelStruct = pixelStructs[pixelIndex];
+
+                pixelStruct.Values.CopyTo(inputRow);
+
+                var outputCell = TrainingOutput.GetRowSpan(index);
+                outputCell[0] = pixelStruct.MappedValue;
+            }
+        }
+    }
+
+    public void Validate()
+    {
+        var pixelStructs = GraphicsUtils.GetDigitsDataSet("Comic Sans MS");
+        var inputRow = TrainingInput.GetRowSpan(0);
+
+        Console.WriteLine();
+
+        for (var i = 0; i < DigitLimit; ++i)
+        {           
+            var pixelStruct = pixelStructs[i];
+
+            pixelStruct.Values.CopyTo(inputRow);
+
+            var actual = Forward().GetRowSpan(0)[0];
+            var expected = pixelStruct.MappedValue;
+
+            Console.WriteLine($"ACTUAL: {actual,9:F6}, EXPECTED: {expected,9:F6}, DIFF: {(actual - expected)*9,7:F4}");
+        }
+    }
+}

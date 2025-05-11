@@ -6,9 +6,9 @@ public class NeuralNetworkBuilder
 {
     private readonly NeuralNetworkConfig _config = new();
 
-    public NeuralNetworkBuilder WithArchitecture(params int[] architecture)
+    public NeuralNetworkBuilder WithArchitecture(int inputSize, int[] hiddenLayers, int outputSize)
     {
-        _config.Architecture = architecture;
+        _config.Architecture = [inputSize, .. hiddenLayers, outputSize];
 
         return this;
     }

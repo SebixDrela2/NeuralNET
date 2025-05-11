@@ -32,17 +32,17 @@ public unsafe class XorAdvanced
         1, 1, 0,
     ];
 
-    public Matrix TrainingInput { get; set; } = null!;
-    public Matrix TrainingOutput { get; set; } = null!;
+    public NeuralMatrix TrainingInput { get; set; } = null!;
+    public NeuralMatrix TrainingOutput { get; set; } = null!;
 
     public uint[] TrainingOutputStrideMask => throw new NotImplementedException();
 
-    public Matrix A0 = new Matrix(1, 2);
+    public NeuralMatrix A0 = new NeuralMatrix(1, 2);
 
-    public Matrix W1 = new Matrix(2, 2);
-    public Matrix B1 = new Matrix(1, 2);
-    public Matrix W2 = new Matrix(2, 1);
-    public Matrix B2 = new Matrix(1, 1);
+    public NeuralMatrix W1 = new NeuralMatrix(2, 2);
+    public NeuralMatrix B1 = new NeuralMatrix(1, 2);
+    public NeuralMatrix W2 = new NeuralMatrix(2, 1);
+    public NeuralMatrix B2 = new NeuralMatrix(1, 1);
 
     public float Forward()
     {
@@ -59,14 +59,14 @@ public unsafe class XorAdvanced
 
     public void Prepare()
     {
-        TrainingInput = new Matrix(4, 2);
+        TrainingInput = new NeuralMatrix(4, 2);
 
         TrainingData.AsSpan(0, 2).CopyTo(TrainingInput.GetRowSpan(0));
         TrainingData.AsSpan(3, 2).CopyTo(TrainingInput.GetRowSpan(1));
         TrainingData.AsSpan(6, 2).CopyTo(TrainingInput.GetRowSpan(2));
         TrainingData.AsSpan(9, 2).CopyTo(TrainingInput.GetRowSpan(3));
 
-        TrainingOutput = new Matrix(4, 1);
+        TrainingOutput = new NeuralMatrix(4, 1);
 
         TrainingOutput.GetRowSpan(0)[0] = TrainingData[2];
         TrainingOutput.GetRowSpan(1)[0] = TrainingData[5];
@@ -89,7 +89,6 @@ public unsafe class XorAdvanced
 
         TrainingInput.Print("input");
         TrainingOutput.Print("output");
-
 
         var gradient = new XorAdvanced();
 
@@ -122,7 +121,7 @@ public unsafe class XorAdvanced
         LearnInternal(B2, gradient.B2, rate);
     }
 
-    private void LearnInternal(Matrix matrix, Matrix gradient, float rate)
+    private void LearnInternal(NeuralMatrix matrix, NeuralMatrix gradient, float rate)
     {
         for (var i = 0; i < matrix.Rows; i++)
         {
@@ -136,8 +135,8 @@ public unsafe class XorAdvanced
     private void FiniteDifference(
         XorAdvanced gradient,
         float epsillon,
-        Matrix trainingInput,
-        Matrix trainingOutput)
+        NeuralMatrix trainingInput,
+        NeuralMatrix trainingOutput)
     {
         float cost = Loss(trainingInput, trainingOutput);
 
@@ -148,12 +147,12 @@ public unsafe class XorAdvanced
     }
 
     private void CalculateGradient(
-        Matrix matrix, 
-        Matrix gradient, 
+        NeuralMatrix matrix, 
+        NeuralMatrix gradient, 
         float epsillon,
         float cost,
-        Matrix trainingInput,
-        Matrix trainingOutput)
+        NeuralMatrix trainingInput,
+        NeuralMatrix trainingOutput)
     {
         for (var i = 0; i < matrix.Rows; i++)
         {
@@ -172,7 +171,7 @@ public unsafe class XorAdvanced
         }
     }
 
-    private float Loss(Matrix trainingInput, Matrix trainingOutput)
+    private float Loss(NeuralMatrix trainingInput, NeuralMatrix trainingOutput)
     {
         if (trainingInput.Rows != trainingOutput.Rows)
         {

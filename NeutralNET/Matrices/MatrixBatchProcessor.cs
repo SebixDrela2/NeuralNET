@@ -3,8 +3,8 @@
 public class MatrixBatchProcessor
 {
     public IEnumerable<IEnumerable<(MatrixRow Input, MatrixRow Output)>> GetBatches(
-        Matrix trainingInput,
-        Matrix trainingOutput,
+        NeuralMatrix trainingInput,
+        NeuralMatrix trainingOutput,
         int[] indices,
         int rowCount,
         int batchSize)

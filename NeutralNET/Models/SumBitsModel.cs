@@ -7,23 +7,26 @@ namespace NeutralNET.Models;
 
 public class SumBitsModel : IModel, IValidator
 {
+    private const float BitTrue = 1f;
+    private const float BitFalse = 0f;
+
     private const int BitInput = BitModelUtils.Bits;
     private const int BitOutput = BitInput + 1;
     private const int BitLimit = 1 << BitInput;
     private const int BitRows = 1 << (BitInput * 2);
-    public Matrix TrainingInput { get; set; }
-    public Matrix TrainingOutput { get; set; }
+    public NeuralMatrix TrainingInput { get; set; }
+    public NeuralMatrix TrainingOutput { get; set; }
 
     public uint[] TrainingOutputStrideMask { get; }
-    public Func<Matrix> Forward { get; set; } = null!;
+    public Func<NeuralMatrix> Forward { get; set; } = null!;
 
     public SumBitsModel()
     {      
         var inputColumns = BitInput * 2;
         var outputColumns = BitOutput;
 
-        TrainingInput = new Matrix(BitRows, inputColumns);
-        TrainingOutput = new Matrix(BitRows, outputColumns);
+        TrainingInput = new NeuralMatrix(BitRows, inputColumns);
+        TrainingOutput = new NeuralMatrix(BitRows, outputColumns);
         TrainingOutputStrideMask = TrainingOutput.StrideMasks;
     }
 
@@ -62,14 +65,13 @@ public class SumBitsModel : IModel, IValidator
             for (var b = 0; b < BitLimit; b++)
             {
                 var sum = a + b;
-                var aBits = Convert.ToString(a, 2).PadLeft(BitInput, '0').Select(x => x == '1' ? 1f : 0f);
-                var bBits = Convert.ToString(b, 2).PadLeft(BitInput, '0').Select(x => x == '1' ? 1f : 0f);
-                var sumBits = Convert.ToString(sum, 2).PadLeft(BitOutput, '0').Select(x => x == '1' ? 1f : 0f).ToArray();
+                var aBits = Convert.ToString(a, 2).PadLeft(BitInput, '0').Select(x => x == '1' ? BitTrue : BitFalse);
+                var bBits = Convert.ToString(b, 2).PadLeft(BitInput, '0').Select(x => x == '1' ? BitTrue : BitFalse);
+                var sumBits = Convert.ToString(sum, 2).PadLeft(BitOutput, '0').Select(x => x == '1' ? BitTrue : BitFalse).ToArray();
 
                 trainingInput.Clear();
                 trainingInput.AddRange(aBits);
                 trainingInput.AddRange(bBits);
-
 
                 for (int i = 0; i < trainingInput.Count; i++)
                 {
@@ -82,7 +84,7 @@ public class SumBitsModel : IModel, IValidator
                 var bBitsText = string.Join("", bBits);
 
                 var expectedBits = string.Join("", sumBits);
-                var actualBits = string.Join("", outputData.Select(element => element > 0.8f ? '1' : '0'));
+                var actualBits = string.Join("", outputData.Select(element => element > 0f ? '1' : '0'));
 
                 bool isCorrect = expectedBits == actualBits;
                 ref var c = ref isCorrect ? ref counters.Correct : ref counters.Incorrect;
@@ -110,7 +112,7 @@ public class SumBitsModel : IModel, IValidator
             if (index >= target.Length)
                 throw new InvalidOperationException($"Index {index} out of bounds for target span of length {target.Length}");
 
-            target[index++] = c == '1' ? 1f : 0f;
+            target[index++] = c == '1' ? BitTrue : BitFalse;
         }
     }
 }

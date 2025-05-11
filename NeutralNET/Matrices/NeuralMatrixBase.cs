@@ -6,7 +6,7 @@ using System.Runtime.InteropServices;
 
 namespace NeutralNET.Matrices;
 
-public abstract unsafe class MatrixBase : IDisposable
+public abstract unsafe class NeuralMatrixBase : IDisposable
 {
     private const int Alignment = 8;
     private const int AlignmentMask = Alignment - 1;
@@ -29,7 +29,7 @@ public abstract unsafe class MatrixBase : IDisposable
     public uint[] StrideMasks;
     public Span<float> SpanWithGarbage => new(Pointer, AllocatedLength);  
 
-    public MatrixBase(int rows, int columns)
+    public NeuralMatrixBase(int rows, int columns)
     {
         ColumnsStride = (columns + AlignmentMask) & ~AlignmentMask;
 
@@ -69,6 +69,8 @@ public abstract unsafe class MatrixBase : IDisposable
         {
             var vec = Vector256.LoadAligned(ptr);
             var sigmoid = Avx.Divide(one, Avx.Add(one, Vector256.Exp(Avx.Multiply(vec, Vector256.Create(-1.0f)))));
+            //sigmoid = Avx.Multiply(sigmoid, Vector256.Create<float>(2f));
+            //sigmoid = Avx.Subtract(sigmoid, one);
             sigmoid.StoreAligned(ptr);
         }
 
@@ -78,65 +80,47 @@ public abstract unsafe class MatrixBase : IDisposable
         //}
     }
 
-    //[MethodImpl(MethodImplOptions.AggressiveInlining)]
-    //public void ApplyTanhVectorized()
-    //{
-    //    Span<float> data = Span;
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void ApplyTanhVectorized()
+    {
+        float* ptr = Pointer;
+        float* end = ptr + AllocatedLength;
 
-    //    if (Avx.IsSupported)
-    //    {
-    //        Vector256<float> one = Vector256.Create(1.0f);
-    //        Vector256<float> two = Vector256.Create(2.0f);
+        if (Avx2.IsSupported)
+        {
+            Vector256<float> one = Vector256.Create(1.0f);
+            Vector256<float> two = Vector256.Create(2.0f);
 
-    //        int i = 0;
-    //        for (; i <= data.Length - Vector256<float>.Count; i += Vector256<float>.Count)
-    //        {
-    //            Vector256<float> x = Vector256.LoadUnsafe(ref data[i]);
-    //            Vector256<float> exp2x = Vector256.Exp(Avx.Multiply(x, two));
-    //            Vector256<float> tanh = Avx.Divide(
-    //                Avx.Subtract(exp2x, one),
-    //                Avx.Add(exp2x, one)
-    //            );
-    //            tanh.StoreUnsafe(ref data[i]);
-    //        }
-
-    //        for (; i < data.Length; i++)
-    //        {
-    //            data[i] = MathF.Tanh(data[i]);
-    //        }
-    //    }
-    //    else
-    //    {
-    //        for (int i = 0; i < data.Length; i++)
-    //        {
-    //            data[i] = MathF.Tanh(data[i]);
-    //        }
-    //    }
-    //}
+            for (; ptr != end; ptr += Vector256<float>.Count)
+            {
+                var x = Vector256.LoadAligned(ptr);
+                var exp2x = Vector256.Exp(Avx.Multiply(x, two));
+                var tanh = Avx.Divide(Avx.Subtract(exp2x, one), Avx.Add(exp2x, one));
+                tanh.StoreAligned(ptr);
+            }
+        }
+        else
+        {
+            for (; ptr < end; ptr++)
+            {
+                *ptr = MathF.Tanh(*ptr);
+            }
+        }
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ApplyReLUVectorized()
     {
         float* ptr = Pointer;
         float* end = ptr + AllocatedLength;
-
         Vector256<float> zero = Vector256<float>.Zero;
-        Vector256<float> alpha = Vector256.Create(0.01f);
 
         for (; ptr != end; ptr += Vector256<float>.Count)
         {
-            Vector256<float> vec = Vector256.LoadAligned(ptr);
-            Vector256<float> mask = Avx.CompareGreaterThan(vec, zero);
-            Vector256<float> scaled = Avx.Multiply(vec, alpha);
-            Vector256<float> result = Avx.BlendVariable(scaled, vec, mask);
-
-            result.StoreAligned(ptr);
+            var vec = Vector256.LoadAligned(ptr);
+            vec = Avx.Max(vec, zero);  // Standard ReLU
+            vec.StoreAligned(ptr);
         }
-
-        //for (var i = 0; ptr != end; i++)
-        //{
-        //    ptr[i] = (ptr[i] > 0) ? ptr[i] : (0.01f * ptr[i]);
-        //}
     }
 
     [Conditional("DEBUG")]

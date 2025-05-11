@@ -4,12 +4,12 @@ namespace NeutralNET.Framework;
 
 public interface IModelRunner
 {
-    Matrix Input { get; init; }
-    Func<Matrix> Forward { get; init; }
+    NeuralMatrix Input { get; init; }
+    Func<NeuralMatrix> Forward { get; init; }
 }
 
 public class ModelRunner : IModelRunner
 {
-    public required Matrix Input { get; init; }
-    public required Func<Matrix> Forward { get; init; }
+    public required NeuralMatrix Input { get; init; }
+    public required Func<NeuralMatrix> Forward { get; init; }
 }
