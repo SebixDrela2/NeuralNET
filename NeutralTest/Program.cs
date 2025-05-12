@@ -44,9 +44,9 @@ internal class Program
         var network = new NeuralNetworkBuilder()
             .WithArchitecture(
                 inputSize: DigitModel.PixelCount, 
-                hiddenLayers: [32, 32, 32, 32, 32], 
+                hiddenLayers: [32, 32, 32, 32, 32, 32, 32, 32, 32], 
                 outputSize: 1)
-            .WithEpochs(10000)
+            .WithEpochs(40000)
             .WithBatchSize(BatchSize)
             .WithLearningRate(1e-2f)
             .WithWeightDecay(1e-5f)

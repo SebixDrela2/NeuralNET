@@ -101,19 +101,26 @@ public unsafe class NeuralFramework
              
              if (epoch % _config.BatchSize is 0)
              {
-                var elasped = stopWatch.Elapsed;
-                var batchesPerSecond = batchProcessCount / elasped.TotalSeconds;
-                var lossToPercent = 100.0 * (1.0 - Math.Min(loss, 1.0));
-
-                var rLoss = 1 + (float.Log10(loss) / 8);
-                var gLoss = 1 - rLoss;
-                
-                var result = $"Epoch ({epoch}/{_config.Epochs}) Accuracy: {lossToPercent:F5}% Loss:{loss} BPS:{batchesPerSecond}/s TP:{elasped}";
-                result = result.WithColor(System.Drawing.Color.FromArgb(255, (int)(rLoss * 255), (int)(gLoss * 255), 0));
-
-                Console.WriteLine(result);
+                DisplayEpochResult(stopWatch.Elapsed, batchProcessCount, loss, epoch);
              }
         }
+    }
+
+    private void DisplayEpochResult(TimeSpan elapsed, int batchProcessCount, float loss, int epoch)
+    {
+        var batchesPerSecond = batchProcessCount / elapsed.TotalSeconds;
+        var lossToPercent = 100.0 * (1.0 - Math.Min(loss, 1.0));
+
+        var rLoss = loss > 0 ? (1 + (float.Log10(loss) / 8)) : 0;
+        var gLoss = 1 - rLoss;
+
+        var rReadyLoss = Math.Clamp((int)(rLoss * 255), 0, 255);
+        var gReadyLoss = Math.Clamp((int)(gLoss * 255), 0, 255);
+
+        var result = $"Epoch ({epoch}/{_config.Epochs}) Accuracy: {lossToPercent:F5}% Loss:{loss} BPS:{batchesPerSecond}/s TP:{elapsed}";
+        result = result.WithColor(System.Drawing.Color.FromArgb(255, rReadyLoss, gReadyLoss, 0));
+
+        Console.WriteLine(result);
     }
 
     private float ProcessBatch(
