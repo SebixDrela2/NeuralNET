@@ -1,5 +1,6 @@
 ﻿using NeutralNET.Matrices;
 using NeutralNET.Models;
+using NeutralNET.Utils;
 using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
@@ -101,9 +102,16 @@ public unsafe class NeuralFramework
              if (epoch % _config.BatchSize is 0)
              {
                 var elasped = stopWatch.Elapsed;
-                var timePerSecond = batchProcessCount / elasped.TotalSeconds;
+                var batchesPerSecond = batchProcessCount / elasped.TotalSeconds;
+                var lossToPercent = 100.0 * (1.0 - Math.Min(loss, 1.0));
 
-                Console.WriteLine($"Epoch ({epoch}/{_config.Epochs}) Loss: {loss} BPS:{timePerSecond:F2}/s TB:{batchProcessCount} TP:{elasped}");
+                var rLoss = 1 + (float.Log10(loss) / 8);
+                var gLoss = 1 - rLoss;
+                
+                var result = $"Epoch ({epoch}/{_config.Epochs}) Accuracy: {lossToPercent:F5}% Loss:{loss} BPS:{batchesPerSecond}/s TP:{elasped}";
+                result = result.WithColor(System.Drawing.Color.FromArgb(255, (int)(rLoss * 255), (int)(gLoss * 255), 0));
+
+                Console.WriteLine(result);
              }
         }
     }
@@ -261,7 +269,7 @@ public unsafe class NeuralFramework
     NeuralMatrix currentActivations,
     NeuralMatrix currentErrors)
     {
-        bool isOutputLayer = (layerIndex == _architecture.Count - 1);
+        bool isOutputLayer = layerIndex == _architecture.Count - 1;
 
         var prevNeuronGradients = gradient.MatrixNeurons[layerIndex - 1].Pointer;
         var gradientLayerIndexBias = gradient.MatrixBiases[layerIndex - 1].Pointer;
@@ -380,7 +388,7 @@ public unsafe class NeuralFramework
 
         var gradient = isOutput
             ? Math.Max(1 - activation * activation, 0.01f)
-            : (activation > 0 ? 1f : 0.01f);              
+            : (activation > 0 ? 1f : 0.01f);
 
         var clippedError = Math.Clamp(error, -10f, 10f);
 
@@ -509,7 +517,7 @@ public unsafe class NeuralFramework
 
                 if (index >= _architecture.Count)
                 {
-                    _architecture.MatrixNeurons[^1].ApplyTanhVectorized();
+                    _architecture.MatrixNeurons[^1].ApplySigmoidVectorized();
                     break;
                 }
 

@@ -6,6 +6,7 @@ namespace NeutralNET.Models;
 
 public class DigitModel : IModel, IValidator
 {
+    private const int VariantFontCount = 5;
     public const int PixelCount = 16 * 16;
     public const int DigitLimit = 10;
 
@@ -20,7 +21,7 @@ public class DigitModel : IModel, IValidator
 
     public DigitModel()
     {
-        _rowCount = _fontNames.Length * DigitLimit;
+        _rowCount = _fontNames.Length * DigitLimit * VariantFontCount;
 
         TrainingInput = new NeuralMatrix(_rowCount, PixelCount);
         TrainingOutput = new NeuralMatrix(_rowCount, 1);
@@ -31,19 +32,22 @@ public class DigitModel : IModel, IValidator
     {
         var index = 0;
 
-        for (var j = 0; j < _fontNames.Length; j++)
+        for (var k = 0; k < VariantFontCount; k++)
         {
-            var pixelStructs = GraphicsUtils.GetDigitsDataSet(_fontNames[j]);
-
-            for (var pixelIndex = 0; pixelIndex < DigitLimit; ++pixelIndex, ++index)
+            for (var j = 0; j < _fontNames.Length; j++)
             {
-                var inputRow = TrainingInput.GetRowSpan(index);
-                var pixelStruct = pixelStructs[pixelIndex];
+                var pixelStructs = GraphicsUtils.GetDigitsDataSet(_fontNames[j]);
 
-                pixelStruct.Values.CopyTo(inputRow);
+                for (var pixelIndex = 0; pixelIndex < DigitLimit; ++pixelIndex, ++index)
+                {
+                    var inputRow = TrainingInput.GetRowSpan(index);
+                    var pixelStruct = pixelStructs[pixelIndex];
 
-                var outputCell = TrainingOutput.GetRowSpan(index);
-                outputCell[0] = pixelStruct.MappedValue;
+                    pixelStruct.Values.CopyTo(inputRow);
+
+                    var outputCell = TrainingOutput.GetRowSpan(index);
+                    outputCell[0] = pixelStruct.MappedValue;
+                }
             }
         }
     }
