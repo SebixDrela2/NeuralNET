@@ -6,10 +6,10 @@ namespace NeutralTest;
 
 internal class Program
 {
-    private const int BatchSize = 64;
+    private const int BatchSize = 32;
 
     static void Main(string[] args)
-    {        
+    {
         RunNetworkDigit();
     }
 
@@ -44,9 +44,9 @@ internal class Program
         var network = new NeuralNetworkBuilder()
             .WithArchitecture(
                 inputSize: DigitModel.PixelCount, 
-                hiddenLayers: [32, 32, 32, 32, 32, 32, 32, 32, 32], 
+                hiddenLayers: [96, 96, 96, 96, 96, 96, 96, 96, 96], 
                 outputSize: 1)
-            .WithEpochs(40000)
+            .WithEpochs(1000)
             .WithBatchSize(BatchSize)
             .WithLearningRate(1e-2f)
             .WithWeightDecay(1e-5f)

@@ -511,27 +511,24 @@ public unsafe class NeuralFramework
 
     private NeuralMatrix Forward()
     {
-        if (_architecture.Count > 0)
+        var index = 0;
+
+        while (true)
         {
-            var index = 0;
+            _architecture.MatrixNeurons[index].DotVectorized(_architecture.MatrixWeights[index], _architecture.MatrixNeurons[index + 1]);
+            _architecture.MatrixNeurons[index + 1].Sum(_architecture.MatrixBiases[index]);
 
-            while(true)
+            index++;
+
+            if (index >= _architecture.Count)
             {
-                _architecture.MatrixNeurons[index].DotVectorized(_architecture.MatrixWeights[index], _architecture.MatrixNeurons[index + 1]);
-                _architecture.MatrixNeurons[index + 1].Sum(_architecture.MatrixBiases[index]);
-
-                index++;
-
-                if (index >= _architecture.Count)
-                {
-                    _architecture.MatrixNeurons[^1].ApplySigmoidVectorized();
-                    break;
-                }
-
-                _architecture.MatrixNeurons[index].ApplyReLUVectorized();
+                _architecture.MatrixNeurons[^1].ApplySigmoidVectorized();
+                break;
             }
+
+            _architecture.MatrixNeurons[index].ApplyReLUVectorized();
         }
-        
+
         return _architecture.MatrixNeurons[^1];
     }
 

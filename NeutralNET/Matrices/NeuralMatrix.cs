@@ -1,4 +1,5 @@
 ﻿using NeutralNET.Stuff;
+using NeutralNET.Unmanaged;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
@@ -111,12 +112,27 @@ public unsafe class NeuralMatrix(int rows, int columns) : NeuralMatrixBase(rows,
             throw new ArgumentException("Dimension mismatch");
         }
 
-        var span = SpanWithGarbage;
-        var otherSpan = other.SpanWithGarbage;
+        var zipPointer = new Zip2Pointer(Pointer, other.Pointer, AllocatedLength);
 
-        for (int i = 0; i < span.Length; i++)
+        if (Avx2.IsSupported)
         {
-            span[i] += otherSpan[i];
+            while (zipPointer.IsInScope)
+            {
+                zipPointer.GetVectors(out var aVec, out var bVec);
+
+                var resultVec = Avx.Add(aVec, bVec);
+                resultVec.StoreAligned(zipPointer.A);
+
+                zipPointer += Vector256<float>.Count;
+            }
+        }
+        else
+        {
+            while (zipPointer.IsInScope)
+            {
+                *zipPointer.A += *zipPointer.B;
+                ++zipPointer;
+            }
         }
     }
 

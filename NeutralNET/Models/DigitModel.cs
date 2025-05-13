@@ -6,7 +6,7 @@ namespace NeutralNET.Models;
 
 public class DigitModel : IModel, IValidator
 {
-    private const int VariantFontCount = 10;
+    private const int VariantFontCount = 3;
     public const int PixelCount = 16 * 16;
     public const int DigitLimit = 10;
 
@@ -16,7 +16,26 @@ public class DigitModel : IModel, IValidator
 
     public uint[] TrainingOutputStrideMask { get; }
 
-    private readonly string[] _fontNames = ["Arial", "Arial Black", "Courier New", "Georgia", "Helvetica", "Times New Roman", "Trebuchet MS", "Verdana", "Tahoma", "Palatino Linotype", "Lucida Console", "Comic Sans MS", "Impact", "Lucida Sans Unicode", "Calibri"];      
+    private readonly string[] _fontNames = 
+        ["Arial", 
+        "Arial Black",
+        "Bahnschrift SemiBold",
+        "Courier New",
+        "Curlz MT",
+        "Georgia",
+        "Helvetica", 
+        "Times New Roman", 
+        "Trebuchet MS", 
+        "Verdana",
+        "Vladimir Script",
+        "Times New Roman",
+        "Tahoma", 
+        "Palatino Linotype", 
+        "Lucida Console", 
+        "Comic Sans MS", 
+        "Impact", 
+        "Lucida Sans Unicode", 
+        "Calibri"];      
     private readonly int _rowCount;
 
     public DigitModel()
@@ -54,7 +73,7 @@ public class DigitModel : IModel, IValidator
 
     public void Validate()
     {
-        var pixelStructs = GraphicsUtils.GetDigitsDataSet("Comic Sans MS");
+        var pixelStructs = GraphicsUtils.GetDigitsDataSet("Chiller");
         var inputRow = TrainingInput.GetRowSpan(0);
 
         Console.WriteLine();
