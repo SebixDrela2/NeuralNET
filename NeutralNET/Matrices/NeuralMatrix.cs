@@ -1,5 +1,6 @@
 ﻿using NeutralNET.Stuff;
 using NeutralNET.Unmanaged;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
@@ -89,10 +90,13 @@ public unsafe class NeuralMatrix(int rows, int columns) : NeuralMatrixBase(rows,
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public MatrixRow GetMatrixRow(int row)
     {
-        float* rowPtr = row * ColumnsStride + Pointer;
+        float* rowPtr = GetRowPointer(row);
 
         return new MatrixRow(rowPtr, UsedColumns, ColumnsStride);
     }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public float* GetRowPointer(int row) => row * ColumnsStride + Pointer;
 
     public void CopyRowFrom(NeuralMatrix other, int row)
     {
@@ -103,14 +107,11 @@ public unsafe class NeuralMatrix(int rows, int columns) : NeuralMatrixBase(rows,
     {
         NativeMemory.Copy(other.Pointer, Pointer, (nuint)AllocatedLength * sizeof(float));
     }
-    
-    // TODO: OPTIMIZE
-    public void Sum(NeuralMatrix other)
+
+    public void SumVectorized(NeuralMatrix other)
     {
-        if (Rows != other.Rows || UsedColumns != other.UsedColumns)
-        {
-            throw new ArgumentException("Dimension mismatch");
-        }
+        Debug.Assert(Rows == other.Rows);
+        Debug.Assert(UsedColumns == other.UsedColumns);
 
         var zipPointer = new Zip2Pointer(Pointer, other.Pointer, AllocatedLength);
 

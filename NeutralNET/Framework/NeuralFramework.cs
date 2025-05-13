@@ -4,6 +4,7 @@ using NeutralNET.Utils;
 using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 
@@ -12,8 +13,6 @@ namespace NeutralNET.Framework;
 public unsafe class NeuralFramework
 {
     private readonly NeuralNetworkConfig _config;
-
-    private MatrixBatchProcessor _batchProcessor = null!;
     private Architecture _architecture = null!;
     private uint[] _trainingOutputStrideMask = null!;
 
@@ -32,7 +31,6 @@ public unsafe class NeuralFramework
     private void Initialize()
     {
         _architecture = new Architecture(_config.Architecture);       
-        _batchProcessor = new MatrixBatchProcessor();
     }
     
     public void Print(string name)
@@ -72,6 +70,7 @@ public unsafe class NeuralFramework
 
         var batchProcessCount = 0;
         var stopWatch = Stopwatch.StartNew();
+        var orderedBatchesView = new OrderedBatchesView(indices, trainingInput, trainingOutput, _config.BatchSize);
 
         for (var epoch = 0; epoch < _config.Epochs; epoch++)
         {
@@ -82,15 +81,7 @@ public unsafe class NeuralFramework
                 rng.Shuffle(indices);               
              }
              
-             var batches = _batchProcessor.GetBatches(
-                 trainingInput,
-                 trainingOutput,
-                 indices,
-                 trainingInput.Rows,
-                 _config.BatchSize
-             );
-             
-             foreach (var batch in batches)
+             foreach (var batch in orderedBatchesView)
              {            
                  loss += ProcessBatch(gradientArchitecture, batch);
              
@@ -124,8 +115,8 @@ public unsafe class NeuralFramework
     }
 
     private float ProcessBatch(
-        Architecture gradientArchitecture, 
-        IEnumerable<(MatrixRow Input, MatrixRow Output)> batch)
+        Architecture gradientArchitecture,
+        OrderedBatchView batch)
     {
         BackPropagate(gradientArchitecture, batch);
         Learn(gradientArchitecture);
@@ -207,14 +198,15 @@ public unsafe class NeuralFramework
 
     private void BackPropagate(
         Architecture gradient,
-        IEnumerable<(MatrixRow Input, MatrixRow Output)> batch)
+        OrderedBatchView batch)
     {       
         gradient.ZeroOut();
 
         int rowCount = 0;
         foreach (var (input, output) in batch)
-        {           
-            input.CopyTo(_architecture.MatrixNeurons[0].Pointer);
+        {
+            NativeMemory.Copy(input, _architecture.MatrixNeurons[0].Pointer, sizeof(float) * (nuint)batch.InputStride);
+
             Forward();
 
             for (var j = 0; j < _architecture.Count ; j++)
@@ -232,11 +224,11 @@ public unsafe class NeuralFramework
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void ComputeOutputLayer(Architecture gradient, MatrixRow output)
+    private void ComputeOutputLayer(Architecture gradient, float* outputPointer)
     {
         var aPtr = _architecture.MatrixNeurons[^1].Pointer;
         var bPtr = gradient.MatrixNeurons[^1].Pointer;
-        var cPtr = output.Pointer;
+        var cPtr = outputPointer;
         float* aEnd = aPtr + _architecture.MatrixNeurons[^1].AllocatedLength;
 
         if (Avx2.IsSupported)
@@ -446,7 +438,7 @@ public unsafe class NeuralFramework
         // }
     }
 
-    private float Loss(IEnumerable<(MatrixRow Input, MatrixRow Output)> batch)
+    private float Loss(OrderedBatchView batch)
     {
         var totalLoss = 0f;
         var count = 0;
@@ -463,11 +455,11 @@ public unsafe class NeuralFramework
         {
             var bPtr = realFirstNeuronPtr;
 
-            pair.Input.CopyTo(aPtr);
+            NativeMemory.Copy(pair.Input, aPtr, sizeof(float) * (nuint)batch.InputStride);
             Forward();
 
-            var cPtr = pair.Output.Pointer;
-            var cEnd = cPtr + pair.Output.Stride;
+            var cPtr = pair.Output;
+            var cEnd = cPtr + batch.OutputStride;
 
             var outputRow = pair.Output;
             var predicted = realLastNeuronMatrix;
@@ -516,7 +508,7 @@ public unsafe class NeuralFramework
         while (true)
         {
             _architecture.MatrixNeurons[index].DotVectorized(_architecture.MatrixWeights[index], _architecture.MatrixNeurons[index + 1]);
-            _architecture.MatrixNeurons[index + 1].Sum(_architecture.MatrixBiases[index]);
+            _architecture.MatrixNeurons[index + 1].SumVectorized(_architecture.MatrixBiases[index]);
 
             index++;
 

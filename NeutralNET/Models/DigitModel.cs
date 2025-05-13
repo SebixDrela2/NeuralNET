@@ -6,13 +6,13 @@ namespace NeutralNET.Models;
 
 public class DigitModel : IModel, IValidator
 {
-    private const int VariantFontCount = 3;
+    private const int VariantFontCount = 5;
     public const int PixelCount = 16 * 16;
     public const int DigitLimit = 10;
 
     public NeuralMatrix TrainingInput { get; set; }
     public NeuralMatrix TrainingOutput { get; set; }
-    public Func<NeuralMatrix> Forward { get; set; }
+    public Func<NeuralMatrix> Forward { get; set; } = null!;
 
     public uint[] TrainingOutputStrideMask { get; }
 

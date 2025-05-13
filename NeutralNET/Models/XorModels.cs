@@ -44,14 +44,15 @@ public unsafe class XorAdvanced
     public NeuralMatrix W2 = new NeuralMatrix(2, 1);
     public NeuralMatrix B2 = new NeuralMatrix(1, 1);
 
+    [Obsolete]
     public float Forward()
     {
         var A1 = A0.Dot(W1); // TODO: WORK?
-        A1.Sum(B1);
+        A1.SumVectorized(B1);
         A1.ApplyReLUVectorized();
 
         var A2 = A1.Dot(W2); // TODO: WORK?
-        A2.Sum(B2);
+        A2.SumVectorized(B2);
         A2.ApplySigmoidVectorized();
 
         return A2.Pointer[0];

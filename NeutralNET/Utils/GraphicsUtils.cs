@@ -33,9 +33,9 @@ public static class GraphicsUtils
 
         for (var i = 0; i < DigitLimit; ++i, ++c)
         {
-            var angle = float.Lerp(-10, 10, _rng.NextSingle());
-            var scaleX = float.Lerp(0.95f, 1.05f, _rng.NextSingle());
-            var scaleY = float.Lerp(0.95f, 1.05f, _rng.NextSingle());
+            var angle = 0; // float.Lerp(-10, 10, _rng.NextSingle());
+            var scaleX = 1; // float.Lerp(0.95f, 1.05f, _rng.NextSingle());
+            var scaleY = 1; // float.Lerp(0.95f, 1.05f, _rng.NextSingle());
 
             var transformation = CreateTranformationMatrix(angle, scaleX, scaleY);
 
