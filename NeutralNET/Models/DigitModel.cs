@@ -22,6 +22,7 @@ public class DigitModel : IModel, IValidator
         "Bahnschrift SemiBold",
         "Courier New",
         "Curlz MT",
+        "BlizzardGlobal",
         "Georgia",
         "Helvetica", 
         "Times New Roman", 
@@ -33,8 +34,11 @@ public class DigitModel : IModel, IValidator
         "Palatino Linotype", 
         "Lucida Console", 
         "Comic Sans MS", 
-        "Impact", 
-        "Lucida Sans Unicode", 
+        "Impact",
+        "System",
+        "Lucida Sans Unicode",
+        "Cascadia Code",
+        "Candara",
         "Calibri"];      
     private readonly int _rowCount;
 

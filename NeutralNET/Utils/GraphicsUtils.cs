@@ -33,9 +33,9 @@ public static class GraphicsUtils
 
         for (var i = 0; i < DigitLimit; ++i, ++c)
         {
-            var angle = 0; // float.Lerp(-10, 10, _rng.NextSingle());
-            var scaleX = 1; // float.Lerp(0.95f, 1.05f, _rng.NextSingle());
-            var scaleY = 1; // float.Lerp(0.95f, 1.05f, _rng.NextSingle());
+            var angle = float.Lerp(-5, 5, _rng.NextSingle());
+            var scaleX = float.Lerp(0.98f, 1.02f, _rng.NextSingle());
+            var scaleY = float.Lerp(0.98f, 1.02f, _rng.NextSingle());
 
             var transformation = CreateTranformationMatrix(angle, scaleX, scaleY);
 
@@ -66,14 +66,12 @@ public static class GraphicsUtils
             g.TextRenderingHint = TextRenderingHint.AntiAlias;
             g.Transform = transformation;
             g.DrawString(str, font, Brushes.White, pos);
-            //g.Transform = oldTransform;
-            //g.ScaleTransform(1f / ScaleWidth, 1f / ScaleHeight);
             g.Flush();          
         }
 
         using (var g = Graphics.FromImage(trueBitMap))
         {
-            g.InterpolationMode = InterpolationMode.HighQualityBicubic; // Best quality
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
             g.SmoothingMode = SmoothingMode.HighQuality;
             g.PixelOffsetMode = PixelOffsetMode.HighQuality;
 
@@ -94,9 +92,8 @@ public static class GraphicsUtils
             for (int x = 0; x < Width; x++, ++index)
             {
                 var pixel = trueBitMap.GetPixel(x, y);
-
-                // DO NOT FORGET
                 var brightness = pixel.GetBrightness();
+
                 brightStruct.Values[index] = brightness;
             }
         }
