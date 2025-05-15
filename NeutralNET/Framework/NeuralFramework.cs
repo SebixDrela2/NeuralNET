@@ -11,6 +11,8 @@ using System.Runtime.Intrinsics.X86;
 
 namespace NeutralNET.Framework;
 
+public delegate NeuralMatrix NeuralForward();
+
 public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 {
     private readonly NeuralNetworkConfig _config;
@@ -41,7 +43,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         Console.WriteLine("]");
     }
     
-    public void Run(IModel model)
+    public NeuralForward Run(IModel model)
     {
         var trainingInput = model.TrainingInput;
         var trainingOutput = model.TrainingOutput;
@@ -53,7 +55,8 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         HandleTraining(trainingInput, trainingOutput);
 
         model.TrainingInput = _architecture.MatrixNeurons[0];
-        model.Forward = Forward;
+
+        return Forward;
     }
 
     private void HandleTraining(NeuralMatrix trainingInput, NeuralMatrix trainingOutput)

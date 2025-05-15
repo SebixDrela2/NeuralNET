@@ -1,4 +1,6 @@
-﻿namespace NeutralNET.Framework;
+﻿using NeutralNET.Matrices;
+
+namespace NeutralNET.Framework;
 
 public class NeuralNetwork<TArch> where TArch : IArchitecture<TArch>
 {
@@ -9,9 +11,10 @@ public class NeuralNetwork<TArch> where TArch : IArchitecture<TArch>
         _config = config;
     }
 
-    public void Run()
+    public NeuralForward Run()
     {
         var neuralFramework = new NeuralFramework<TArch>(_config);
-        neuralFramework.Run(_config.Model);
+
+        return neuralFramework.Run(_config.Model);
     }
 }

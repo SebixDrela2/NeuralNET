@@ -1,4 +1,5 @@
-﻿using NeutralNET.Matrices;
+﻿using NeutralNET.Framework;
+using NeutralNET.Matrices;
 using NeutralNET.Stuff;
 using NeutralNET.Validators;
 
@@ -12,7 +13,6 @@ public class DigitModel : IModel, IValidator
 
     public NeuralMatrix TrainingInput { get; set; }
     public NeuralMatrix TrainingOutput { get; set; }
-    public Func<NeuralMatrix> Forward { get; set; } = null!;
 
     public uint[] TrainingOutputStrideMask { get; }
 
@@ -81,7 +81,7 @@ public class DigitModel : IModel, IValidator
         }
     }
 
-    public void Validate()
+    public void Validate(NeuralForward forward)
     {
         var pixelStructs = GraphicsUtils.GetDigitsDataSet("BlizzardGlobal");
         var inputRow = TrainingInput.GetRowSpan(0);
@@ -94,7 +94,7 @@ public class DigitModel : IModel, IValidator
 
             pixelStruct.Values.CopyTo(inputRow);
 
-            var actual = Forward().GetRowSpan(0)[0];
+            var actual = forward().GetRowSpan(0)[0];
             var expected = pixelStruct.MappedValue;
 
             Console.WriteLine($"ACTUAL: {actual,9:F6}, EXPECTED: {expected,9:F6}, DIFF: {(actual - expected)*9,7:F4}");

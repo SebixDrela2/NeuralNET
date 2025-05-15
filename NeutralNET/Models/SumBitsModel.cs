@@ -1,4 +1,5 @@
-﻿using NeutralNET.Matrices;
+﻿using NeutralNET.Framework;
+using NeutralNET.Matrices;
 using NeutralNET.Stuff;
 using NeutralNET.Validators;
 using System.Runtime.CompilerServices;
@@ -18,7 +19,6 @@ public class SumBitsModel : IModel, IValidator
     public NeuralMatrix TrainingOutput { get; set; }
 
     public uint[] TrainingOutputStrideMask { get; }
-    public Func<NeuralMatrix> Forward { get; set; } = null!;
 
     public SumBitsModel()
     {      
@@ -52,7 +52,7 @@ public class SumBitsModel : IModel, IValidator
         }
     }
 
-    public void Validate()
+    public void Validate(NeuralForward forward)
     {
         var trainingInput = new List<float>();
         (int Correct, int Incorrect, int Total) counters = default;
@@ -78,7 +78,7 @@ public class SumBitsModel : IModel, IValidator
                     inputSpan[i] = trainingInput[i];
                 }
 
-                var outputData = Forward().GetRowSpan(0).ToArray();
+                var outputData = forward().GetRowSpan(0).ToArray();
 
                 var aBitsText = string.Join("", aBits);
                 var bBitsText = string.Join("", bBits);

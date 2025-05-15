@@ -32,8 +32,8 @@ internal class Program
             .WithModel(model)
             .Build();
 
-        network.Run();
-        model.Validate();
+        var forward = network.Run();
+        model.Validate(forward);
     }
 
     static void RunNetworkDigit()
@@ -54,7 +54,7 @@ internal class Program
             .WithModel(model)
             .Build();
 
-        network.Run();
-        model.Validate();
+        var forward = network.Run();
+        model.Validate(forward);
     }
 }
