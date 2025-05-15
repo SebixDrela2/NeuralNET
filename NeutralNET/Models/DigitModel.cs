@@ -24,12 +24,18 @@ public class DigitModel : IModel, IValidator
         "Curlz MT",
         "BlizzardGlobal",
         "Georgia",
-        "Helvetica", 
+        "Helvetica",
+        "Century",
+        "Bahnschrift Light",
+        "Cambria",
+        "Carlito",
+        "Rockwell",
+        "Symbol",
+        "Rubik",
         "Times New Roman", 
         "Trebuchet MS", 
         "Verdana",
-        "Vladimir Script",
-        "Times New Roman",
+        "Vladimir Script",        
         "Tahoma", 
         "Palatino Linotype", 
         "Lucida Console", 
@@ -77,7 +83,7 @@ public class DigitModel : IModel, IValidator
 
     public void Validate()
     {
-        var pixelStructs = GraphicsUtils.GetDigitsDataSet("Chiller");
+        var pixelStructs = GraphicsUtils.GetDigitsDataSet("BlizzardGlobal");
         var inputRow = TrainingInput.GetRowSpan(0);
 
         Console.WriteLine();

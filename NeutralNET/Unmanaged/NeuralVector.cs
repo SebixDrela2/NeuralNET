@@ -1,12 +1,13 @@
-﻿using System.Diagnostics;
+﻿using NeutralNET.Matrices;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 
-namespace NeutralNET.Matrices;
+namespace NeutralNET.Unmanaged;
 
-public unsafe readonly struct MatrixRow(
-    float* pointer, 
+public unsafe readonly struct NeuralVector(
+    float* pointer,
     int columns,
     int stride)
 {
@@ -20,23 +21,21 @@ public unsafe readonly struct MatrixRow(
         get => new(Pointer, Columns);
     }
 
-    //public ref float this[int index] => ref Pointer[index * Columns];
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static NeuralVector operator ++(NeuralVector row) => row + 1;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static MatrixRow operator++ (MatrixRow row) => row + 1;
+    public static NeuralVector operator --(NeuralVector row) => row - 1;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static MatrixRow operator--(MatrixRow row) => row - 1;
+    public static NeuralVector operator +(NeuralVector row, int count) => new(row.Pointer + row.Stride * count, row.Columns, row.Stride);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static MatrixRow operator+(MatrixRow row, int count) => new(row.Pointer + (row.Stride * count), row.Columns, row.Stride);
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static MatrixRow operator-(MatrixRow row, int count) => row + (-count);
+    public static NeuralVector operator -(NeuralVector row, int count) => row + -count;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Vector256<float> LoadVectorUnaligned(int index)
-    {       
+    {
         return Vector256.LoadUnsafe(ref *Pointer, (nuint)index);
     }
 
@@ -67,7 +66,7 @@ public unsafe readonly struct MatrixRow(
     [Conditional("DEBUG")]
     private void AssertAligned()
     {
-        UIntPtr ptr = (UIntPtr)Pointer;
+        nuint ptr = (nuint)Pointer;
 
         var end = (ptr & MatrixElement.UnalignedBits) == 0;
 
@@ -77,7 +76,7 @@ public unsafe readonly struct MatrixRow(
     [Conditional("DEBUG")]
     private void TraceUnaligned()
     {
-        UIntPtr ptr = (UIntPtr)Pointer;
+        nuint ptr = (nuint)Pointer;
 
         var end = (ptr & MatrixElement.UnalignedBits) != 0;
 

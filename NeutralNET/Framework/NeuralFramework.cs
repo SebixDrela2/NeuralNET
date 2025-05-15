@@ -1,4 +1,5 @@
-﻿using NeutralNET.Matrices;
+﻿using NeutralNET.Activation;
+using NeutralNET.Matrices;
 using NeutralNET.Models;
 using NeutralNET.Utils;
 using System.Diagnostics;
@@ -10,10 +11,10 @@ using System.Runtime.Intrinsics.X86;
 
 namespace NeutralNET.Framework;
 
-public unsafe class NeuralFramework
+public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 {
     private readonly NeuralNetworkConfig _config;
-    private Architecture _architecture = null!;
+    private TArch _architecture;
     private uint[] _trainingOutputStrideMask = null!;
 
     public NeuralFramework(NeuralNetworkConfig config)
@@ -24,15 +25,9 @@ public unsafe class NeuralFramework
         }
 
         _config = config;
+        _architecture = TArch.Create(_config.Architecture);
+    }  
 
-        Initialize();
-    }
-
-    private void Initialize()
-    {
-        _architecture = new Architecture(_config.Architecture);       
-    }
-    
     public void Print(string name)
     {
         Console.WriteLine($"{name} = [");
@@ -394,50 +389,6 @@ public unsafe class NeuralFramework
         return 2 * clippedError * gradient;
     }
 
-    [Obsolete]
-    private void FiniteDifference(
-        NeuralFramework gradient, 
-        float epsillon, 
-        NeuralMatrix trainingInput, 
-        NeuralMatrix trainingOutput)
-    {
-        throw new NotSupportedException();
-        // var loss = Loss(trainingInput, trainingOutput);
-
-        // for (var i = 0; i < Count; i++)
-        // {
-        //     ComputeGradient(_architecture.MatrixWeights, gradient.MatrixWeights, trainingInput, trainingOutput, epsillon, loss, i);
-        //     ComputeGradient(_architecture.MatrixBiases, gradient.MatrixBiases, trainingInput, trainingOutput, epsillon, loss, i);           
-        // }
-    }
-
-    [Obsolete]
-    private void ComputeGradient(
-        in ArraySegment<NeuralMatrix> matrixes, 
-        in ArraySegment<NeuralMatrix> gradientMatrixes, 
-        in NeuralMatrix trainingInput,
-        in NeuralMatrix trainingOutput,
-        float epsillon,
-        float loss,
-        int index)
-    {
-        throw new NotSupportedException();
-        // for (var j = 0; j < matrixes[index].Rows; j++)
-        // {
-        //     for (var k = 0; k < matrixes[index].Columns; k++)
-        //     {
-        //         var temp = matrixes[index].At(j, k);
-
-        //         matrixes[index].Add(j, k, epsillon);
-
-        //         var computedLoss = (Loss(trainingInput, trainingOutput) - loss) / epsillon;
-        //         gradientMatrixes[index].Set(j, k, computedLoss);
-
-        //         matrixes[index].Set(j, k, temp);
-        //     }
-        // }
-    }
-
     private float Loss(OrderedBatchView batch)
     {
         var totalLoss = 0f;
@@ -466,22 +417,6 @@ public unsafe class NeuralFramework
             var batchLoss = 0f;
 
             var lossVec = Vector256<float>.Zero;
-            //while (j <= outputRow.Columns - Vector256<float>.Count)
-            //{
-            //    var predVec = Vector256.LoadUnsafe(ref MemoryMarshal.GetReference(predicted), (nuint)j);
-            //    var targetVec = outputRow.LoadVectorUnaligned(j);
-            //    var diff = Avx.Subtract(predVec, targetVec);
-            //    lossVec = Avx.Add(lossVec, Avx.Multiply(diff, diff));
-            //    j += Vector256<float>.Count;
-            //}
-
-            //batchLoss += Vector256.Sum(lossVec);
-
-            //for (; j < outputRow.Columns; j++)
-            //{
-            //    float diff = predicted[j] - outputRow.Span[j];
-            //    batchLoss += diff * diff;
-            //}
             
             for (; cPtr != cEnd; bPtr += Vector256<float>.Count, cPtr += Vector256<float>.Count)
             {
@@ -514,11 +449,11 @@ public unsafe class NeuralFramework
 
             if (index >= _architecture.Count)
             {
-                _architecture.MatrixNeurons[^1].ApplySigmoidVectorized();
+                ActivationFunctions.ApplySigmoidVectorized(_architecture.MatrixNeurons[^1]);
                 break;
             }
 
-            _architecture.MatrixNeurons[index].ApplyReLUVectorized();
+            ActivationFunctions.ApplyReLUVectorized(_architecture.MatrixNeurons[index]);
         }
 
         return _architecture.MatrixNeurons[^1];

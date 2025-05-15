@@ -8,9 +8,84 @@ using System.Runtime.Intrinsics.X86;
 
 namespace NeutralNET.Matrices;
 
-public unsafe class NeuralMatrix(int rows, int columns) : NeuralMatrixBase(rows, columns)
-{   
-    // TODO: UNVECTORIZE
+public unsafe readonly struct NeuralMatrix
+{
+    private const int Alignment = 8;
+    private const int AlignmentMask = Alignment - 1;
+    private const int ByteAlignment = Alignment * sizeof(float);
+    private const int ByteAlignmentMask = ByteAlignment - 1;
+
+    public static int AllocCounter = 0;
+    public static Dictionary<string, StackTrace> Traces = [];
+    public static HashSet<(int Width, int Height)> Sizes = [];
+
+    public readonly float* Pointer;
+
+    public readonly int Rows;
+
+    //Obsolete    
+    public readonly int ColumnsStride;
+    public readonly int UsedColumns;
+    public readonly int LogicalLength;
+    public readonly int AllocatedLength;
+    public readonly uint[] StrideMasks;
+    public Span<float> SpanWithGarbage => new(Pointer, AllocatedLength);
+
+    public NeuralMatrix(int rows, int columns)
+    {
+        ColumnsStride = (columns + AlignmentMask) & ~AlignmentMask;
+
+        Rows = rows;
+        UsedColumns = columns;
+
+        LogicalLength = Rows * UsedColumns;
+        AllocatedLength = Rows * ColumnsStride;
+
+        nuint byteCount = ((nuint)(AllocatedLength * sizeof(float)) + ByteAlignmentMask) & (~(uint)ByteAlignmentMask);
+
+        Pointer = (float*)NativeMemory.AlignedAlloc(byteCount, ByteAlignment);
+        var strideMask = new uint[Vector256<float>.Count];
+        var computation = UsedColumns & AlignmentMask;
+        computation = computation is 0 ? Alignment : computation;
+
+        for (var i = 0; i < computation; ++i)
+        {
+            strideMask[i] = ~0u;
+        }
+
+        StrideMasks = strideMask;
+        SpanWithGarbage.Clear();
+    }
+
+    public void Dispose() => NativeMemory.AlignedFree(Pointer);
+
+    [Conditional("DEBUG")]
+    public static void LogOrigin(int rows, int columns)
+    {
+        var i = AllocCounter++;
+
+        switch (i)
+        {
+            case > 1_000_000 when (i % 1_000_000) is not 0:
+            case > 100_000 when (i % 100_000) is not 0:
+            case > 10_000 when (i % 10_000) is not 0:
+            case > 1_000 when (i % 1_000) is not 0:
+            case > 100 when (i % 100) is not 0:
+            case > 10 when (i % 10) is not 0:
+                break;
+            default:
+                Console.WriteLine($"NEW ARRAY CREATED {i}");
+                break;
+        }
+
+        var stack = new StackTrace();
+        var frames = string.Join("\n", stack.GetFrames().Reverse()
+            .Select(x => $"{x.GetMethod()?.DeclaringType?.FullName}.{x.GetMethod()?.Name}"));
+        Traces.TryAdd(frames, stack);
+
+        Sizes.Add((columns, rows));
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void DotVectorized(NeuralMatrix other, NeuralMatrix result)
     {
@@ -88,11 +163,11 @@ public unsafe class NeuralMatrix(int rows, int columns) : NeuralMatrixBase(rows,
     public Span<float> GetRowSpan(int row) => SpanWithGarbage.Slice(row * ColumnsStride, UsedColumns);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public MatrixRow GetMatrixRow(int row)
+    public NeuralVector GetMatrixRow(int row)
     {
         float* rowPtr = GetRowPointer(row);
 
-        return new MatrixRow(rowPtr, UsedColumns, ColumnsStride);
+        return new NeuralVector(rowPtr, UsedColumns, ColumnsStride);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

@@ -2,60 +2,60 @@
 
 namespace NeutralNET.Framework;
 
-public class NeuralNetworkBuilder
+public class NeuralNetworkBuilder<TArch> where TArch : IArchitecture<TArch>
 {
     private readonly NeuralNetworkConfig _config = new();
 
-    public NeuralNetworkBuilder WithArchitecture(int inputSize, int[] hiddenLayers, int outputSize)
+    public NeuralNetworkBuilder<TArch> WithArchitecture(int inputSize, int[] hiddenLayers, int outputSize)
     {
         _config.Architecture = [inputSize, .. hiddenLayers, outputSize];
 
         return this;
     }
 
-    public NeuralNetworkBuilder WithEpochs(int epochs)
+    public NeuralNetworkBuilder<TArch> WithEpochs(int epochs)
     {
         _config.Epochs = epochs;
 
         return this;
     }
 
-    public NeuralNetworkBuilder WithBatchSize(int batchSize)
+    public NeuralNetworkBuilder<TArch> WithBatchSize(int batchSize)
     {
         _config.BatchSize = batchSize;
 
         return this;
     }
 
-    public NeuralNetworkBuilder WithLearningRate(float rate)
+    public NeuralNetworkBuilder<TArch> WithLearningRate(float rate)
     {
         _config.LearningRate = rate;
 
         return this;
     }
 
-    public NeuralNetworkBuilder WithWeightDecay(float decay)
+    public NeuralNetworkBuilder<TArch> WithWeightDecay(float decay)
     {
         _config.WeightDecay = decay;
 
         return this;
     }
 
-    public NeuralNetworkBuilder WithModel(IModel model)
+    public NeuralNetworkBuilder<TArch> WithModel(IModel model)
     {
         _config.Model = model;
 
         return this;
     }
 
-    public NeuralNetworkBuilder WithShuffle(bool shuffle)
+    public NeuralNetworkBuilder<TArch> WithShuffle(bool shuffle)
     {
         _config.WithShuffle = shuffle;
 
         return this;
     }
 
-    public NeuralNetwork Build()
+    public NeuralNetwork<TArch> Build()
     {
         if (_config.Architecture == null || _config.Architecture.Length == 0)
         {
@@ -67,6 +67,6 @@ public class NeuralNetworkBuilder
             throw new InvalidOperationException("Model must be specified");
         }
 
-        return new NeuralNetwork(_config);
+        return new NeuralNetwork<TArch>(_config);
     }
 }

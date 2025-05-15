@@ -1,8 +1,10 @@
-﻿namespace NeutralNET.Matrices;
+﻿using NeutralNET.Unmanaged;
+
+namespace NeutralNET.Matrices;
 
 public class MatrixBatchProcessor
 {
-    public IEnumerable<IEnumerable<(MatrixRow Input, MatrixRow Output)>> GetBatches(
+    public IEnumerable<IEnumerable<(NeuralVector Input, NeuralVector Output)>> GetBatches(
         NeuralMatrix trainingInput,
         NeuralMatrix trainingOutput,
         int[] indices,
@@ -24,7 +26,7 @@ public class MatrixBatchProcessor
                 int.Min(indices.Length - indicesIndex, batchSize));
         }
 
-        IEnumerable<(MatrixRow Input, MatrixRow Output)> EnumerateInBatch(int indicesOffset, int length)
+        IEnumerable<(NeuralVector Input, NeuralVector Output)> EnumerateInBatch(int indicesOffset, int length)
         {            
             for (var index = 0; index < length; index++)
             {

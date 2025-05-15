@@ -1,4 +1,5 @@
-﻿using NeutralNET.Matrices;
+﻿using NeutralNET.Activation;
+using NeutralNET.Matrices;
 using NeutralNET.Stuff;
 using System;
 
@@ -32,8 +33,8 @@ public unsafe class XorAdvanced
         1, 1, 0,
     ];
 
-    public NeuralMatrix TrainingInput { get; set; } = null!;
-    public NeuralMatrix TrainingOutput { get; set; } = null!;
+    public NeuralMatrix TrainingInput { get; set; }
+    public NeuralMatrix TrainingOutput { get; set; }
 
     public uint[] TrainingOutputStrideMask => throw new NotImplementedException();
 
@@ -47,13 +48,13 @@ public unsafe class XorAdvanced
     [Obsolete]
     public float Forward()
     {
-        var A1 = A0.Dot(W1); // TODO: WORK?
+        var A1 = A0.Dot(W1);
         A1.SumVectorized(B1);
-        A1.ApplyReLUVectorized();
+        ActivationFunctions.ApplyReLUVectorized(A1);
 
-        var A2 = A1.Dot(W2); // TODO: WORK?
+        var A2 = A1.Dot(W2);
         A2.SumVectorized(B2);
-        A2.ApplySigmoidVectorized();
+        ActivationFunctions.ApplySigmoidVectorized(A2);
 
         return A2.Pointer[0];
     }

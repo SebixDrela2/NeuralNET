@@ -1,17 +1,16 @@
 ﻿using NeutralNET.Matrices;
-using System.Runtime.InteropServices;
 
 namespace NeutralNET.Framework;
 
-internal class Architecture
+public class Architecture : IArchitecture<Architecture>
 {
-    public NeuralMatrix[] MatrixNeurons = null!;
-    public NeuralMatrix[] MatrixWeights = null!;
-    public NeuralMatrix[] MatrixBiases = null!;
+    public NeuralMatrix[] MatrixNeurons { get; }
+    public NeuralMatrix[] MatrixWeights { get; }
+    public NeuralMatrix[] MatrixBiases { get; }
 
-    public readonly int Count;
+    public int Count { get; }
 
-    public Architecture(int[] architecture)
+    public Architecture(params ReadOnlySpan<int> architecture)
     {
         Count = architecture.Length - 1;
 
@@ -28,6 +27,8 @@ internal class Architecture
             MatrixNeurons[i] = new NeuralMatrix(1, architecture[i]);
         }
     }
+
+    public static Architecture Create(params ReadOnlySpan<int> architecture) => new(architecture);
 
     public void ZeroOut()
     {

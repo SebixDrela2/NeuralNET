@@ -1,6 +1,6 @@
 ﻿namespace NeutralNET.Framework;
 
-public class NeuralNetwork
+public class NeuralNetwork<TArch> where TArch : IArchitecture<TArch>
 {
     private NeuralNetworkConfig _config;
 
@@ -11,7 +11,7 @@ public class NeuralNetwork
 
     public void Run()
     {
-        var neuralFramework = new NeuralFramework(_config);
+        var neuralFramework = new NeuralFramework<TArch>(_config);
         neuralFramework.Run(_config.Model);
     }
 }
