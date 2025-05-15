@@ -16,7 +16,7 @@ public delegate NeuralMatrix NeuralForward();
 public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 {
     private readonly NeuralNetworkConfig _config;
-    private TArch _architecture;
+    private readonly TArch _architecture;
     private uint[] _trainingOutputStrideMask = null!;
 
     public NeuralFramework(NeuralNetworkConfig config)
@@ -129,33 +129,6 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
             LearnInternalVectorized(_architecture.MatrixWeights, gradient.MatrixWeights, i);
             LearnInternalVectorized(_architecture.MatrixBiases, gradient.MatrixBiases, i);
         }
-    }
-
-    [Obsolete]
-    private void LearnInternal(
-    ReadOnlySpan<NeuralMatrix> matrixes,
-    ReadOnlySpan<NeuralMatrix> gradientMatrixes,
-    float rate,
-    int index)
-    {
-        throw new NotSupportedException("Old Learn Internal Activated.");
-
-        //var totalIndex = 0;
-
-        //var a = rate;
-        //var weightDecay = _config.WeightDecay;
-        //var A = matrixes[index].Span;
-        //var B = gradientMatrixes[index].Span;
-
-        //var totalLength = matrixes[index].Rows * matrixes[index].Columns;
-
-        //float factor = 1.0f - rate * weightDecay;
-
-        //for (var i = 0; i < totalLength; i++)
-        //{
-        //    A[i] = A[i] - rate * (weightDecay * A[i] + B[i]);
-        //    A[i] = A[i] * factor - rate * B[i];
-        //}       
     }
 
     private void LearnInternalVectorized(
