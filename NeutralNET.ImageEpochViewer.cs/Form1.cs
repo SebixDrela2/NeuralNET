@@ -2,6 +2,7 @@ using NeutralNET.Framework;
 using NeutralNET.Framework.Neural;
 using NeutralNET.Matrices;
 using NeutralNET.Models;
+using NeutralNET.Stuff;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 
@@ -10,8 +11,8 @@ namespace NeutralNET.ImageEpochViewer;
 public partial class Form1 : Form
 {
     private const int BatchSize = 1;
-    private const int BitmapWidth = 16;
-    private const int BitmapHeight = 16;
+    private const int BitmapWidth = GraphicsUtils.Width;
+    private const int BitmapHeight = GraphicsUtils.Height;
 
     private NeuralNetwork<Architecture> _network;
     private IModel _model;
@@ -49,7 +50,7 @@ public partial class Form1 : Form
     protected override void OnLoad(EventArgs e)
     {
         Prepare();
-        _matrixes = _network.RunEpoch().GetEnumerator();
+        _matrixes = _network.EnumerateEpochs().GetEnumerator();
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -64,15 +65,15 @@ public partial class Form1 : Form
 
     private void Prepare()
     {
-        _model = new SingleDigitTransformationModel();
+        _model = new BitMapTransformationModel();
         _model.Prepare();
 
         _network = new NeuralNetworkBuilder<Architecture>()
             .WithArchitecture(
-                inputSize: SingleDigitTransformationModel.PixelCount,
-                hiddenLayers: [4, 4],
-                outputSize: SingleDigitTransformationModel.PixelCount)
-            .WithEpochs(10000)
+                inputSize: BitMapTransformationModel.PixelCount,
+                hiddenLayers: [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
+                outputSize: BitMapTransformationModel.PixelCount)
+            .WithEpochs(2000)
             .WithBatchSize(BatchSize)
             .WithLearningRate(1e-3f)
             .WithWeightDecay(3e-5f)
@@ -86,14 +87,14 @@ public partial class Form1 : Form
 
     private static void Draw(float[] values, Graphics windowGraphics)
     {
-        using var trueBitMap = new Bitmap(16, 16, PixelFormat.Format32bppArgb);
+        using var trueBitMap = new Bitmap(GraphicsUtils.Width, GraphicsUtils.Height, PixelFormat.Format32bppArgb);
         var index = 0;        
 
         for (int y = 0; y < BitmapHeight; y++)
         {
             for (int x = 0; x < BitmapWidth; x++, ++index)
             {
-                var brightness = (byte)(values[index] * 255);
+                var brightness = (byte)(values[index] * 0xFF);
 
                 trueBitMap.SetPixel(x, y, Color.FromArgb(brightness, brightness, brightness));
             }
@@ -102,8 +103,7 @@ public partial class Form1 : Form
         windowGraphics.InterpolationMode = InterpolationMode.NearestNeighbor;
         windowGraphics.SmoothingMode = SmoothingMode.HighQuality;
 
-        windowGraphics.ScaleTransform(16, 16);
+        windowGraphics.ScaleTransform(4, 4);
         windowGraphics.DrawImage(trueBitMap, 0, 0);
-
     }
 }

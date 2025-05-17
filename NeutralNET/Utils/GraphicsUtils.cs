@@ -3,17 +3,13 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
-using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
 namespace NeutralNET.Stuff;
 
 public static class GraphicsUtils
 {
-    private const int FontSize = 8;
-
-    private const int Width = 16;
-    private const int Height = 16;
+    private const int FontSize = Height/2;
     private const int UpScale = 4;
 
     private const int ScaleWidth = Width * UpScale;
@@ -24,6 +20,9 @@ public static class GraphicsUtils
     private const int RandomSeed = 0xBEEF;
 
     private static readonly Random _rng = new(RandomSeed);
+
+    public const int Width = 64;
+    public const int Height = 64;
 
     [SupportedOSPlatformGuard("windows6.1")]
     public static bool IsSupported => OperatingSystem.IsWindowsVersionAtLeast(6, 1);
@@ -59,17 +58,29 @@ public static class GraphicsUtils
                 transformation = CreateTranformationMatrix(0, 1, 1);
             }
 
-            result[i] = GenerateBrightStruct(c, font, transformation);
+            result[i] = GenerateCharPixelStruct(c, font, transformation);
         }
         return result;
     }
 
-    private static PixelStruct GenerateBrightStruct(char digit, Font font, Matrix transformation)
+    public static PixelStruct GenerateCharPixelStruct(char @char, string fontName, Matrix? transformation = null)
     {
         if (!IsSupported)
         {
             throw new NotSupportedException();
         }
+
+        return GenerateCharPixelStruct(@char, new Font(fontName, FontSize * UpScale, FontStyle.Regular));
+    }
+
+    public static PixelStruct GenerateCharPixelStruct(char @char, Font font, Matrix? transformation = null)
+    {
+        if (!IsSupported)
+        {
+            throw new NotSupportedException();
+        }
+
+        transformation ??= new Matrix();
 
         using var bitMap = new Bitmap(ScaleWidth, ScaleHeight, PixelFormat.Format32bppArgb);
         using var trueBitMap = new Bitmap(Width, Height, PixelFormat.Format32bppArgb);
@@ -77,7 +88,7 @@ public static class GraphicsUtils
         using (var g = Graphics.FromImage(bitMap))
         {
 
-            var str = digit.ToString();
+            var str = @char.ToString();
             var fontDim = g.MeasureString(str, font);
 
             var pos = new PointF(
@@ -110,7 +121,7 @@ public static class GraphicsUtils
 
         var result = new float[Size];
         var index = 0;
-        var brightStruct = new PixelStruct(digit - '0', Size);
+        var brightStruct = new PixelStruct(@char - '0', Size);
 
         for (int y = 0; y < Height; y++)
         {

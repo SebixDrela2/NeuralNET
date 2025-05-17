@@ -3,15 +3,15 @@ using NeutralNET.Stuff;
 
 namespace NeutralNET.Models;
 
-public class SingleDigitTransformationModel : IModel
+public class BitMapTransformationModel : IModel
 {
-    public const int PixelCount = 16 * 16;
+    public const int PixelCount = GraphicsUtils.Height * GraphicsUtils.Width;
     public NeuralMatrix TrainingInput { get ; set ; }
     public NeuralMatrix TrainingOutput { get ; set ; }
 
     public uint[] TrainingOutputStrideMask { get; }
 
-    public SingleDigitTransformationModel()
+    public BitMapTransformationModel()
     {
         TrainingInput = new NeuralMatrix(1, PixelCount);
         TrainingOutput = new NeuralMatrix(1, PixelCount);
@@ -20,11 +20,8 @@ public class SingleDigitTransformationModel : IModel
 
     public void Prepare()
     {
-        var arial = GraphicsUtils.GetDigitsDataSet("Arial", false);
-        var comicsans = GraphicsUtils.GetDigitsDataSet("Comic Sans MS", false);
-
-        var threeStruct = arial[5];
-        var eightStruct = comicsans[3];
+        var threeStruct = GraphicsUtils.GenerateCharPixelStruct('@', "Arial");
+        var eightStruct = GraphicsUtils.GenerateCharPixelStruct('&', "Comic Sans MS");
 
         var inputRow = TrainingInput.GetRowSpan(0);
         var outputRow = TrainingOutput.GetRowSpan(0);

@@ -64,14 +64,14 @@ internal class Program
 
     public static void RunSingleDigitTransformation()
     {
-        var model = new SingleDigitTransformationModel();
+        var model = new BitMapTransformationModel();
         model.Prepare();
 
         var network = new NeuralNetworkBuilder<Architecture>()
             .WithArchitecture(
-                inputSize: SingleDigitTransformationModel.PixelCount,
+                inputSize: BitMapTransformationModel.PixelCount,
                 hiddenLayers: [2, 2],
-                outputSize: SingleDigitTransformationModel.PixelCount)
+                outputSize: BitMapTransformationModel.PixelCount)
             .WithEpochs(100000)
             .WithBatchSize(BatchSize)
             .WithLearningRate(5e-5f)

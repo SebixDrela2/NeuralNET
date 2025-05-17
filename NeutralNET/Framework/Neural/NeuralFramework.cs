@@ -4,6 +4,7 @@ using NeutralNET.Models;
 using NeutralNET.Utils;
 using System.Diagnostics;
 using System.Numerics;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
@@ -62,6 +63,27 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         model.TrainingInput = _architecture.MatrixNeurons[0];
 
         return Forward;
+    }
+
+    public IEnumerable<NeuralMatrix> EnumerateEpochs(IModel model)
+    {
+        var trainingInput = model.TrainingInput;
+        var trainingOutput = model.TrainingOutput;
+        _trainingOutputStrideMask = model.TrainingOutputStrideMask;
+
+        _architecture.MatrixNeurons[0].CopyRowFrom(trainingInput, 0);
+
+        RandomizeWeightsBiases();
+
+        foreach(var item in HandleTrainingEpoch(trainingInput, trainingInput))
+        {
+            yield return item;
+        }
+
+        foreach (var item in HandleTrainingEpoch(trainingInput, trainingOutput))
+        {
+            yield return item;
+        }
     }
 
     public IEnumerable<NeuralMatrix> RunEpoch(IModel model)
