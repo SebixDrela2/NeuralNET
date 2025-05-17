@@ -13,11 +13,12 @@ public partial class Form1 : Form
     private const int BatchSize = 1;
     private const int BitmapWidth = GraphicsUtils.Width;
     private const int BitmapHeight = GraphicsUtils.Height;
-
     private NeuralNetwork<Architecture> _network;
     private IModel _model;
     private IEnumerator<NeuralMatrix> _matrixes;
     private bool _isTraining;
+    private Bitmap _backBuffer;
+    private Graphics _backGraphics;
 
 
     public float[]? BitMapValues => _isTraining ? _matrixes.Current.ToArray() : null;
@@ -25,6 +26,18 @@ public partial class Form1 : Form
     public Form1()
     {
         InitializeComponent();
+
+        ClientSize = new Size(BitmapWidth, BitmapHeight);
+        StartPosition = FormStartPosition.CenterScreen;
+
+        DoubleBuffered = false;
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint, true);
+        UpdateStyles();
+
+        _backBuffer = new Bitmap(BitmapWidth, BitmapHeight, PixelFormat.Format32bppArgb);
+        _backGraphics = Graphics.FromImage(_backBuffer);
+        _backGraphics.InterpolationMode = InterpolationMode.NearestNeighbor;
+        _backGraphics.SmoothingMode = SmoothingMode.None;
     }
 
     public void Run()
@@ -54,12 +67,12 @@ public partial class Form1 : Form
     }
 
     protected override void OnPaint(PaintEventArgs e)
-    {
-        base.OnPaint(e);
-
+    {     
         if (BitMapValues is not null)
         {
-            Draw(BitMapValues, e.Graphics);
+            Draw(BitMapValues);
+            base.OnPaint(e);
+            e.Graphics.DrawImageUnscaled(_backBuffer, 0, 0);
         }
     }
 
@@ -85,25 +98,33 @@ public partial class Form1 : Form
             .Build();
     }
 
-    private static void Draw(float[] values, Graphics windowGraphics)
+    private void Draw(float[] values)
     {
-        using var trueBitMap = new Bitmap(GraphicsUtils.Width, GraphicsUtils.Height, PixelFormat.Format32bppArgb);
-        var index = 0;        
+        var index = 0;
 
-        for (int y = 0; y < BitmapHeight; y++)
+        BitmapData data = _backBuffer.LockBits(
+            new Rectangle(0, 0, BitmapWidth, BitmapHeight),
+            ImageLockMode.WriteOnly,
+            PixelFormat.Format32bppArgb);
+
+        unsafe
         {
-            for (int x = 0; x < BitmapWidth; x++, ++index)
+            byte* ptr = (byte*)data.Scan0;
+            for (int y = 0; y < BitmapHeight; y++)
             {
-                var brightness = (byte)(values[index] * 0xFF);
+                for (int x = 0; x < BitmapWidth; x++, index++)
+                {
+                    byte brightness = (byte)(values[index] * 255);
 
-                trueBitMap.SetPixel(x, y, Color.FromArgb(brightness, brightness, brightness));
+                    int offset = (y * data.Stride) + (x * 4);
+                    ptr[offset + 0] = brightness; // B
+                    ptr[offset + 1] = brightness; // G
+                    ptr[offset + 2] = brightness; // R
+                    ptr[offset + 3] = 255;        // A
+                }
             }
         }
 
-        windowGraphics.InterpolationMode = InterpolationMode.NearestNeighbor;
-        windowGraphics.SmoothingMode = SmoothingMode.HighQuality;
-
-        windowGraphics.ScaleTransform(4, 4);
-        windowGraphics.DrawImage(trueBitMap, 0, 0);
+        _backBuffer.UnlockBits(data);
     }
 }

@@ -113,9 +113,9 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
             ProcessOrderedBatchesView(orderedBatchesView, ref batchProcessCount, ref loss);
 
-            loss /= _config.BatchSize;
+            loss /= orderedBatchesView.BatchCount;
 
-            if (epoch % _config.BatchSize is 0)
+            if (epoch % orderedBatchesView.BatchCount is 0)
             {
                 DisplayEpochResult(stopWatch.Elapsed, batchProcessCount, loss, epoch);
             }

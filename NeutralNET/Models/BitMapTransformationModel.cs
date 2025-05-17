@@ -21,7 +21,7 @@ public class BitMapTransformationModel : IModel
     public void Prepare()
     {
         var threeStruct = GraphicsUtils.GenerateCharPixelStruct('@', "Arial");
-        var eightStruct = GraphicsUtils.GenerateCharPixelStruct('&', "Comic Sans MS");
+        var eightStruct = GraphicsUtils.GenerateCharPixelStruct('$', "Comic Sans MS");
 
         var inputRow = TrainingInput.GetRowSpan(0);
         var outputRow = TrainingOutput.GetRowSpan(0);

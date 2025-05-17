@@ -11,7 +11,7 @@ internal class Program
 
     static void Main(string[] args)
     {
-        RunSingleDigitTransformation();
+        RunNetworkDigit();
     }
 
     public static void RunNetwork()
