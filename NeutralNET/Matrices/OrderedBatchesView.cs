@@ -60,12 +60,13 @@ public unsafe class OrderedBatchesView
 
     public struct Enumerator(OrderedBatchesView batchesView, int offset, int endOffset)
     {
+        public int Offset = offset - 1;
         public readonly TrainingPair Current
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get
             {
-                var index = batchesView._indicies[offset];
+                var index = batchesView._indicies[Offset];
 
                 return new(
                     (index * batchesView.InputStride) + batchesView._trainingInput,
@@ -74,7 +75,7 @@ public unsafe class OrderedBatchesView
             }
         }
 
-        public bool MoveNext() => (offset += 1) < endOffset;
+        public bool MoveNext() => (Offset += 1) < endOffset;
     }
 }
 

@@ -28,7 +28,7 @@ public static class GraphicsUtils
     [SupportedOSPlatformGuard("windows6.1")]
     public static bool IsSupported => OperatingSystem.IsWindowsVersionAtLeast(6, 1);
 
-    public static PixelStruct[] GetDigitsDataSet(string fontName)
+    public static PixelStruct[] GetDigitsDataSet(string fontName, bool applyTransformation = true)
     {
         if (!IsSupported)
         {
@@ -44,11 +44,20 @@ public static class GraphicsUtils
 
         for (var i = 0; i < DigitLimit; ++i, ++c)
         {
-            var angle = float.Lerp(-10, 10, _rng.NextSingle());
-            var scaleX = float.Lerp(0.95f, 1.05f, _rng.NextSingle());
-            var scaleY = float.Lerp(0.95f, 1.05f, _rng.NextSingle());
+            Matrix? transformation = null;
 
-            var transformation = CreateTranformationMatrix(angle, scaleX, scaleY);
+            if (applyTransformation)
+            {
+                var angle = float.Lerp(-10, 10, _rng.NextSingle());
+                var scaleX = float.Lerp(0.95f, 1.05f, _rng.NextSingle());
+                var scaleY = float.Lerp(0.95f, 1.05f, _rng.NextSingle());
+
+                transformation = CreateTranformationMatrix(angle, scaleX, scaleY);
+            }
+            else
+            {
+                transformation = CreateTranformationMatrix(0, 1, 1);
+            }
 
             result[i] = GenerateBrightStruct(c, font, transformation);
         }

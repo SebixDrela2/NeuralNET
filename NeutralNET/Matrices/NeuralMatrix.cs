@@ -245,6 +245,7 @@ public unsafe readonly struct NeuralMatrix
         for (int i = 0; i < Rows; i++)
         {
             var row = GetRowSpan(i);
+
             foreach (var val in row)
             {
                 Console.Write($"{val,8:F4}");
@@ -253,6 +254,9 @@ public unsafe readonly struct NeuralMatrix
         }
 
         Console.WriteLine("]");
+
+        Console.WriteLine();
+        Console.WriteLine();
     }
 
     public override string ToString() => $"{Rows}x{UsedColumns}";   

@@ -1,4 +1,6 @@
-﻿using NeutralNET.Matrices;
+﻿using NeutralNET.Framework.Neural;
+using NeutralNET.Matrices;
+using NeutralNET.Models;
 
 namespace NeutralNET.Framework;
 
@@ -16,4 +18,6 @@ public interface IArchitecture<TSelf> where TSelf : IArchitecture<TSelf>
     public NeuralMatrix[] MatrixVBiases { get; }
 
     static abstract TSelf Create(params ReadOnlySpan<int> architecture);
+
+    void ZeroOut();
 }
