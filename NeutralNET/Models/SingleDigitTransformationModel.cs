@@ -20,10 +20,11 @@ public class SingleDigitTransformationModel : IModel
 
     public void Prepare()
     {
-        var brightStructs = GraphicsUtils.GetDigitsDataSet("Arial", false);
+        var arial = GraphicsUtils.GetDigitsDataSet("Arial", false);
+        var comicsans = GraphicsUtils.GetDigitsDataSet("Comic Sans MS", false);
 
-        var threeStruct = brightStructs[3];
-        var eightStruct = brightStructs[8];
+        var threeStruct = arial[5];
+        var eightStruct = comicsans[3];
 
         var inputRow = TrainingInput.GetRowSpan(0);
         var outputRow = TrainingOutput.GetRowSpan(0);

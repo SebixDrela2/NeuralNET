@@ -105,6 +105,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         _indices = [.. Enumerable.Range(0, trainingInput.Rows)];
 
         var batchProcessCount = 0;
+        var stopWatch = Stopwatch.StartNew();
         var orderedBatchesView = GetOrderedBatchView(trainingInput, trainingOutput);
 
         for (var epoch = 0; epoch < _config.Epochs; epoch++)
@@ -112,6 +113,13 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
             float loss = 0;
 
             ProcessOrderedBatchesView(orderedBatchesView, ref batchProcessCount, ref loss);
+
+            loss /= _config.BatchSize;
+
+            if (epoch % _config.BatchSize is 0)
+            {
+                DisplayEpochResult(stopWatch.Elapsed, batchProcessCount, loss, epoch);
+            }
 
             yield return Forward();
         }

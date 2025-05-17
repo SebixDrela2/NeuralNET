@@ -70,11 +70,11 @@ internal class Program
         var network = new NeuralNetworkBuilder<Architecture>()
             .WithArchitecture(
                 inputSize: SingleDigitTransformationModel.PixelCount,
-                hiddenLayers: [4, 4, 4, 4, 4],
+                hiddenLayers: [2, 2],
                 outputSize: SingleDigitTransformationModel.PixelCount)
-            .WithEpochs(10000)
+            .WithEpochs(100000)
             .WithBatchSize(BatchSize)
-            .WithLearningRate(3e-4f)
+            .WithLearningRate(5e-5f)
             .WithWeightDecay(1e-5f)
             .WithBeta1(0.9f)
             .WithBeta2(0.999f)

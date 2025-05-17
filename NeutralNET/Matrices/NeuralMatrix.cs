@@ -23,7 +23,8 @@ public unsafe readonly struct NeuralMatrix
 
     public readonly int Rows;
 
-    //Obsolete    
+    public readonly bool HasStride => ColumnsStride != UsedColumns;
+
     public readonly int ColumnsStride;
     public readonly int UsedColumns;
     public readonly int LogicalLength;
@@ -55,6 +56,13 @@ public unsafe readonly struct NeuralMatrix
 
         StrideMasks = strideMask;
         SpanWithGarbage.Clear();
+    }
+
+    public float[] ToArray()
+    {
+        Debug.Assert(!HasStride);
+
+        return SpanWithGarbage.ToArray();
     }
 
     public void Dispose() => NativeMemory.AlignedFree(Pointer);
