@@ -461,18 +461,11 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
     private float CalculateNeuronGradient(float activation, float error, bool isOutput)
     {
-        if (float.IsNaN(activation) || float.IsNaN(error))
-        {
-            return 0f;
-        }
+        float gradient = isOutput
+            ? Math.Max(activation * (1 - activation), 0.01f)
+            : activation > 0 ? 1f : 0f;                     
 
-        var gradient = isOutput
-            ? Math.Max(1 - activation * activation, 0.01f)
-            : activation > 0 ? 1f : 0.01f;
-
-        var clippedError = Math.Clamp(error, -10f, 10f);
-
-        return 2 * clippedError * gradient;
+        return 2 * Math.Clamp(error, -10f, 10f) * gradient;
     }
 
     private float Loss(OrderedBatchView batch)
@@ -498,7 +491,6 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
             var cPtr = pair.Output;
             var cEnd = cPtr + batch.OutputStride;
 
-            var outputRow = pair.Output;
             var predicted = realLastNeuronMatrix;
             var batchLoss = 0f;
 

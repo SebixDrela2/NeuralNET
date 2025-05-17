@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
 namespace NeutralNET.Stuff;
@@ -43,9 +44,9 @@ public static class GraphicsUtils
 
         for (var i = 0; i < DigitLimit; ++i, ++c)
         {
-            var angle = float.Lerp(-5, 5, _rng.NextSingle());
-            var scaleX = float.Lerp(0.98f, 1.02f, _rng.NextSingle());
-            var scaleY = float.Lerp(0.98f, 1.02f, _rng.NextSingle());
+            var angle = float.Lerp(-10, 10, _rng.NextSingle());
+            var scaleX = float.Lerp(0.95f, 1.05f, _rng.NextSingle());
+            var scaleY = float.Lerp(0.95f, 1.05f, _rng.NextSingle());
 
             var transformation = CreateTranformationMatrix(angle, scaleX, scaleY);
 
