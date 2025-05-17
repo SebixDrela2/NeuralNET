@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
+using System.Runtime.Versioning;
 
 namespace NeutralNET.Stuff;
 
@@ -21,9 +22,18 @@ public static class GraphicsUtils
     private const int Size = Width * Height;
     private const int RandomSeed = 0xBEEF;
 
-    private static readonly Random _rng = new Random(RandomSeed);
+    private static readonly Random _rng = new(RandomSeed);
+
+    [SupportedOSPlatformGuard("windows6.1")]
+    public static bool IsSupported => OperatingSystem.IsWindowsVersionAtLeast(6, 1);
+
     public static PixelStruct[] GetDigitsDataSet(string fontName)
     {
+        if (!IsSupported)
+        {
+            throw new NotSupportedException();
+        }
+
         Directory.CreateDirectory("Digits");
 
         var result = new PixelStruct[DigitLimit];
@@ -46,6 +56,11 @@ public static class GraphicsUtils
 
     private static PixelStruct GenerateBrightStruct(char digit, Font font, Matrix transformation)
     {
+        if (!IsSupported)
+        {
+            throw new NotSupportedException();
+        }
+
         using var bitMap = new Bitmap(ScaleWidth, ScaleHeight, PixelFormat.Format32bppArgb);
         using var trueBitMap = new Bitmap(Width, Height, PixelFormat.Format32bppArgb);
 
@@ -103,6 +118,11 @@ public static class GraphicsUtils
 
     private static Matrix CreateTranformationMatrix(float angle, float scaleX, float scaleY)
     {
+        if (!IsSupported)
+        {
+            throw new NotSupportedException();
+        }
+
         var (cx, cy) = (ScaleWidth/2f, ScaleHeight/2f);
         var m = new Matrix();
 

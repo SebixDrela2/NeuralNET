@@ -1,4 +1,4 @@
-﻿using NeutralNET.Framework;
+﻿using NeutralNET.Framework.Neural;
 using NeutralNET.Matrices;
 using NeutralNET.Stuff;
 using NeutralNET.Validators;
@@ -7,7 +7,7 @@ namespace NeutralNET.Models;
 
 public class DigitModel : IModel, IValidator
 {
-    private const int VariantFontCount = 5;
+    private const int VariantFontCount = 10;
     public const int PixelCount = 16 * 16;
     public const int DigitLimit = 10;
 

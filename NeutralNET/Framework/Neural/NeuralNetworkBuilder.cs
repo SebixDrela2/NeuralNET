@@ -1,6 +1,6 @@
 ﻿using NeutralNET.Models;
 
-namespace NeutralNET.Framework;
+namespace NeutralNET.Framework.Neural;
 
 public class NeuralNetworkBuilder<TArch> where TArch : IArchitecture<TArch>
 {
@@ -52,6 +52,24 @@ public class NeuralNetworkBuilder<TArch> where TArch : IArchitecture<TArch>
     {
         _config.WithShuffle = shuffle;
 
+        return this;
+    }
+
+    public NeuralNetworkBuilder<TArch> WithBeta1(float beta1)
+    {
+        _config.Beta1 = beta1;
+        return this;
+    }
+
+    public NeuralNetworkBuilder<TArch> WithBeta2(float beta2)
+    {
+        _config.Beta2 = beta2;
+        return this;
+    }
+
+    public NeuralNetworkBuilder<TArch> WithEpsilon(float epsilon)
+    {
+        _config.Epsilon = epsilon;
         return this;
     }
 

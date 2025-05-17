@@ -1,6 +1,4 @@
-﻿using NeutralNET.Matrices;
-
-namespace NeutralNET.Framework;
+﻿namespace NeutralNET.Framework.Neural;
 
 public class NeuralNetwork<TArch> where TArch : IArchitecture<TArch>
 {

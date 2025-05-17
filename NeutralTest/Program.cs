@@ -1,4 +1,5 @@
 ﻿using NeutralNET.Framework;
+using NeutralNET.Framework.Neural;
 using NeutralNET.Models;
 using NeutralNET.Stuff;
 
@@ -43,13 +44,16 @@ internal class Program
 
         var network = new NeuralNetworkBuilder<Architecture>()
             .WithArchitecture(
-                inputSize: DigitModel.PixelCount, 
-                hiddenLayers: [64, 64, 64], 
+                inputSize: DigitModel.PixelCount,
+                hiddenLayers: [72, 72, 72, 72],
                 outputSize: 1)
-            .WithEpochs(40000)
+            .WithEpochs(1000)
             .WithBatchSize(BatchSize)
-            .WithLearningRate(1e-2f)
+            .WithLearningRate(3e-4f)
             .WithWeightDecay(1e-5f)
+            .WithBeta1(0.9f)   
+            .WithBeta2(0.999f) 
+            .WithEpsilon(1e-8f)
             .WithShuffle(true)
             .WithModel(model)
             .Build();

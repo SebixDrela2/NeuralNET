@@ -9,15 +9,14 @@ using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 
-namespace NeutralNET.Framework;
-
-public delegate NeuralMatrix NeuralForward();
+namespace NeutralNET.Framework.Neural;
 
 public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 {
     private readonly NeuralNetworkConfig _config;
     private readonly TArch _architecture;
     private uint[] _trainingOutputStrideMask = null!;
+    private int _timestep = 1;
 
     public NeuralFramework(NeuralNetworkConfig config)
     {
@@ -28,7 +27,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
         _config = config;
         _architecture = TArch.Create(_config.Architecture);
-    }  
+    }
 
     public void Print(string name)
     {
@@ -42,7 +41,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
         Console.WriteLine("]");
     }
-    
+
     public NeuralForward Run(IModel model)
     {
         var trainingInput = model.TrainingInput;
@@ -72,26 +71,26 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
         for (var epoch = 0; epoch < _config.Epochs; epoch++)
         {
-             float loss = 0;
-             
-             if (_config.WithShuffle)
-             {
-                rng.Shuffle(indices);               
-             }
-             
-             foreach (var batch in orderedBatchesView)
-             {            
-                 loss += ProcessBatch(gradientArchitecture, batch);
-             
-                 batchProcessCount++;
-             }
-             
-             loss /= _config.BatchSize;
-             
-             if (epoch % _config.BatchSize is 0)
-             {
+            float loss = 0;
+
+            if (_config.WithShuffle)
+            {
+                rng.Shuffle(indices);
+            }
+
+            foreach (var batch in orderedBatchesView)
+            {
+                loss += ProcessBatch(gradientArchitecture, batch);
+
+                batchProcessCount++;
+            }
+
+            loss /= _config.BatchSize;
+
+            if (epoch % _config.BatchSize is 0)
+            {
                 DisplayEpochResult(stopWatch.Elapsed, batchProcessCount, loss, epoch);
-             }
+            }
         }
     }
 
@@ -100,7 +99,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         var batchesPerSecond = batchProcessCount / elapsed.TotalSeconds;
         var lossToPercent = 100.0 * (1.0 - Math.Min(loss, 1.0));
 
-        var rLoss = loss > 0 ? (1 + (float.Log10(loss) / 8)) : 0;
+        var rLoss = loss > 0 ? 1 + float.Log10(loss) / 8 : 0;
         var gLoss = 1 - rLoss;
 
         var rReadyLoss = Math.Clamp((int)(rLoss * 255), 0, 255);
@@ -124,11 +123,36 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
     private void Learn(Architecture gradient)
     {
+        float beta1 = _config.Beta1;
+        float beta2 = _config.Beta2;
+        float epsilon = _config.Epsilon;
+        float lr = _config.LearningRate;
+        float wd = _config.WeightDecay;
+
         for (var i = 0; i < _architecture.Count; i++)
-        {           
-            LearnInternalVectorized(_architecture.MatrixWeights, gradient.MatrixWeights, i);
-            LearnInternalVectorized(_architecture.MatrixBiases, gradient.MatrixBiases, i);
+        {
+            UpdateAdamMomentsVectorized(
+                _architecture.MatrixMWeights[i], _architecture.MatrixVWeights[i],
+                gradient.MatrixWeights[i], beta1, beta2);
+
+            UpdateAdamMomentsVectorized(
+                _architecture.MatrixMBiases[i], _architecture.MatrixVBiases[i],
+                gradient.MatrixBiases[i], beta1, beta2);
+
+            ApplyAdamUpdateVectorized(
+                _architecture.MatrixWeights[i],
+                _architecture.MatrixMWeights[i],
+                _architecture.MatrixVWeights[i],
+                lr, wd, beta1, beta2, epsilon, _timestep);
+
+            ApplyAdamUpdateVectorized(
+                _architecture.MatrixBiases[i],
+                _architecture.MatrixMBiases[i],
+                _architecture.MatrixVBiases[i],
+                lr, wd, beta1, beta2, epsilon, _timestep);
         }
+
+        _timestep++;
     }
 
     private void LearnInternalVectorized(
@@ -167,10 +191,96 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         }
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe void UpdateAdamMomentsVectorized(
+    NeuralMatrix mMatrix, NeuralMatrix vMatrix, NeuralMatrix gradient,
+    float beta1, float beta2)
+    {
+        float* mPtr = mMatrix.Pointer;
+        float* vPtr = vMatrix.Pointer;
+        float* gPtr = gradient.Pointer;
+        float* end = mPtr + mMatrix.AllocatedLength;
+
+        var beta1Vec = Vector256.Create(beta1);
+        var beta2Vec = Vector256.Create(beta2);
+        var oneMinusBeta1 = Vector256.Create(1 - beta1);
+        var oneMinusBeta2 = Vector256.Create(1 - beta2);
+
+        if (Avx2.IsSupported)
+        {
+            for (; mPtr != end;)
+            {
+                var m = Avx.LoadVector256(mPtr);
+                var v = Avx.LoadVector256(vPtr);
+                var g = Avx.LoadVector256(gPtr);
+
+                var newM = Avx.Add(Avx.Multiply(beta1Vec, m),
+                              Avx.Multiply(oneMinusBeta1, g));
+
+                var gSq = Avx.Multiply(g, g);
+                var newV = Avx.Add(Avx.Multiply(beta2Vec, v),
+                              Avx.Multiply(oneMinusBeta2, gSq));
+
+                newM.Store(mPtr);
+                newV.Store(vPtr);
+
+                mPtr += 8; vPtr += 8; gPtr += 8;
+            }
+        }
+        else
+        {
+            // Scalar implementation
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe void ApplyAdamUpdateVectorized(
+        NeuralMatrix param, NeuralMatrix m, NeuralMatrix v,
+        float lr, float wd, float beta1, float beta2, float epsilon, int t)
+    {
+        float* p = param.Pointer;
+        float* mPtr = m.Pointer;
+        float* vPtr = v.Pointer;
+        float* end = p + param.AllocatedLength;
+
+        float beta1T = MathF.Pow(beta1, t);
+        float beta2T = MathF.Pow(beta2, t);
+        var mCorrVec = Vector256.Create(1 / (1 - beta1T));
+        var vCorrVec = Vector256.Create(1 / (1 - beta2T));
+        var lrVec = Vector256.Create(lr);
+        var epsVec = Vector256.Create(epsilon);
+        var wdVec = Vector256.Create(lr * wd);
+
+        if (Avx2.IsSupported)
+        {
+            for (; p != end;)
+            {
+                var paramVec = Avx.LoadVector256(p);
+                var mVec = Avx.LoadVector256(mPtr);
+                var vVec = Avx.LoadVector256(vPtr);
+                
+                var mHat = Avx.Multiply(mVec, mCorrVec);
+                var vHat = Avx.Multiply(vVec, vCorrVec);
+                
+                var sqrtV = Avx.Sqrt(vHat);
+                var denom = Avx.Add(sqrtV, epsVec);
+                var step = Avx.Divide(mHat, denom);
+                step = Avx.Multiply(lrVec, step);
+
+                var decay = Avx.Multiply(wdVec, paramVec);
+                var newParam = Avx.Subtract(Avx.Subtract(paramVec, decay), step);
+
+                newParam.Store(p);
+
+                p += 8; mPtr += 8; vPtr += 8;
+            }
+        }
+    }
+
     private void BackPropagate(
         Architecture gradient,
         OrderedBatchView batch)
-    {       
+    {
         gradient.ZeroOut();
 
         int rowCount = 0;
@@ -180,7 +290,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
             Forward();
 
-            for (var j = 0; j < _architecture.Count ; j++)
+            for (var j = 0; j < _architecture.Count; j++)
             {
                 gradient.MatrixNeurons[j].Clear();
             }
@@ -222,7 +332,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
     }
 
     private void PropagateToPreviousLayer(Architecture gradient)
-    {       
+    {
         for (int layerIdx = _architecture.Count; layerIdx > 0; layerIdx--)
         {
             var currentActivations = _architecture.MatrixNeurons[layerIdx];
@@ -249,7 +359,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         var prevActivations = lastRealNeuronMatrix.Pointer;
         var prevActivationsEnd = prevActivations + lastRealNeuronMatrix.ColumnsStride;
         var realLayerIndexWeight = _architecture.MatrixWeights[layerIndex - 1];
-      
+
         var neuronCount = currentActivations.UsedColumns;
 
         var weights = realLayerIndexWeight.Pointer;
@@ -263,7 +373,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
             gradientLayerIndexBias[neuronIdx] += neuronGradient;
 
-            AccumulateVectorizedGradients(prevActivations, prevActivationsEnd, ref weights, ref weightsGradient, prevNeuronGradients, neuronGradient);           
+            AccumulateVectorizedGradients(prevActivations, prevActivationsEnd, ref weights, ref weightsGradient, prevNeuronGradients, neuronGradient);
         }
     }
 
@@ -271,13 +381,13 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
     private static void AccumulateVectorizedGradients(
         float* aPtr,
         float* aEnd,
-        ref float* bPtr, 
-        ref float* cPtr, 
-        float* dPtr, 
+        ref float* bPtr,
+        ref float* cPtr,
+        float* dPtr,
         float neuronGradient)
     {
         var ngVec = Vector256.Create(neuronGradient);
-        
+
         if (Avx2.IsSupported)
         {
             for (; aPtr != aEnd;
@@ -306,8 +416,8 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         {
             for (; aPtr != aEnd; ++aPtr, ++bPtr, ++cPtr, ++dPtr)
             {
-                *cPtr += neuronGradient * (*aPtr);
-                *dPtr += neuronGradient * (*bPtr);
+                *cPtr += neuronGradient * *aPtr;
+                *dPtr += neuronGradient * *bPtr;
             }
         }
     }
@@ -358,7 +468,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
         var gradient = isOutput
             ? Math.Max(1 - activation * activation, 0.01f)
-            : (activation > 0 ? 1f : 0.01f);
+            : activation > 0 ? 1f : 0.01f;
 
         var clippedError = Math.Clamp(error, -10f, 10f);
 
@@ -393,7 +503,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
             var batchLoss = 0f;
 
             var lossVec = Vector256<float>.Zero;
-            
+
             for (; cPtr != cEnd; bPtr += Vector256<float>.Count, cPtr += Vector256<float>.Count)
             {
                 var predVec = Vector256.LoadAligned(bPtr);
@@ -439,8 +549,9 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
     {
         for (var i = 0; i < _architecture.Count; i++)
         {
-            float scale = MathF.Sqrt(2f / (_architecture.MatrixWeights[i].Rows + _architecture.MatrixWeights[i].UsedColumns));
+            float scale = MathF.Sqrt(2.0f / _architecture.MatrixWeights[i].Rows);
             _architecture.MatrixWeights[i].Randomize(-scale, scale);
+            _architecture.MatrixBiases[i].Clear();
         }
     }
 }

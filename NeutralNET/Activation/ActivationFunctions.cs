@@ -68,7 +68,7 @@ public static unsafe class ActivationFunctions
         for (; ptr != end; ptr += Vector256<float>.Count)
         {
             var vec = Vector256.LoadAligned(ptr);
-            vec = Avx.Max(vec, zero);  // Standard ReLU
+            vec = Avx.Max(vec, zero);
             vec.StoreAligned(ptr);
         }
     }

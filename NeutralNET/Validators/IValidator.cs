@@ -1,4 +1,4 @@
-﻿using NeutralNET.Framework;
+﻿using NeutralNET.Framework.Neural;
 using NeutralNET.Matrices;
 
 namespace NeutralNET.Validators;

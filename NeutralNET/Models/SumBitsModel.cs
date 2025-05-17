@@ -1,4 +1,4 @@
-﻿using NeutralNET.Framework;
+﻿using NeutralNET.Framework.Neural;
 using NeutralNET.Matrices;
 using NeutralNET.Stuff;
 using NeutralNET.Validators;
