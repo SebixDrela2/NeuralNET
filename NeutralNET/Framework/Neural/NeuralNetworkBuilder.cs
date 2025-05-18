@@ -6,9 +6,17 @@ public class NeuralNetworkBuilder<TArch> where TArch : IArchitecture<TArch>
 {
     private readonly NeuralNetworkConfig _config = new();
 
-    public NeuralNetworkBuilder<TArch> WithArchitecture(int inputSize, int[] hiddenLayers, int outputSize)
+    public NeuralNetworkBuilder(IModel model)
     {
-        _config.Architecture = [inputSize, .. hiddenLayers, outputSize];
+        _config.Model = model;
+    }
+
+    public NeuralNetworkBuilder<TArch> WithArchitecture(int[] hiddenLayers)
+    {
+        var inputUsedColumns = _config.Model.TrainingInput.UsedColumns;
+        var outputUsedColumns = _config.Model.TrainingOutput.UsedColumns;
+
+        _config.Architecture = [inputUsedColumns, .. hiddenLayers, outputUsedColumns];
 
         return this;
     }
@@ -37,13 +45,6 @@ public class NeuralNetworkBuilder<TArch> where TArch : IArchitecture<TArch>
     public NeuralNetworkBuilder<TArch> WithWeightDecay(float decay)
     {
         _config.WeightDecay = decay;
-
-        return this;
-    }
-
-    public NeuralNetworkBuilder<TArch> WithModel(IModel model)
-    {
-        _config.Model = model;
 
         return this;
     }

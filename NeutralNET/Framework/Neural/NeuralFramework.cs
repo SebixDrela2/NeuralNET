@@ -26,7 +26,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
     {
         if (config.Architecture.Length <= 0)
         {
-            throw new ArgumentException("Negative or empty architecture.");
+            throw new ArgumentException("Negative or empty hidden layers.");
         }
 
         _config = config;
@@ -74,10 +74,10 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
         RandomizeWeightsBiases();
 
-        foreach(var item in HandleTrainingEpoch(trainingInput, trainingInput))
-        {
-            yield return item;
-        }
+        //foreach (var item in HandleTrainingEpoch(trainingInput, trainingInput))
+        //{
+        //    yield return item;
+        //}
 
         foreach (var item in HandleTrainingEpoch(trainingInput, trainingOutput))
         {

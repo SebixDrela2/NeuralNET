@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
 namespace NeutralNET.Stuff;
@@ -21,8 +22,8 @@ public static class GraphicsUtils
 
     private static readonly Random _rng = new(RandomSeed);
 
-    public const int Width = 512;
-    public const int Height = 512;
+    public const int Width = 256;
+    public const int Height = 256;
 
     [SupportedOSPlatformGuard("windows6.1")]
     public static bool IsSupported => OperatingSystem.IsWindowsVersionAtLeast(6, 1);
@@ -135,6 +136,80 @@ public static class GraphicsUtils
         }
 
         return brightStruct;
+    }
+
+    public static Bitmap LoadImage(string path)
+    {
+        if (!IsSupported)
+        {
+            throw new NotImplementedException();
+        }
+
+        return new Bitmap(Image.FromFile(path), Width, Height);
+    }
+
+    public static float[] ImageToFloatRGB(Bitmap bmp, bool normalize = true)
+    {
+        return ProcessImagePixels(bmp, (r, g, b) =>
+        {
+            if (normalize)
+            {
+                return [r / 255f, g / 255f, b / 255f];
+            }
+            return [r, g, b];
+        }, channels: 3);
+    }
+
+    public static float[] ImageToFloatGrayScale(Bitmap bmp)
+    {
+        return ProcessImagePixels(bmp, (r, g, b) =>
+        {
+            return [(0.3f * r + 0.59f * g + 0.11f * b) / 255f];
+        }, channels: 1);
+    }
+
+    private static float[] ProcessImagePixels(Bitmap bmp, Func<byte, byte, byte, float[]> pixelConverter, int channels)
+    {
+        if (!IsSupported)
+        {
+            throw new NotImplementedException();
+        }
+
+        var pixels = new float[Width * Height * channels];
+
+        BitmapData data = bmp.LockBits(
+            new Rectangle(0, 0, Width, Height),
+            ImageLockMode.ReadOnly,
+            PixelFormat.Format32bppArgb);
+
+        try
+        {
+            byte[] buffer = new byte[data.Stride * Height];
+            Marshal.Copy(data.Scan0, buffer, 0, buffer.Length);
+
+            for (int y = 0; y < Height; y++)
+            {
+                int rowOffset = y * data.Stride;
+                for (int x = 0; x < Width; x++)
+                {
+                    int pixelOffset = rowOffset + (x * 4);
+                    int outputOffset = (y * Width + x) * channels;
+
+                    byte b = buffer[pixelOffset];
+                    byte g = buffer[pixelOffset + 1];
+                    byte r = buffer[pixelOffset + 2];
+
+                    float[] convertedValues = pixelConverter(r, g, b);
+                    Array.Copy(convertedValues, 0, pixels, outputOffset, convertedValues.Length);
+                }
+            }
+        }
+        finally
+        {
+            bmp.UnlockBits(data);
+        }
+
+        return pixels;
     }
 
     private static Matrix CreateTranformationMatrix(float angle, float scaleX, float scaleY)

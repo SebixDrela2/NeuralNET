@@ -5,7 +5,9 @@ namespace NeutralNET.Models;
 
 public class BitMapTransformationModel : IModel
 {
-    public const int PixelCount = GraphicsUtils.Height * GraphicsUtils.Width;
+    public const int InputSize = 16 * 16 * 3;
+    public const int RgbPixelCount = GraphicsUtils.Height * GraphicsUtils.Width * 3;
+    public const int GrayscalePixelCount = GraphicsUtils.Height * GraphicsUtils.Width;
     public NeuralMatrix TrainingInput { get ; set ; }
     public NeuralMatrix TrainingOutput { get ; set ; }
 
@@ -13,20 +15,25 @@ public class BitMapTransformationModel : IModel
 
     public BitMapTransformationModel()
     {
-        TrainingInput = new NeuralMatrix(1, PixelCount);
-        TrainingOutput = new NeuralMatrix(1, PixelCount);
+        TrainingInput = new NeuralMatrix(1, InputSize);
+        TrainingOutput = new NeuralMatrix(1, RgbPixelCount);
         TrainingOutputStrideMask = TrainingOutput.StrideMasks;
     }
 
     public void Prepare()
     {
-        var threeStruct = GraphicsUtils.GenerateCharPixelStruct('@', "Arial");
-        var eightStruct = GraphicsUtils.GenerateCharPixelStruct('$', "Comic Sans MS");
+        var outputImage = GraphicsUtils.LoadImage(@"C:\Users\Seba\Documents\Desktop\Central-Nic-Http-master\eagle256.png");
 
-        var inputRow = TrainingInput.GetRowSpan(0);
-        var outputRow = TrainingOutput.GetRowSpan(0);
+        var random = new Random();
+        var inputPixels = new float[InputSize];
 
-        threeStruct.Values.CopyTo(inputRow);
-        eightStruct.Values.CopyTo(outputRow);
+        for (int i = 0; i < inputPixels.Length; i++)
+        {
+            inputPixels[i] = (float)random.NextDouble();
+        }
+        var outputPixels = GraphicsUtils.ImageToFloatRGB(outputImage);
+
+        inputPixels.CopyTo(TrainingInput.GetRowSpan(0));
+        outputPixels.CopyTo(TrainingOutput.GetRowSpan(0));
     }
 }

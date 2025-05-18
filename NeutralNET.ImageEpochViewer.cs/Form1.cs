@@ -60,8 +60,6 @@ public partial class Form1 : Form
             {
                 break;
             }
-            
-            Thread.Sleep(5);
         }
     }
 
@@ -75,7 +73,7 @@ public partial class Form1 : Form
     {
         if (BitMapValues != null && _backBuffer != null)
         {
-            Draw(BitMapValues);
+            DrawRGB(BitMapValues);
             e.Graphics.DrawImageUnscaled(_backBuffer, 0, 0);
         }
     }
@@ -90,24 +88,20 @@ public partial class Form1 : Form
         _model = new BitMapTransformationModel();
         _model.Prepare();
 
-        _network = new NeuralNetworkBuilder<Architecture>()
-            .WithArchitecture(
-                inputSize: BitMapTransformationModel.PixelCount,
-                hiddenLayers: [16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16],
-                outputSize: BitMapTransformationModel.PixelCount)
-            .WithEpochs(2000)
+        _network = new NeuralNetworkBuilder<Architecture>(_model)
+            .WithArchitecture([32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32, 32])
+            .WithEpochs(500)
             .WithBatchSize(BatchSize)
-            .WithLearningRate(1e-3f)
+            .WithLearningRate(1e-4f)
             .WithWeightDecay(3e-5f)
             .WithBeta1(0.9f)
             .WithBeta2(0.999f)
             .WithEpsilon(1e-8f)
             .WithShuffle(true)
-            .WithModel(_model)
             .Build();
     }
-
-    private unsafe void Draw(float[] values)
+    
+    private unsafe void DrawGrayscale(float[] values)
     {
         var rect = new Rectangle(0, 0, BitmapWidth, BitmapHeight);
         var data = _backBuffer.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format32bppPArgb);
@@ -118,12 +112,34 @@ public partial class Form1 : Form
             for (int x = 0; x < BitmapWidth; x++)
             {
                 int idx = y * BitmapWidth + x;
-                byte brightness = (byte)(values[idx] * 255);
+                byte brightness = (byte)(values[idx] * 255); 
 
-                row[x * 4 + 0] = brightness; // B
-                row[x * 4 + 1] = brightness; // G
-                row[x * 4 + 2] = brightness; // R
-                row[x * 4 + 3] = 255;       // A
+                row[x * 4 + 0] = brightness;
+                row[x * 4 + 1] = brightness;
+                row[x * 4 + 2] = brightness;
+                row[x * 4 + 3] = 255;       
+            }
+        });
+
+        _backBuffer.UnlockBits(data);
+    }
+    
+    private unsafe void DrawRGB(float[] values)
+    {
+        var rect = new Rectangle(0, 0, BitmapWidth, BitmapHeight);
+        var data = _backBuffer.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format32bppPArgb);
+
+        Parallel.For(0, BitmapHeight, y =>
+        {
+            byte* row = (byte*)data.Scan0 + y * data.Stride;
+            for (int x = 0; x < BitmapWidth; x++)
+            {
+                int rgbIdx = (y * BitmapWidth + x) * 3;
+                
+                row[x * 4 + 0] = (byte)(values[rgbIdx + 2] * 255);
+                row[x * 4 + 1] = (byte)(values[rgbIdx + 1] * 255);
+                row[x * 4 + 2] = (byte)(values[rgbIdx] * 255);    
+                row[x * 4 + 3] = 255;                             
             }
         });
 
