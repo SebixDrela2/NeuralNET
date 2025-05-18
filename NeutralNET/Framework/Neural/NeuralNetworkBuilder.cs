@@ -1,4 +1,5 @@
-﻿using NeutralNET.Models;
+﻿using NeutralNET.Activation;
+using NeutralNET.Models;
 
 namespace NeutralNET.Framework.Neural;
 
@@ -39,6 +40,19 @@ public class NeuralNetworkBuilder<TArch> where TArch : IArchitecture<TArch>
     {
         _config.LearningRate = rate;
 
+        return this;
+    }
+
+    public NeuralNetworkBuilder<TArch> WithHiddenLayerActivation(ActivationType activation)
+    {
+        _config.HiddenActivation = activation;
+
+        return this;
+    }
+
+    public NeuralNetworkBuilder<TArch> WithOutputLayerActivation(ActivationType activation)
+    {
+        _config.OutputActivation = activation;
         return this;
     }
 

@@ -8,19 +8,27 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
+using static NeutralNET.Activation.ActivationSelector;
 
 namespace NeutralNET.Framework.Neural;
 
 public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 {
     private readonly NeuralNetworkConfig _config;
-    private readonly TArch _architecture;
     private readonly TArch _gradientArchitecture;
     private readonly Random _rng;
+
+    private readonly ActivationFunction _hiddenActivation;
+    private readonly ActivationFunction _outputActivation;
+
+    private readonly DerivativeFunction _hiddenDerivative;
+    private readonly DerivativeFunction _outputDerivative;
 
     private uint[] _trainingOutputStrideMask = null!;
     private int[] _indices;
     private int _timestep = 1;
+
+    public readonly TArch Architecture;
 
     public NeuralFramework(NeuralNetworkConfig config)
     {
@@ -30,19 +38,28 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         }
 
         _config = config;
-        _architecture = TArch.Create(_config.Architecture);
         _gradientArchitecture = TArch.Create(_config.Architecture);
         _rng = new Random();
+
+        var activationSelector = new ActivationSelector();
+
+        _hiddenActivation = activationSelector.GetActivation(_config.HiddenActivation);
+        _outputActivation = activationSelector.GetActivation(_config.OutputActivation);
+
+        _hiddenDerivative = activationSelector.GetDerivative(_config.HiddenActivation);
+        _outputDerivative = activationSelector.GetDerivative(_config.OutputActivation);
+
+        Architecture = TArch.Create(_config.Architecture);
     }
 
     public void Print(string name)
     {
         Console.WriteLine($"{name} = [");
 
-        for (var i = 0; i < _architecture.Count; i++)
+        for (var i = 0; i < Architecture.Count; i++)
         {
-            _architecture.MatrixWeights[i].Print($"{nameof(_architecture.MatrixWeights)}[{i}]");
-            _architecture.MatrixBiases[i].Print($"{nameof(_architecture.MatrixWeights)}[{i}]");
+            Architecture.MatrixWeights[i].Print($"{nameof(Architecture.MatrixWeights)}[{i}]");
+            Architecture.MatrixBiases[i].Print($"{nameof(Architecture.MatrixWeights)}[{i}]");
         }
 
         Console.WriteLine("]");
@@ -54,12 +71,12 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         var trainingOutput = model.TrainingOutput;
         _trainingOutputStrideMask = model.TrainingOutputStrideMask;
 
-        _architecture.MatrixNeurons[0].CopyRowFrom(trainingInput, 0);
+        Architecture.MatrixNeurons[0].CopyRowFrom(trainingInput, 0);
 
         RandomizeWeightsBiases();
         HandleTraining(trainingInput, trainingOutput);
 
-        model.TrainingInput = _architecture.MatrixNeurons[0];
+        model.TrainingInput = Architecture.MatrixNeurons[0];
 
         return Forward;
     }
@@ -70,14 +87,14 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         var trainingOutput = model.TrainingOutput;
         _trainingOutputStrideMask = model.TrainingOutputStrideMask;
 
-        _architecture.MatrixNeurons[0].CopyRowFrom(trainingInput, 0);
+        Architecture.MatrixNeurons[0].CopyRowFrom(trainingInput, 0);
 
         RandomizeWeightsBiases();
 
-        //foreach (var item in HandleTrainingEpoch(trainingInput, trainingInput))
-        //{
-        //    yield return item;
-        //}
+        foreach (var item in HandleTrainingEpoch(trainingInput, trainingInput))
+        {
+            yield return item;
+        }
 
         foreach (var item in HandleTrainingEpoch(trainingInput, trainingOutput))
         {
@@ -91,11 +108,34 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         var trainingOutput = model.TrainingOutput;
         _trainingOutputStrideMask = model.TrainingOutputStrideMask;
 
-        _architecture.MatrixNeurons[0].CopyRowFrom(trainingInput, 0);
+        Architecture.MatrixNeurons[0].CopyRowFrom(trainingInput, 0);
 
         RandomizeWeightsBiases();
 
         return HandleTrainingEpoch(trainingInput, trainingOutput);
+    }
+
+    public NeuralMatrix Forward()
+    {
+        var index = 0;
+
+        while (true)
+        {
+            Architecture.MatrixNeurons[index].DotVectorized(Architecture.MatrixWeights[index], Architecture.MatrixNeurons[index + 1]);
+            Architecture.MatrixNeurons[index + 1].SumVectorized(Architecture.MatrixBiases[index]);
+
+            index++;
+
+            if (index >= Architecture.Count)
+            {
+                _outputActivation(Architecture.MatrixNeurons[^1]);
+                break;
+            }
+
+            _hiddenActivation(Architecture.MatrixNeurons[index]);
+        }
+
+        return Architecture.MatrixNeurons[^1];
     }
 
     private void HandleTraining(NeuralMatrix trainingInput, NeuralMatrix trainingOutput)
@@ -212,26 +252,26 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         float lr = _config.LearningRate;
         float wd = _config.WeightDecay;
 
-        for (var i = 0; i < _architecture.Count; i++)
+        for (var i = 0; i < Architecture.Count; i++)
         {
             UpdateAdamMomentsVectorized(
-                _architecture.MatrixMWeights[i], _architecture.MatrixVWeights[i],
+                Architecture.MatrixMWeights[i], Architecture.MatrixVWeights[i],
                 _gradientArchitecture.MatrixWeights[i], beta1, beta2);
 
             UpdateAdamMomentsVectorized(
-                _architecture.MatrixMBiases[i], _architecture.MatrixVBiases[i],
+                Architecture.MatrixMBiases[i], Architecture.MatrixVBiases[i],
                 _gradientArchitecture.MatrixBiases[i], beta1, beta2);
 
             ApplyAdamUpdateVectorized(
-                _architecture.MatrixWeights[i],
-                _architecture.MatrixMWeights[i],
-                _architecture.MatrixVWeights[i],
+                Architecture.MatrixWeights[i],
+                Architecture.MatrixMWeights[i],
+                Architecture.MatrixVWeights[i],
                 lr, wd, beta1, beta2, epsilon, _timestep);
 
             ApplyAdamUpdateVectorized(
-                _architecture.MatrixBiases[i],
-                _architecture.MatrixMBiases[i],
-                _architecture.MatrixVBiases[i],
+                Architecture.MatrixBiases[i],
+                Architecture.MatrixMBiases[i],
+                Architecture.MatrixVBiases[i],
                 lr, wd, beta1, beta2, epsilon, _timestep);
         }
 
@@ -344,7 +384,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
                 
                 var mHat = Avx.Multiply(mVec, mCorrVec);
                 var vHat = Avx.Multiply(vVec, vCorrVec);
-                
+
                 var sqrtV = Avx.Sqrt(vHat);
                 var denom = Avx.Add(sqrtV, epsVec);
                 var step = Avx.Divide(mHat, denom);
@@ -368,11 +408,11 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         int rowCount = 0;
         foreach (var (input, output) in batch)
         {
-            NativeMemory.Copy(input, _architecture.MatrixNeurons[0].Pointer, sizeof(float) * (nuint)batch.InputStride);
+            NativeMemory.Copy(input, Architecture.MatrixNeurons[0].Pointer, sizeof(float) * (nuint)batch.InputStride);
 
             Forward();
 
-            for (var j = 0; j < _architecture.Count; j++)
+            for (var j = 0; j < Architecture.Count; j++)
             {
                 _gradientArchitecture.MatrixNeurons[j].Clear();
             }
@@ -384,15 +424,16 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         }
 
         NormalizeGradientsVectorized(rowCount);
+        ClipGradients();
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void ComputeOutputLayer(float* outputPointer)
     {
-        var aPtr = _architecture.MatrixNeurons[^1].Pointer;
+        var aPtr = Architecture.MatrixNeurons[^1].Pointer;
         var bPtr = _gradientArchitecture.MatrixNeurons[^1].Pointer;
         var cPtr = outputPointer;
-        float* aEnd = aPtr + _architecture.MatrixNeurons[^1].AllocatedLength;
+        float* aEnd = aPtr + Architecture.MatrixNeurons[^1].AllocatedLength;
 
         if (Avx2.IsSupported)
         {
@@ -415,9 +456,9 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
     private void PropagateToPreviousLayer()
     {
-        for (int layerIdx = _architecture.Count; layerIdx > 0; layerIdx--)
+        for (int layerIdx = Architecture.Count; layerIdx > 0; layerIdx--)
         {
-            var currentActivations = _architecture.MatrixNeurons[layerIdx];
+            var currentActivations = Architecture.MatrixNeurons[layerIdx];
             var currentErrors = _gradientArchitecture.MatrixNeurons[layerIdx];
 
             BackPropagateLayerVectorized(layerIdx, currentActivations, currentErrors);
@@ -430,16 +471,16 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
     NeuralMatrix currentActivations,
     NeuralMatrix currentErrors)
     {
-        bool isOutputLayer = layerIndex == _architecture.Count - 1;
+        bool isOutputLayer = layerIndex == Architecture.Count - 1;
 
         var prevNeuronGradients = _gradientArchitecture.MatrixNeurons[layerIndex - 1].Pointer;
         var gradientLayerIndexBias = _gradientArchitecture.MatrixBiases[layerIndex - 1].Pointer;
         var weightsGradient = _gradientArchitecture.MatrixWeights[layerIndex - 1].Pointer;
 
-        var lastRealNeuronMatrix = _architecture.MatrixNeurons[layerIndex - 1];
+        var lastRealNeuronMatrix = Architecture.MatrixNeurons[layerIndex - 1];
         var prevActivations = lastRealNeuronMatrix.Pointer;
         var prevActivationsEnd = prevActivations + lastRealNeuronMatrix.ColumnsStride;
-        var realLayerIndexWeight = _architecture.MatrixWeights[layerIndex - 1];
+        var realLayerIndexWeight = Architecture.MatrixWeights[layerIndex - 1];
 
         var neuronCount = currentActivations.UsedColumns;
 
@@ -540,11 +581,11 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         }
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private float CalculateNeuronGradient(float activation, float error, bool isOutput)
     {
-        float gradient = isOutput
-            ? Math.Max(activation * (1 - activation), 0.01f)
-            : activation > 0 ? 1f : 0f;                     
+        var derivativeFn = isOutput ? _outputDerivative : _hiddenDerivative;
+        var gradient = derivativeFn(activation);
 
         return 2 * Math.Clamp(error, -10f, 10f) * gradient;
     }
@@ -553,8 +594,8 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
     {
         var loss = 0f;
 
-        var realFirstNeuronMatrix = _architecture.MatrixNeurons[0];
-        var realLastNeuronMatrix = _architecture.MatrixNeurons[^1];
+        var realFirstNeuronMatrix = Architecture.MatrixNeurons[0];
+        var realLastNeuronMatrix = Architecture.MatrixNeurons[^1];
 
         var aPtr = realFirstNeuronMatrix.Pointer;
         var realFirstNeuronPtr = realLastNeuronMatrix.Pointer;
@@ -593,36 +634,25 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         return loss;
     }
 
-    private NeuralMatrix Forward()
+    public void ClipGradients(float maxNorm = 1.0f)
     {
-        var index = 0;
-
-        while (true)
+        for (int i = 0; i < Architecture.Count; i++)
         {
-            _architecture.MatrixNeurons[index].DotVectorized(_architecture.MatrixWeights[index], _architecture.MatrixNeurons[index + 1]);
-            _architecture.MatrixNeurons[index + 1].SumVectorized(_architecture.MatrixBiases[index]);
-
-            index++;
-
-            if (index >= _architecture.Count)
-            {
-                ActivationFunctions.ApplySigmoidVectorized(_architecture.MatrixNeurons[^1]);
-                break;
-            }
-
-            ActivationFunctions.ApplyReLUVectorized(_architecture.MatrixNeurons[index]);
+            _gradientArchitecture.MatrixWeights[i].Clip(-maxNorm, maxNorm);
+            _gradientArchitecture.MatrixBiases[i].Clip(-maxNorm, maxNorm);
         }
-
-        return _architecture.MatrixNeurons[^1];
     }
 
     private void RandomizeWeightsBiases()
     {
-        for (var i = 0; i < _architecture.Count; i++)
+        if (_timestep == 1)
         {
-            float scale = MathF.Sqrt(2.0f / _architecture.MatrixWeights[i].Rows);
-            _architecture.MatrixWeights[i].Randomize(-scale, scale);
-            _architecture.MatrixBiases[i].Clear();
+            for (var i = 0; i < Architecture.Count; i++)
+            {
+                float scale = MathF.Sqrt(2.0f / Architecture.MatrixWeights[i].Rows);
+                Architecture.MatrixWeights[i].Randomize(-scale, scale);
+                Architecture.MatrixBiases[i].Clear();
+            }
         }
     }
 }

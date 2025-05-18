@@ -72,4 +72,25 @@ public static unsafe class ActivationFunctions
             vec.StoreAligned(ptr);
         }
     }
+
+    public static void ApplyLeakyReLUVectorized(NeuralMatrix matrix)
+    => ApplyLeakyReLUVectorized(matrix.Pointer, matrix.AllocatedLength);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe void ApplyLeakyReLUVectorized(float* ptr, int allocatedLength)
+    {
+        float* end = ptr + allocatedLength;
+        Vector256<float> zero = Vector256<float>.Zero;
+        Vector256<float> alpha = Vector256.Create(0.01f);
+
+        for (; ptr != end; ptr += Vector256<float>.Count)
+        {
+            var vec = Vector256.LoadAligned(ptr);
+            var mask = Avx.CompareLessThan(vec, zero);
+            var negPart = Avx.Multiply(vec, alpha);
+            var posPart = Avx.Max(vec, zero);         
+            vec = Avx.BlendVariable(posPart, negPart, mask);
+            vec.StoreAligned(ptr);
+        }
+    }
 }

@@ -22,7 +22,7 @@ public class BitMapTransformationModel : IModel
 
     public void Prepare()
     {
-        var outputImage = GraphicsUtils.LoadImage(@"C:\Users\Seba\Documents\Desktop\Central-Nic-Http-master\eagle256.png");
+        var outputImage = GraphicsUtils.LoadImage(@"eagle256.png");
 
         var random = new Random();
         var inputPixels = new float[InputSize];

@@ -241,6 +241,46 @@ public unsafe readonly struct NeuralMatrix
         }
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Clip(float min, float max)
+    {
+        var span = SpanWithGarbage;
+        for (int i = 0; i < span.Length; i++)
+        {
+            span[i] = Math.Clamp(span[i], min, max);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Clip(float maxNorm)
+    {
+        Clip(-maxNorm, maxNorm);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void ClipVectorized(float min, float max)
+    {
+        float* ptr = Pointer;
+        float* end = ptr + AllocatedLength;
+
+        var minVec = Vector256.Create(min);
+        var maxVec = Vector256.Create(max);
+
+        if (Avx2.IsSupported)
+        {
+            for (; ptr != end; ptr += Vector256<float>.Count)
+            {
+                var vec = Vector256.LoadAligned(ptr);
+                vec = Avx.Min(maxVec, Avx.Max(minVec, vec));
+                vec.StoreAligned(ptr);
+            }
+        }
+        else
+        {
+            Clip(min, max);
+        }
+    }
+
     public void Clear()
     {
         NativeMemory.Clear(Pointer, (nuint)AllocatedLength * sizeof(float));

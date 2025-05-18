@@ -14,7 +14,9 @@ public class NeuralNetwork<TArch> where TArch : IArchitecture<TArch>
     }
 
     public NeuralForward Run() => _neuralFramework.Run(_config.Model);
-
-    public IEnumerable<NeuralMatrix> EnumerateEpochs() => _neuralFramework.EnumerateEpochs(_config.Model);
     public IEnumerable<NeuralMatrix> RunEpoch() => _neuralFramework.RunEpoch(_config.Model);
+    public IEnumerable<NeuralMatrix> EnumerateEpochs() => _neuralFramework.EnumerateEpochs(_config.Model);
+    public NeuralMatrix Forward() => _neuralFramework.Forward();
+
+    public TArch Architecture => _neuralFramework.Architecture;
 }
