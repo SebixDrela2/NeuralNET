@@ -21,8 +21,8 @@ public static class GraphicsUtils
 
     private static readonly Random _rng = new(RandomSeed);
 
-    public const int Width = 256;
-    public const int Height = 256;
+    public const int Width = 16;
+    public const int Height = 16;
 
     [SupportedOSPlatformGuard("windows6.1")]
     public static bool IsSupported => OperatingSystem.IsWindowsVersionAtLeast(6, 1);

@@ -4,7 +4,6 @@ using NeutralNET.Models;
 using NeutralNET.Utils;
 using System.Diagnostics;
 using System.Numerics;
-using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
@@ -110,10 +109,10 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         for (var epoch = 0; epoch < _config.Epochs; epoch++)
         {
             float loss = 0;
-
-            ProcessOrderedBatchesView(orderedBatchesView, ref batchProcessCount, ref loss);
-
-            loss /= orderedBatchesView.BatchCount;
+            var totalExamples = 0;
+            ProcessOrderedBatchesView(orderedBatchesView, ref batchProcessCount, ref loss, ref totalExamples);
+           
+            loss /= totalExamples;
 
             if (epoch % orderedBatchesView.BatchCount is 0)
             {
@@ -133,10 +132,11 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         for (var epoch = 0; epoch < _config.Epochs; epoch++)
         {
             float loss = 0;
+            var totalExamples = 0;
 
-            ProcessOrderedBatchesView(orderedBatchesView, ref batchProcessCount, ref loss);
+            ProcessOrderedBatchesView(orderedBatchesView, ref batchProcessCount, ref loss, ref totalExamples);
 
-            loss /= _config.BatchSize;
+            loss /= totalExamples;
 
             if (epoch % _config.BatchSize is 0)
             {
@@ -175,7 +175,12 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
     }
 
 
-    private void ProcessOrderedBatchesView(OrderedBatchesView orderedBatchesView, ref int batchProcessCount, ref float loss)
+    private void ProcessOrderedBatchesView(
+        OrderedBatchesView 
+        orderedBatchesView, 
+        ref int batchProcessCount, 
+        ref float loss,
+        ref int totalExamples)
     {
         if (_config.WithShuffle)
         {
@@ -185,7 +190,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         foreach (var batch in orderedBatchesView)
         {
             loss += ProcessBatch(batch);
-
+            totalExamples += batch.ActualSize;
             batchProcessCount++;
         }
     }
@@ -546,8 +551,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
     private float Loss(OrderedBatchView batch)
     {
-        var totalLoss = 0f;
-        var count = 0;
+        var loss = 0f;
 
         var realFirstNeuronMatrix = _architecture.MatrixNeurons[0];
         var realLastNeuronMatrix = _architecture.MatrixNeurons[^1];
@@ -583,11 +587,10 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
             lossVec = Avx.And(lossVec, sumMask);
             batchLoss += Vector256.Sum(lossVec);
 
-            totalLoss += batchLoss;
-            count++;
+            loss += batchLoss;
         }
-
-        return totalLoss / count;
+            
+        return loss;
     }
 
     private NeuralMatrix Forward()

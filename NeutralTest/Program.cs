@@ -47,9 +47,9 @@ internal class Program
                 inputSize: DigitModel.PixelCount,
                 hiddenLayers: [64, 64, 64, 64, 64],
                 outputSize: 1)
-            .WithEpochs(2000)
+            .WithEpochs(3000)
             .WithBatchSize(BatchSize)
-            .WithLearningRate(3e-4f)
+            .WithLearningRate(1e-4f)
             .WithWeightDecay(1e-5f)
             .WithBeta1(0.9f)   
             .WithBeta2(0.999f) 
