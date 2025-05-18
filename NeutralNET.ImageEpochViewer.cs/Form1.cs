@@ -4,6 +4,7 @@ using NeutralNET.Framework.Neural;
 using NeutralNET.Matrices;
 using NeutralNET.Models;
 using NeutralNET.Stuff;
+using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 
@@ -15,15 +16,19 @@ public partial class Form1 : Form
     private const int BitmapWidth = GraphicsUtils.Width;
     private const int BitmapHeight = GraphicsUtils.Height;
     private const int ScaleFactor = 256/GraphicsUtils.Width;
+    private const int AnimationDuration = 10;
+    private const int ImageVariants = 10;
+
     private NeuralNetwork<Architecture> _network;
     private IModel _model;
     private IEnumerator<NeuralMatrix> _matrixes;
+    private bool _hasData;
     private Bitmap _backBuffer;
     private Graphics _backGraphics;
-    private readonly System.Windows.Forms.Timer _refreshTimer = new();
+    private readonly Stopwatch _animationWatch = new();
 
-
-    public float[]? BitMapValues => GetBitMapValues();
+    private float AnimationProgress { get; set; }
+    private float[] BitMapValues { get; set; }
 
     public Form1()
     {
@@ -42,35 +47,39 @@ public partial class Form1 : Form
         _backGraphics = Graphics.FromImage(_backBuffer);
         _backGraphics.InterpolationMode = InterpolationMode.NearestNeighbor;
         _backGraphics.SmoothingMode = SmoothingMode.None;
-
-        _refreshTimer.Interval = 16;
-        _refreshTimer.Tick += (s, e) => Refresh();
     }
 
     public void Run()
     {
         Show();
-        _refreshTimer.Start();
+
+        _matrixes = _network.RunEpoch().GetEnumerator();
+        _animationWatch.Start();
 
         while (!IsDisposed)
         {
             Application.DoEvents();
 
-            Thread.Sleep(500);
+            if(!DoStep())
+            {
+                break;
+            }
+
+            Refresh();
         }
     }
 
-    protected override async void OnLoad(EventArgs e)
+    protected override void OnLoad(EventArgs e)
     {
-        Prepare();
-       await Task.Run(_network.Run);
+        Prepare();        
     }
 
     protected override void OnPaint(PaintEventArgs e)
     {
         if (BitMapValues != null && _backBuffer != null)
-        {
+        {           
             DrawGrayscale(BitMapValues);
+
             e.Graphics.DrawImageUnscaled(_backBuffer, 0, 0);
         }
     }
@@ -86,10 +95,10 @@ public partial class Form1 : Form
         _model.Prepare();
 
         _network = new NeuralNetworkBuilder<Architecture>(_model)
-            .WithArchitecture([64, 32, 32, 16])
+            .WithArchitecture([128, 64, 32, 16])
             .WithEpochs(1000000)
             .WithBatchSize(BatchSize)
-            .WithLearningRate(3e-4f)
+            .WithLearningRate(1e-4f)
             .WithHiddenLayerActivation(ActivationType.LeakyReLU)
             .WithOutputLayerActivation(ActivationType.ReLU)
             .WithWeightDecay(1e-5f)
@@ -100,24 +109,36 @@ public partial class Form1 : Form
             .Build();
     }
 
-    private float[] GetBitMapValues()
+    private bool DoStep()
     {
-        var outputs = new float[BitmapWidth * BitmapHeight];
-        float normX = 1f / (BitmapWidth - 1);
-        float normY = 1f / (BitmapHeight - 1);
+        _hasData = _matrixes.MoveNext();
 
-        for (int x = 0; x < BitmapWidth; x++)
+        if (!_hasData)
         {
-            for (int y = 0; y < BitmapHeight; y++)
-            {
-                float[] input = [x * normX, y * normY];
-                var inputSpan = _network.Architecture.MatrixNeurons[0].GetRowSpan(0);
-                input.CopyTo(inputSpan);
-                
-                outputs[x * BitmapHeight + y] = _network.Forward().GetRowSpan(0)[0];
-            }
+            return false;
         }
-        return outputs;
+
+        AnimationProgress = GetAnimationProgress();
+
+        float normalizedAnimation = AnimationProgress * ImageVariants;
+
+        _network.Architecture.MatrixNeurons[0].GetRowSpan(0)[0] = normalizedAnimation;
+        BitMapValues = _network.Forward().GetRowSpan(0).ToArray();
+
+        return true;
+    }
+
+    private float GetAnimationProgress()
+    {
+        float animationProgress = (float)_animationWatch.Elapsed.TotalSeconds / AnimationDuration;
+
+        if (animationProgress > 1)
+        {
+            _animationWatch.Restart();
+            animationProgress = 0;
+        }
+
+        return animationProgress;
     }
 
     private unsafe void DrawGrayscale(float[] values)
@@ -156,22 +177,36 @@ public partial class Form1 : Form
 
     public unsafe void DrawRGB(float[] values)
     {
-        var rect = new Rectangle(0, 0, BitmapWidth, BitmapHeight);
+        var rect = new Rectangle(0, 0, BitmapWidth * ScaleFactor, BitmapHeight * ScaleFactor);
         var data = _backBuffer.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format32bppPArgb);
 
-        Parallel.For(0, BitmapHeight, y =>
+        for (int origY = 0; origY < BitmapHeight; origY++)
         {
-            byte* row = (byte*)data.Scan0 + y * data.Stride;
-            for (int x = 0; x < BitmapWidth; x++)
+            for (int origX = 0; origX < BitmapWidth; origX++)
             {
-                int rgbIdx = (y * BitmapWidth + x) * 3;
+                int rgbIdx = (origY * BitmapWidth + origX) * 3;
+                byte r = (byte)(values[rgbIdx + 0] * 255);
+                byte g = (byte)(values[rgbIdx + 1] * 255);
+                byte b = (byte)(values[rgbIdx + 2] * 255);
 
-                row[x * 4 + 0] = (byte)(values[rgbIdx + 2] * 255);
-                row[x * 4 + 1] = (byte)(values[rgbIdx + 1] * 255);
-                row[x * 4 + 2] = (byte)(values[rgbIdx] * 255);
-                row[x * 4 + 3] = 255;
+                for (int yOffset = 0; yOffset < ScaleFactor; yOffset++)
+                {
+                    int displayY = origY * ScaleFactor + yOffset;
+                    byte* row = (byte*)data.Scan0 + displayY * data.Stride;
+
+                    for (int xOffset = 0; xOffset < ScaleFactor; xOffset++)
+                    {
+                        int displayX = origX * ScaleFactor + xOffset;
+                        int pixelPos = displayX * 4;
+
+                        row[pixelPos + 0] = b;
+                        row[pixelPos + 1] = g;
+                        row[pixelPos + 2] = r;
+                        row[pixelPos + 3] = 255;
+                    }
+                }
             }
-        });
+        }
 
         _backBuffer.UnlockBits(data);
     }

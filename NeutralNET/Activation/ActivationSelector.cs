@@ -30,7 +30,7 @@ public class ActivationSelector
             ActivationType.ReLU => activation => activation > 0 ? 1f : 0f,
             ActivationType.LeakyReLU => activation => activation > 0 ? 1f : leakyAlpha,
             ActivationType.Sigmoid => activation => Math.Max(activation * (1 - activation), 0.01f), // CLIP IT
-            ActivationType.Tanh => activation => 1 - activation * activation,
+            ActivationType.Tanh => activation => Math.Max(1 - activation * activation, 0.01f),
             _ => throw new ArgumentOutOfRangeException(nameof(type), $"Unknown activation type: {type}")
         };
     }
