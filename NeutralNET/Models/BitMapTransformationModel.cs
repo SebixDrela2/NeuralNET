@@ -11,13 +11,10 @@ public class BitMapTransformationModel : IModel
     public NeuralMatrix TrainingInput { get ; set ; }
     public NeuralMatrix TrainingOutput { get ; set ; }
 
-    public uint[] TrainingOutputStrideMask { get; }
-
     public BitMapTransformationModel()
     {
         TrainingInput = new NeuralMatrix(1, InputSize);
         TrainingOutput = new NeuralMatrix(1, RgbPixelCount);
-        TrainingOutputStrideMask = TrainingOutput.StrideMasks;
     }
 
     public void Prepare()

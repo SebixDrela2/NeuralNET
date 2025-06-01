@@ -14,8 +14,6 @@ public class DigitModel : IModel, IValidator
     public NeuralMatrix TrainingInput { get; set; }
     public NeuralMatrix TrainingOutput { get; set; }
 
-    public uint[] TrainingOutputStrideMask { get; }
-
     private readonly string[] _fontNames = 
         ["Arial", 
         "Arial Black",
@@ -53,8 +51,7 @@ public class DigitModel : IModel, IValidator
         _rowCount = _fontNames.Length * DigitLimit * VariantFontCount;
 
         TrainingInput = new NeuralMatrix(_rowCount, PixelCount);
-        TrainingOutput = new NeuralMatrix(_rowCount, 1);
-        TrainingOutputStrideMask = TrainingOutput.StrideMasks;      
+        TrainingOutput = new NeuralMatrix(_rowCount, 1);    
     }
 
     public void Prepare()

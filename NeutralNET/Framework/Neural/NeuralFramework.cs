@@ -73,7 +73,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
     {
         var trainingInput = model.TrainingInput;
         var trainingOutput = model.TrainingOutput;
-        _trainingOutputStrideMask = model.TrainingOutputStrideMask;
+        _trainingOutputStrideMask = model.TrainingOutput.StrideMasks;
 
         Architecture.MatrixNeurons[0].CopyRowFrom(trainingInput, 0);
 
@@ -89,7 +89,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
     {
         var trainingInput = model.TrainingInput;
         var trainingOutput = model.TrainingOutput;
-        _trainingOutputStrideMask = model.TrainingOutputStrideMask;
+        _trainingOutputStrideMask = model.TrainingOutput.StrideMasks;
 
         Architecture.MatrixNeurons[0].CopyRowFrom(trainingInput, 0);
 
@@ -110,7 +110,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
     {
         var trainingInput = model.TrainingInput;
         var trainingOutput = model.TrainingOutput;
-        _trainingOutputStrideMask = model.TrainingOutputStrideMask;
+        _trainingOutputStrideMask = model.TrainingOutput.StrideMasks;
 
         Architecture.MatrixNeurons[0].CopyRowFrom(trainingInput, 0);
 

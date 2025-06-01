@@ -13,13 +13,10 @@ public class GrayScaleImageModel : IModel
     public NeuralMatrix TrainingInput { get; set; }
     public NeuralMatrix TrainingOutput { get; set; }
 
-    public uint[] TrainingOutputStrideMask { get; }
-
     public GrayScaleImageModel()
     {
         TrainingInput = new NeuralMatrix(PixelCount, InputSize);
         TrainingOutput = new NeuralMatrix(PixelCount, OutputSize);
-        TrainingOutputStrideMask = TrainingOutput.StrideMasks;
     }
 
     public void Prepare()
