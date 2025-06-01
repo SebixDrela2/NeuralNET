@@ -93,4 +93,14 @@ public static unsafe class ActivationFunctions
             vec.StoreAligned(ptr);
         }
     }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void ApplyLinearVectorized(NeuralMatrix matrix)
+        => ApplyLinearVectorized(matrix.Pointer, matrix.AllocatedLength);
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void ApplyLinearVectorized(float* ptr, int allocatedLength)
+    {
+        // Identity, do nothing
+        // no op
+    }
 }

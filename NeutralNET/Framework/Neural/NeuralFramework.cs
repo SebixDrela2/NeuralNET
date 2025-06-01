@@ -75,12 +75,20 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         var trainingOutput = model.TrainingOutput;
         _trainingOutputStrideMask = model.TrainingOutput.StrideMasks;
 
-        Architecture.MatrixNeurons[0].CopyRowFrom(trainingInput, 0);
-
         RandomizeWeightsBiases();
-        HandleTraining(trainingInput, trainingOutput);
+        HandleTraining(model);
 
         model.TrainingInput = Architecture.MatrixNeurons[0];
+
+        return Forward;
+    }
+
+    public NeuralForward Run(IDynamicModel model)
+    {
+        _trainingOutputStrideMask = MatrixUtils.GetStrideMask(1);
+
+        RandomizeWeightsBiases();
+        HandleTraining(model);
 
         return Forward;
     }
@@ -90,8 +98,6 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         var trainingInput = model.TrainingInput;
         var trainingOutput = model.TrainingOutput;
         _trainingOutputStrideMask = model.TrainingOutput.StrideMasks;
-
-        Architecture.MatrixNeurons[0].CopyRowFrom(trainingInput, 0);
 
         RandomizeWeightsBiases();
 
@@ -111,8 +117,6 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         var trainingInput = model.TrainingInput;
         var trainingOutput = model.TrainingOutput;
         _trainingOutputStrideMask = model.TrainingOutput.StrideMasks;
-
-        Architecture.MatrixNeurons[0].CopyRowFrom(trainingInput, 0);
 
         RandomizeWeightsBiases();
 
@@ -142,19 +146,38 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         return Architecture.MatrixNeurons[^1];
     }
 
-    private void HandleTraining(NeuralMatrix trainingInput, NeuralMatrix trainingOutput)
+    private void HandleTraining(IModel model)
     {
-        _indices = [.. Enumerable.Range(0, trainingInput.Rows)];
-
         var batchProcessCount = 0;
         var stopWatch = Stopwatch.StartNew();
-        var orderedBatchesView = GetOrderedBatchView(trainingInput, trainingOutput);
+        var orderedBatchesView = GetOrderedBatchView(model.TrainingInput, model.TrainingOutput);
 
         for (var epoch = 0; epoch < _config.Epochs; epoch++)
         {
             float loss = 0;
             var totalExamples = 0;
             ProcessOrderedBatchesView(orderedBatchesView, ref batchProcessCount, ref loss, ref totalExamples);
+
+            loss /= totalExamples;
+
+            if (epoch % 100 is 0)
+            {
+                DisplayEpochResult(stopWatch.Elapsed, batchProcessCount, loss, epoch);
+            }
+        }
+    }
+
+    private void HandleTraining(IDynamicModel model)
+    {
+        var batchProcessCount = 0;
+        var stopWatch = Stopwatch.StartNew();
+        var orderedBatchesView = new InfiniteBatchesView(model, _config.BatchSize);
+
+        for (var epoch = 0; epoch < _config.Epochs; epoch++)
+        {
+            float loss = 0;
+            var totalExamples = 0;
+            ProcessOrderedBatchesView(orderedBatchesView.Take(1024), ref batchProcessCount, ref loss, ref totalExamples);
            
             loss /= totalExamples;
 
@@ -216,12 +239,12 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
 
     private void ProcessOrderedBatchesView(
-        BaseBatchView orderedBatchesView, 
+        IEnumerable<OrderedBatchView> orderedBatchesView, 
         ref int batchProcessCount, 
         ref float loss,
         ref int totalExamples)
     {
-        if (_config.WithShuffle)
+        if (_config.WithShuffle && _config.Model is not null)
         {
             _rng.Shuffle(_indices);
         }
@@ -552,7 +575,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         var derivativeFn = isOutput ? _outputDerivative : _hiddenDerivative;
         var gradient = derivativeFn(activation);
 
-        return 2 * Math.Clamp(error, -10f, 10f) * gradient;
+        return 2 * Math.Clamp(error, -100f, 100f) * gradient;
     }
 
     private float Loss(OrderedBatchView batch)
@@ -612,7 +635,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
     {
         for (var i = 0; i < Architecture.Count; i++)
         {
-            float scale = MathF.Sqrt(2.0f / Architecture.MatrixWeights[i].Rows);
+            float scale = 0.5f;
             Architecture.MatrixWeights[i].Randomize(-scale, scale);
             Architecture.MatrixBiases[i].Clear();
         }

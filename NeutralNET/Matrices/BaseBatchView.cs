@@ -1,14 +1,14 @@
-﻿using static NeutralNET.Matrices.BaseBatchView;
+﻿using System.Collections;
+using static NeutralNET.Matrices.BaseBatchView;
 
 namespace NeutralNET.Matrices;
 
-public abstract class BaseBatchView(int chunkSize, int inputStride, int outputStride)
+public abstract class BaseBatchView(int chunkSize, int inputStride, int outputStride) : IEnumerable<OrderedBatchView>, IDisposable
 {
-    protected readonly int _chunkSize = chunkSize;
-
-    public int BatchSize => _chunkSize;
-    public int InputStride => inputStride;
-    public int OutputStride => outputStride;
+    public readonly int BatchSize = chunkSize;
+    public readonly int InputStride = inputStride;
+    public readonly int OutputStride = outputStride;
+    public readonly int RowStride = inputStride + outputStride;
 
     protected abstract OrderedBatchView GetCurrentGroup(int offset);
     protected abstract bool MoveNextGroup(ref int offset);
@@ -18,13 +18,28 @@ public abstract class BaseBatchView(int chunkSize, int inputStride, int outputSt
 
     public GroupEnumerator GetEnumerator() => new(this);
 
-    public struct GroupEnumerator(BaseBatchView self)
+    public virtual void Dispose() { }
+
+    IEnumerator<OrderedBatchView> IEnumerable<OrderedBatchView>.GetEnumerator() => GetEnumerator();
+
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+    public struct GroupEnumerator(BaseBatchView self) : IEnumerator<OrderedBatchView>
     {
         public int Offset = -self.BatchSize;
 
         public readonly OrderedBatchView Current => self.GetCurrentGroup(Offset);
 
+        readonly object IEnumerator.Current => Current;
+
         public bool MoveNext() => self.MoveNextGroup(ref Offset);
+
+        readonly void IDisposable.Dispose() { }
+
+        readonly void IEnumerator.Reset()
+        {
+            throw new NotSupportedException();
+        }
     }
 
     public struct Enumerator(BaseBatchView self, int offset, int endOffset)

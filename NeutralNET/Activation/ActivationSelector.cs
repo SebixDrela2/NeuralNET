@@ -18,6 +18,7 @@ public class ActivationSelector
             ActivationType.LeakyReLU => ActivationFunctions.ApplyLeakyReLUVectorized,
             ActivationType.Sigmoid => ActivationFunctions.ApplySigmoidVectorized,
             ActivationType.Tanh => ActivationFunctions.ApplyTanhVectorized,
+            ActivationType.Identity => ActivationFunctions.ApplyLinearVectorized,
             _ => throw new ArgumentOutOfRangeException(nameof(type), $"Unknown activation type: {type}")
         };
     }
@@ -31,6 +32,7 @@ public class ActivationSelector
             ActivationType.LeakyReLU => activation => activation > 0 ? 1f : leakyAlpha,
             ActivationType.Sigmoid => activation => Math.Max(activation * (1 - activation), 0.01f), // CLIP IT
             ActivationType.Tanh => activation => Math.Max(1 - activation * activation, 0.01f),
+            ActivationType.Identity => activation => 1,
             _ => throw new ArgumentOutOfRangeException(nameof(type), $"Unknown activation type: {type}")
         };
     }

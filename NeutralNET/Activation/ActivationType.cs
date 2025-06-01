@@ -6,4 +6,5 @@ public enum ActivationType
     LeakyReLU,
     Sigmoid,
     Tanh,
+    Identity
 }

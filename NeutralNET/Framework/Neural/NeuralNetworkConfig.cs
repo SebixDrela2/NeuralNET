@@ -12,11 +12,12 @@ public class NeuralNetworkConfig
     public float LearningRate { get; set; } = 1e-2f;
     public float WeightDecay { get; set; } = 1e-4f;
     public bool WithShuffle { get; set; }
+
     public IModel Model { get; set; } = null!;
+    public IDynamicModel DynamicModel { get; set; } = null!;
 
     public ActivationType HiddenActivation { get; set; } = ActivationType.ReLU;
     public ActivationType OutputActivation { get; set; } = ActivationType.Sigmoid;
-
     public OptimizerType OptimizerType { get; set; } = OptimizerType.Adam;
 
     public float LeakyReLUAlpha { get; set; } = 0.01f;

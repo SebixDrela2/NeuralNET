@@ -1,9 +1,14 @@
-﻿using NeutralNET.Framework.Neural;
-using NeutralNET.Matrices;
+﻿using NeutralNET.Framework;
+using NeutralNET.Framework.Neural;
 
 namespace NeutralNET.Validators;
 
 public interface IValidator
 {
-    abstract void Validate(NeuralForward forward);
+    void Validate(NeuralForward forward);
+}
+
+public interface IDynamicValidator
+{
+    void Validate(NeuralForward forward, Architecture architecture);
 }

@@ -1,5 +1,6 @@
 ﻿using NeutralNET.Stuff;
 using NeutralNET.Unmanaged;
+using NeutralNET.Utils;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -34,7 +35,7 @@ public unsafe readonly struct NeuralMatrix
 
     public NeuralMatrix(int rows, int columns)
     {
-        ColumnsStride = (columns + AlignmentMask) & ~AlignmentMask;
+        ColumnsStride = MatrixUtils.GetStride(columns);
 
         Rows = rows;
         UsedColumns = columns;
@@ -45,16 +46,8 @@ public unsafe readonly struct NeuralMatrix
         nuint byteCount = ((nuint)(AllocatedLength * sizeof(float)) + ByteAlignmentMask) & (~(uint)ByteAlignmentMask);
 
         Pointer = (float*)NativeMemory.AlignedAlloc(byteCount, ByteAlignment);
-        var strideMask = new uint[Vector256<float>.Count];
-        var computation = UsedColumns & AlignmentMask;
-        computation = computation is 0 ? Alignment : computation;
 
-        for (var i = 0; i < computation; ++i)
-        {
-            strideMask[i] = ~0u;
-        }
-
-        StrideMasks = strideMask;
+        StrideMasks = MatrixUtils.GetStrideMask(columns);
         SpanWithGarbage.Clear();
     }
 

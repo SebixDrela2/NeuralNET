@@ -13,12 +13,24 @@ public class NeuralNetworkBuilder<TArch> where TArch : IArchitecture<TArch>
         _config.Model = model;
     }
 
+    public NeuralNetworkBuilder(IDynamicModel dynamicModel)
+    {
+        _config.DynamicModel = dynamicModel;
+    }
+
     public NeuralNetworkBuilder<TArch> WithArchitecture(int[] hiddenLayers)
     {
-        var inputUsedColumns = _config.Model.TrainingInput.UsedColumns;
-        var outputUsedColumns = _config.Model.TrainingOutput.UsedColumns;
+        if (_config.Model is not null)
+        {
+            var inputUsedColumns = _config.Model.TrainingInput.UsedColumns;
+            var outputUsedColumns = _config.Model.TrainingOutput.UsedColumns;
 
-        _config.Architecture = [inputUsedColumns, .. hiddenLayers, outputUsedColumns];
+            _config.Architecture = [inputUsedColumns, .. hiddenLayers, outputUsedColumns];
+        }
+        else if (_config.DynamicModel is not null)
+        {
+            _config.Architecture = [2, .. hiddenLayers, 1];
+        }
 
         return this;
     }
@@ -61,12 +73,14 @@ public class NeuralNetworkBuilder<TArch> where TArch : IArchitecture<TArch>
     public NeuralNetworkBuilder<TArch> WithOutputLayerActivation(ActivationType activation)
     {
         _config.OutputActivation = activation;
+
         return this;
     }
 
     public NeuralNetworkBuilder<TArch> WithWeightDecay(float decay)
     {
         _config.WeightDecay = decay;
+
 
         return this;
     }
@@ -75,24 +89,28 @@ public class NeuralNetworkBuilder<TArch> where TArch : IArchitecture<TArch>
     {
         _config.WithShuffle = shuffle;
 
+
         return this;
     }
 
     public NeuralNetworkBuilder<TArch> WithBeta1(float beta1)
     {
         _config.Beta1 = beta1;
+
         return this;
     }
 
     public NeuralNetworkBuilder<TArch> WithBeta2(float beta2)
     {
         _config.Beta2 = beta2;
+
         return this;
     }
 
     public NeuralNetworkBuilder<TArch> WithEpsilon(float epsilon)
     {
         _config.Epsilon = epsilon;
+
         return this;
     }
 
@@ -103,7 +121,9 @@ public class NeuralNetworkBuilder<TArch> where TArch : IArchitecture<TArch>
             throw new InvalidOperationException("Architecture must be specified");
         }
 
-        if (_config.Model == null)
+
+
+        if (_config.Model == null && _config.DynamicModel == null)
         {
             throw new InvalidOperationException("Model must be specified");
         }

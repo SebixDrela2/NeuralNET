@@ -12,7 +12,7 @@ internal class Program
 
     static void Main()
     {
-        RunSumBitsModel();
+        RunInfiniteFunction();
     }
 
     public static void RunNetwork()
@@ -29,7 +29,7 @@ internal class Program
             .WithShuffle(true)
             .Build();
 
-        var forward = network.Run();
+        var forward = network.RunModel();
         model.Validate(forward);
     }
 
@@ -50,7 +50,7 @@ internal class Program
             .WithShuffle(true)
             .Build();
 
-        var forward = network.Run();
+        var forward = network.RunModel();
         model.Validate(forward);
     }
 
@@ -73,7 +73,7 @@ internal class Program
             .WithShuffle(true)
             .Build();
         
-        var forward = network.Run();
+        var forward = network.RunModel();
         model.Validate(forward);
     }
 
@@ -104,6 +104,28 @@ internal class Program
         //    Thread.Sleep(1000);
         //}
 
-        var forward = network.Run();
+        var forward = network.RunModel();
+    }
+
+    public static void RunInfiniteFunction()
+    {
+        var model = new FunctionModel();
+        var network = new NeuralNetworkBuilder<Architecture>(model)
+            .WithArchitecture([16, 16])
+            .WithEpochs(10000)
+            .WithHiddenLayerActivation(ActivationType.ReLU)
+            .WithOutputLayerActivation(ActivationType.Identity)
+            .WithBatchSize(BatchSize)
+            .WithBeta1(0.9f)
+            .WithBeta2(0.999f)
+            .WithLearningRate(1e-6f)
+            .WithOptimizer(OptimizerType.Adam)
+            .WithEpsilon(1e-8f)
+            .WithShuffle(true)
+            .Build();
+
+        var forward = network.RunDynamicModel();
+        model.Validate(forward, network.Architecture);
     }
 }
+
