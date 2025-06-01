@@ -89,15 +89,15 @@ internal unsafe class InfiniteBatchesView : BaseBatchView
 
         for (var i = 0; i < BatchSize; ++i, ptr += RowStride)
         {
-            var scaledInput = Model.ScaleDown(Random.Shared.NextSingle() * 10);
-            var scaledInput2 = Model.ScaleDown(Random.Shared.NextSingle() * 10);
+            var a = Random.Shared.NextSingle() * FunctionModel.MaxRange;
+            var b = Random.Shared.NextSingle() * FunctionModel.MaxRange;
 
-            ptr[0] = scaledInput;
-            ptr[1] = scaledInput2;
+            ptr[0] = Model.TranslateInto(a);
+            ptr[1] = Model.TranslateInto(b);
 
-            var scaledOutput = Model.ScaleDown(Model.PrepareFunction(ptr[0], ptr[1]));
+            var scaledOutput = Model.PrepareFunction(a, b);
 
-            ptr[InputStride] = scaledOutput;
+            ptr[InputStride] = Model.TranslateInto(scaledOutput);
         }
 
         return true;

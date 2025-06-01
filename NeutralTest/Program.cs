@@ -8,7 +8,7 @@ namespace NeutralTest;
 
 internal class Program
 {
-    private const int BatchSize = 32;
+    private const int BatchSize = 64;
 
     static void Main()
     {
@@ -111,14 +111,14 @@ internal class Program
     {
         var model = new FunctionModel();
         var network = new NeuralNetworkBuilder<Architecture>(model)
-            .WithArchitecture([16, 16])
-            .WithEpochs(10000)
-            .WithHiddenLayerActivation(ActivationType.ReLU)
+            .WithArchitecture([32, 32])
+            .WithEpochs(5000)
+            .WithHiddenLayerActivation(ActivationType.LeakyReLU)
             .WithOutputLayerActivation(ActivationType.Identity)
             .WithBatchSize(BatchSize)
             .WithBeta1(0.9f)
             .WithBeta2(0.999f)
-            .WithLearningRate(1e-6f)
+            .WithLearningRate(1e-5f)
             .WithOptimizer(OptimizerType.Adam)
             .WithEpsilon(1e-8f)
             .WithShuffle(true)

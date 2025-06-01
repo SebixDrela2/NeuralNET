@@ -6,7 +6,9 @@ namespace NeutralNET.Models;
 
 public class FunctionModel : IDynamicModel, IDynamicValidator
 {
-    public Func<float, float, float> PrepareFunction => (x, _) => x * x;
+    public const int MaxRange = 100;
+    public const int ScaleFactor = 100;
+    public Func<float, float, float> PrepareFunction => (x, y) => x * x;
 
     public void Validate(NeuralForward forward, Architecture architecture)
     {
@@ -15,34 +17,34 @@ public class FunctionModel : IDynamicModel, IDynamicValidator
 
         for (int i = 0; i < 100; i++)
         {
-            var notScaledInput = Random.Shared.NextSingle() * 10;
-            var notScaledInput2 = Random.Shared.NextSingle() * 10;
+            var a = Random.Shared.NextSingle() * MaxRange;
+            var b = Random.Shared.NextSingle() * MaxRange;
 
-            input[0] = ScaleDown(notScaledInput);
-            input[1] = ScaleDown(notScaledInput2);
+            input[0] = TranslateInto(a);
+            input[1] = TranslateInto(b);
 
             forward();
 
-            var scaledActual = ScaleUp(ScaleUp(actual));
-            var expected = PrepareFunction(notScaledInput, notScaledInput2);
+            var realActual = TranslateFrom(actual);
 
-            var diff = MathF.Abs(expected - scaledActual);
+            var expected = PrepareFunction(a, b);
+            var diff = MathF.Abs(expected - realActual);
 
             var resultMessage = diff < 0.05
-                    ? $"\e[92m  Correct:  f({notScaledInput,10:F2}, {notScaledInput2,10:F2}) = A:{scaledActual,10:F2} | E:{expected,10:F2}, Diff = {diff,10:F2}\e[0m"
-                    : $"\e[91mIncorrect:  f({notScaledInput,10:F2}, {notScaledInput2,10:F2}) = A:{scaledActual,10:F2} | E:{expected,10:F2}, Diff = {diff,10:F2}\e[0m";
+                    ? $"\e[92m  Correct:  f({a,10:F2}, {b,10:F2}) = A:{realActual,10:F2} | E:{expected,10:F2}, Diff = {diff,10:F2}\e[0m"
+                    : $"\e[91mIncorrect:  f({a,10:F2}, {b,10:F2}) = A:{realActual,10:F2} | E:{expected,10:F2}, Diff = {diff,10:F2}\e[0m";
 
             Console.WriteLine(resultMessage);
         }
     }
 
-    public float ScaleDown(float value)
+    public float TranslateInto(float value)
     {
-        return value / 1;
+        return value / ScaleFactor;
     }
 
-    public float ScaleUp(float value)
+    public float TranslateFrom(float value)
     {
-        return value * 1;
+        return value * ScaleFactor;
     }
 }

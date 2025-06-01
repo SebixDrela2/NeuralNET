@@ -3,6 +3,6 @@
 public interface IDynamicModel
 {
     Func<float, float, float> PrepareFunction { get; }
-    float ScaleDown(float value);
-    float ScaleUp(float value);
+    float TranslateInto(float value);
+    float TranslateFrom(float value);
 }
