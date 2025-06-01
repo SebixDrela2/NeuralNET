@@ -1,4 +1,5 @@
 ﻿using NeutralNET.Activation;
+using NeutralNET.Framework.Optimizers;
 using NeutralNET.Models;
 
 namespace NeutralNET.Framework.Neural;
@@ -15,6 +16,8 @@ public class NeuralNetworkConfig
 
     public ActivationType HiddenActivation { get; set; } = ActivationType.ReLU;
     public ActivationType OutputActivation { get; set; } = ActivationType.Sigmoid;
+
+    public OptimizerType OptimizerType { get; set; } = OptimizerType.Adam;
 
     public float LeakyReLUAlpha { get; set; } = 0.01f;
 

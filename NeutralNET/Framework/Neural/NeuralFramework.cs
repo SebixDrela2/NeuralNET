@@ -1,4 +1,5 @@
 ﻿using NeutralNET.Activation;
+using NeutralNET.Framework.Optimizers;
 using NeutralNET.Matrices;
 using NeutralNET.Models;
 using NeutralNET.Utils;
@@ -16,6 +17,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 {
     private readonly NeuralNetworkConfig _config;
     private readonly TArch _gradientArchitecture;
+    private readonly IOptimizer _optimizer;
     private readonly Random _rng;
 
     private readonly ActivationFunction _hiddenActivation;
@@ -26,7 +28,6 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
     private uint[] _trainingOutputStrideMask = null!;
     private int[] _indices;
-    private int _timestep = 1;
 
     public readonly TArch Architecture;
 
@@ -50,6 +51,9 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         _outputDerivative = activationSelector.GetDerivative(_config.OutputActivation);
 
         Architecture = TArch.Create(_config.Architecture);
+
+        _optimizer = new OptimizerFactory<TArch>(config, Architecture, _gradientArchitecture)
+            .GetOptimizer();
     }
 
     public void Print(string name)
@@ -154,7 +158,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
            
             loss /= totalExamples;
 
-            if (epoch % orderedBatchesView.BatchCount is 0)
+            if (epoch % 100 is 0)
             {
                 DisplayEpochResult(stopWatch.Elapsed, batchProcessCount, loss, epoch);
             }
@@ -178,10 +182,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
             loss /= totalExamples;
 
-            if (epoch % _config.BatchSize is 0)
-            {
-                DisplayEpochResult(stopWatch.Elapsed, batchProcessCount, loss, epoch);
-            }
+            DisplayEpochResult(stopWatch.Elapsed, batchProcessCount, loss, epoch);
 
             yield return Forward();
         }
@@ -189,7 +190,6 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
     private OrderedBatchesView GetOrderedBatchView(NeuralMatrix trainingInput, NeuralMatrix trainingOutput)
     {
-        var gradientArchitecture = new Architecture(_config.Architecture);
         _indices = [.. Enumerable.Range(0, trainingInput.Rows)];
 
         var orderedBatchesView = new OrderedBatchesView(_indices, trainingInput, trainingOutput, _config.BatchSize);
@@ -239,45 +239,10 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         OrderedBatchView batch)
     {
         BackPropagate(batch);
-        Learn();
+        _optimizer.Learn();
 
         return Loss(batch);
     }
-
-    private void Learn()
-    {
-        float beta1 = _config.Beta1;
-        float beta2 = _config.Beta2;
-        float epsilon = _config.Epsilon;
-        float lr = _config.LearningRate;
-        float wd = _config.WeightDecay;
-
-        for (var i = 0; i < Architecture.Count; i++)
-        {
-            UpdateAdamMomentsVectorized(
-                Architecture.MatrixMWeights[i], Architecture.MatrixVWeights[i],
-                _gradientArchitecture.MatrixWeights[i], beta1, beta2);
-
-            UpdateAdamMomentsVectorized(
-                Architecture.MatrixMBiases[i], Architecture.MatrixVBiases[i],
-                _gradientArchitecture.MatrixBiases[i], beta1, beta2);
-
-            ApplyAdamUpdateVectorized(
-                Architecture.MatrixWeights[i],
-                Architecture.MatrixMWeights[i],
-                Architecture.MatrixVWeights[i],
-                lr, wd, beta1, beta2, epsilon, _timestep);
-
-            ApplyAdamUpdateVectorized(
-                Architecture.MatrixBiases[i],
-                Architecture.MatrixMBiases[i],
-                Architecture.MatrixVBiases[i],
-                lr, wd, beta1, beta2, epsilon, _timestep);
-        }
-
-        _timestep++;
-    }
-
     private void LearnInternalVectorized(
     NeuralMatrix[] matrixes,
     NeuralMatrix[] gradientMatrixes,
@@ -368,6 +333,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
         float beta1T = MathF.Pow(beta1, t);
         float beta2T = MathF.Pow(beta2, t);
+
         var mCorrVec = Vector256.Create(1 / (1 - beta1T));
         var vCorrVec = Vector256.Create(1 / (1 - beta2T));
         var lrVec = Vector256.Create(lr);
@@ -645,14 +611,11 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
     private void RandomizeWeightsBiases()
     {
-        if (_timestep == 1)
+        for (var i = 0; i < Architecture.Count; i++)
         {
-            for (var i = 0; i < Architecture.Count; i++)
-            {
-                float scale = MathF.Sqrt(2.0f / Architecture.MatrixWeights[i].Rows);
-                Architecture.MatrixWeights[i].Randomize(-scale, scale);
-                Architecture.MatrixBiases[i].Clear();
-            }
+            float scale = MathF.Sqrt(2.0f / Architecture.MatrixWeights[i].Rows);
+            Architecture.MatrixWeights[i].Randomize(-scale, scale);
+            Architecture.MatrixBiases[i].Clear();
         }
     }
 }

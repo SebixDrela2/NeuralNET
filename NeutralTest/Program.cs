@@ -1,17 +1,18 @@
-﻿using NeutralNET.Framework;
+﻿using NeutralNET.Activation;
+using NeutralNET.Framework;
 using NeutralNET.Framework.Neural;
+using NeutralNET.Framework.Optimizers;
 using NeutralNET.Models;
-using NeutralNET.Stuff;
 
 namespace NeutralTest;
 
 internal class Program
 {
-    private const int BatchSize = 64;
+    private const int BatchSize = 32;
 
-    static void Main(string[] args)
+    static void Main()
     {
-        RunNetworkDigit();
+        RunSumBitsModel();
     }
 
     public static void RunNetwork()
@@ -21,7 +22,7 @@ internal class Program
 
         var network = new NeuralNetworkBuilder<Architecture>(model)
             .WithArchitecture([32, 32])
-            .WithEpochs(3000)
+            .WithEpochs(10000)
             .WithBatchSize(BatchSize)
             .WithLearningRate(0.01f)
             .WithWeightDecay(1e-5f)
@@ -49,6 +50,29 @@ internal class Program
             .WithShuffle(true)
             .Build();
 
+        var forward = network.Run();
+        model.Validate(forward);
+    }
+
+    public static void RunSumBitsModel()
+    {
+        var model = new SumBitsModel();
+        model.Prepare();
+
+        var network = new NeuralNetworkBuilder<Architecture>(model)
+            .WithArchitecture([16, 16, 16, 16])
+            .WithEpochs(10000)
+            .WithHiddenLayerActivation(ActivationType.ReLU)
+            .WithOutputLayerActivation(ActivationType.Sigmoid)
+            .WithBatchSize(BatchSize)
+            .WithBeta1(0.9f)
+            .WithBeta2(0.999f)
+            .WithLearningRate(1e-2f)
+            .WithOptimizer(OptimizerType.SGD)
+            .WithEpsilon(1e-8f)
+            .WithShuffle(true)
+            .Build();
+        
         var forward = network.Run();
         model.Validate(forward);
     }

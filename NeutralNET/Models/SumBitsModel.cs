@@ -84,7 +84,7 @@ public class SumBitsModel : IModel, IValidator
                 var bBitsText = string.Join("", bBits);
 
                 var expectedBits = string.Join("", sumBits);
-                var actualBits = string.Join("", outputData.Select(element => element > 0f ? '1' : '0'));
+                var actualBits = string.Join("", outputData.Select(element => element > 0.9f ? '1' : '0'));
 
                 bool isCorrect = expectedBits == actualBits;
                 ref var c = ref isCorrect ? ref counters.Correct : ref counters.Incorrect;

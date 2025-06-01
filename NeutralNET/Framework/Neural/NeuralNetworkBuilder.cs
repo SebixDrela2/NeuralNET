@@ -1,4 +1,5 @@
 ﻿using NeutralNET.Activation;
+using NeutralNET.Framework.Optimizers;
 using NeutralNET.Models;
 
 namespace NeutralNET.Framework.Neural;
@@ -18,6 +19,13 @@ public class NeuralNetworkBuilder<TArch> where TArch : IArchitecture<TArch>
         var outputUsedColumns = _config.Model.TrainingOutput.UsedColumns;
 
         _config.Architecture = [inputUsedColumns, .. hiddenLayers, outputUsedColumns];
+
+        return this;
+    }
+
+    public NeuralNetworkBuilder<TArch> WithOptimizer(OptimizerType optimizerType)
+    {
+        _config.OptimizerType = optimizerType;
 
         return this;
     }
