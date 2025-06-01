@@ -188,11 +188,11 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         }
     }
 
-    private OrderedBatchesView GetOrderedBatchView(NeuralMatrix trainingInput, NeuralMatrix trainingOutput)
+    private BaseBatchView GetOrderedBatchView(NeuralMatrix trainingInput, NeuralMatrix trainingOutput)
     {
         _indices = [.. Enumerable.Range(0, trainingInput.Rows)];
 
-        var orderedBatchesView = new OrderedBatchesView(_indices, trainingInput, trainingOutput, _config.BatchSize);
+        var orderedBatchesView = new FiniteBatchesView(_indices, trainingInput, trainingOutput, _config.BatchSize);
 
         return orderedBatchesView;
     }
@@ -216,8 +216,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
 
     private void ProcessOrderedBatchesView(
-        OrderedBatchesView 
-        orderedBatchesView, 
+        BaseBatchView orderedBatchesView, 
         ref int batchProcessCount, 
         ref float loss,
         ref int totalExamples)
@@ -374,7 +373,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         int rowCount = 0;
         foreach (var (input, output) in batch)
         {
-            NativeMemory.Copy(input, Architecture.MatrixNeurons[0].Pointer, sizeof(float) * (nuint)batch.InputStride);
+            NativeMemory.Copy(input, Architecture.MatrixNeurons[0].Pointer, sizeof(float) * (nuint)batch.BatchesView.InputStride);
 
             Forward();
 
@@ -572,11 +571,11 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         {
             var bPtr = realFirstNeuronPtr;
 
-            NativeMemory.Copy(pair.Input, aPtr, sizeof(float) * (nuint)batch.InputStride);
+            NativeMemory.Copy(pair.Input, aPtr, sizeof(float) * (nuint)batch.BatchesView.InputStride);
             Forward();
 
             var cPtr = pair.Output;
-            var cEnd = cPtr + batch.OutputStride;
+            var cEnd = cPtr + batch.BatchesView.OutputStride;
 
             var predicted = realLastNeuronMatrix;
             var batchLoss = 0f;
