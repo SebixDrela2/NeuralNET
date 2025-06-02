@@ -806,10 +806,11 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
     private void RandomizeWeightsBiases()
     {
-        for (var i = 0; i < Architecture.Count; i++)
+        for (int i = 0; i < Architecture.Count; i++)
         {
-            float scale = 0.5f;
-            Architecture.MatrixWeights[i].Randomize(-scale, scale);
+            int fan_in = Architecture.MatrixWeights[i].Rows;
+            float stddev = MathF.Sqrt(2.0f / fan_in);
+            Architecture.MatrixWeights[i].RandomizeGaussian(0, stddev);
             Architecture.MatrixBiases[i].Clear();
         }
     }

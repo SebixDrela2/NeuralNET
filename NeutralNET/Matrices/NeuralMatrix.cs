@@ -235,6 +235,87 @@ public unsafe readonly struct NeuralMatrix
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void RandomizeGaussian(float mean = 0f, float stddev = 1f, float multiplier = 1f, int? seed = null)
+    {
+        float* ptr = Pointer;
+        float* end = ptr + AllocatedLength;
+
+        if (Avx2.IsSupported)
+        {
+            var meanVec = Vector256.Create(mean);
+            var stddevVec = Vector256.Create(stddev);
+            var multiplierVec = Vector256.Create(multiplier);
+
+            while (ptr + Vector256<float>.Count <= end)
+            {
+                var u1 = Vector256.Create(
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed));
+
+                var u2 = Vector256.Create(
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed));
+
+                u1 = Avx.Max(u1, Vector256.Create(1e-38f));
+
+                float[] u1Array = new float[8];
+                fixed (float* u1Ptr = u1Array)
+                {
+                    Avx.Store(u1Ptr, u1);
+                    for (int i = 0; i < 8; i++)
+                        u1Ptr[i] = MathF.Log(u1Ptr[i]);
+                }
+
+                var logU1Vec = Vector256.Create(
+                    u1Array[0], u1Array[1], u1Array[2], u1Array[3],
+                    u1Array[4], u1Array[5], u1Array[6], u1Array[7]);
+
+                var sqrtPart = Avx.Sqrt(Avx.Multiply(Vector256.Create(-2.0f), logU1Vec));
+
+                float[] sinInput = new float[8];
+                float[] sinOutput = new float[8];
+                fixed (float* sinInputPtr = sinInput)
+                {
+                    Avx.Multiply(Vector256.Create(2.0f * MathF.PI), u2).Store(sinInputPtr);
+                    for (int i = 0; i < 8; i++)
+                        sinInput[i] = MathF.Sin(sinInput[i]);
+                }
+
+                var sinVec = Vector256.Create(
+                    sinInput[0], sinInput[1], sinInput[2], sinInput[3],
+                    sinInput[4], sinInput[5], sinInput[6], sinInput[7]);
+
+                var z0 = Avx.Multiply(sqrtPart, sinVec);
+
+                z0 = Fma.MultiplyAdd(
+                    Avx.Multiply(z0, stddevVec),
+                    multiplierVec,
+                    meanVec);
+
+                Avx.StoreAligned(ptr, z0);
+                ptr += Vector256<float>.Count;
+            }
+        }
+
+        while (ptr < end)
+        {
+            *ptr++ = RandomUtils.GetGaussian(mean, stddev) * multiplier;
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Clip(float min, float max)
     {
         var span = SpanWithGarbage;
