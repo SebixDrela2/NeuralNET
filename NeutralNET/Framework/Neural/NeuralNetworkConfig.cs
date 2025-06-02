@@ -13,6 +13,8 @@ public class NeuralNetworkConfig
     public float WeightDecay { get; set; } = 1e-4f;
     public bool WithShuffle { get; set; }
 
+    public float DropoutRate = 0.3f;
+
     public IModel Model { get; set; } = null!;
     public IDynamicModel DynamicModel { get; set; } = null!;
 

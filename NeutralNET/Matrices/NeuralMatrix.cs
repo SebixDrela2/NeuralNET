@@ -279,6 +279,19 @@ public unsafe readonly struct NeuralMatrix
         NativeMemory.Clear(Pointer, (nuint)AllocatedLength * sizeof(float));
     }
 
+    public void Fill(float value)
+    {
+        float* ptr = Pointer;
+        float* end = ptr + AllocatedLength;
+
+        var vec = Vector256.Create(value);
+
+        for (; ptr != end; ptr += Vector256<float>.Count)
+        {
+            vec.StoreAligned(ptr);
+        }
+    }
+
     public void Print(string name)
     {
         Console.WriteLine($"{name} = [");

@@ -112,8 +112,8 @@ internal class Program
         var model = new FunctionModel();
         var network = new NeuralNetworkBuilder<Architecture>(model)
             .WithArchitecture([32, 32])
-            .WithEpochs(5000)
-            .WithHiddenLayerActivation(ActivationType.LeakyReLU)
+            .WithEpochs(500)
+            .WithHiddenLayerActivation(ActivationType.ReLU)
             .WithOutputLayerActivation(ActivationType.Identity)
             .WithBatchSize(BatchSize)
             .WithBeta1(0.9f)
@@ -121,7 +121,7 @@ internal class Program
             .WithLearningRate(1e-5f)
             .WithOptimizer(OptimizerType.Adam)
             .WithEpsilon(1e-8f)
-            .WithShuffle(true)
+            .WithShuffle(true)           
             .Build();
 
         var forward = network.RunDynamicModel();

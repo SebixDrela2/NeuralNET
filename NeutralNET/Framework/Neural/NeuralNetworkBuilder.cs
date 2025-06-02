@@ -114,6 +114,13 @@ public class NeuralNetworkBuilder<TArch> where TArch : IArchitecture<TArch>
         return this;
     }
 
+    public NeuralNetworkBuilder<TArch> WithDropOutRate(float dropOutRate)
+    {
+        _config.DropoutRate = dropOutRate;
+
+        return this;
+    }
+
     public NeuralNetwork<TArch> Build()
     {
         if (_config.Architecture == null || _config.Architecture.Length == 0)
