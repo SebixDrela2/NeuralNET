@@ -17,7 +17,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 {
     private static readonly ActivationSelector _activationSelector = new();
 
-    private readonly NeuralWinder _neuralWinder;
+    private readonly NeuralTuner _neuralWinder;
 
     private readonly NeuralNetworkConfig _config;
     private readonly TArch _gradientArchitecture;
@@ -47,7 +47,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         _config = config;
         _gradientArchitecture = TArch.Create(_config.Architecture);
         _rng = new Random();
-        _neuralWinder = new NeuralWinder(_rng);
+        _neuralWinder = new NeuralTuner(_rng);
 
         _hiddenActivation = _activationSelector.GetActivation(_config.HiddenActivation);
         _outputActivation = _activationSelector.GetActivation(_config.OutputActivation);
