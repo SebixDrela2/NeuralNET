@@ -10,7 +10,6 @@ internal readonly unsafe struct Zip2Pointer(float* aPtr, float* bPtr, float* end
     private readonly float* _b = bPtr;
     private readonly float* _end = endPtr;
 
-
     public float* A
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

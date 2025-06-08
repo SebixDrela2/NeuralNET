@@ -112,7 +112,7 @@ internal class Program
         var model = new FunctionModel();
         var network = new NeuralNetworkBuilder<Architecture>(model)
             .WithArchitecture([32, 32])
-            .WithEpochs(500)
+            .WithEpochs(2000)
             .WithHiddenLayerActivation(ActivationType.ReLU)
             .WithOutputLayerActivation(ActivationType.Identity)
             .WithBatchSize(BatchSize)
