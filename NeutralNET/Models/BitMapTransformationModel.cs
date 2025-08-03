@@ -8,29 +8,42 @@ public class BitMapTransformationModel : IModel
     public const int InputSize = 16 * 16 * 3;
     public const int RgbPixelCount = GraphicsUtils.Height * GraphicsUtils.Width * 3;
     public const int GrayscalePixelCount = GraphicsUtils.Height * GraphicsUtils.Width;
+
+    private readonly string[] Paths = ["greenEagle256.png", "blueWolf256.png"];
+
     public NeuralMatrix TrainingInput { get ; set ; }
     public NeuralMatrix TrainingOutput { get ; set ; }
 
     public BitMapTransformationModel()
     {
-        TrainingInput = new NeuralMatrix(1, InputSize);
-        TrainingOutput = new NeuralMatrix(1, RgbPixelCount);
+        TrainingInput = new NeuralMatrix(Paths.Length, RgbPixelCount);
+        TrainingOutput = new NeuralMatrix(Paths.Length, RgbPixelCount);
     }
 
     public void Prepare()
     {
-        var outputImage = GraphicsUtils.LoadImage(@"eagle256.png");
-
         var random = new Random();
-        var inputPixels = new float[InputSize];
+        var row = 0;
 
-        for (int i = 0; i < inputPixels.Length; i++)
+        foreach (var (firstPath, secondPath) in Paths.Zip(Paths.Reverse()))
         {
-            inputPixels[i] = (float)random.NextDouble();
-        }
-        var outputPixels = GraphicsUtils.ImageToFloatRGB(outputImage);
+            var outputImage = GraphicsUtils.LoadImage(secondPath);
+            var inputImage = GraphicsUtils.LoadImage(firstPath);
 
-        inputPixels.CopyTo(TrainingInput.GetRowSpan(0));
-        outputPixels.CopyTo(TrainingOutput.GetRowSpan(0));
+            //var inputPixels = new float[InputSize];
+
+            //for (int i = 0; i < inputPixels.Length; i++)
+            //{
+            //    inputPixels[i] = (float)random.NextDouble();
+            //}
+
+            var outputPixels = GraphicsUtils.ImageToFloatRGB(outputImage);
+            var inputPixels = GraphicsUtils.ImageToFloatRGB(inputImage);
+
+            inputPixels.CopyTo(TrainingInput.GetRowSpan(row));
+            outputPixels.CopyTo(TrainingOutput.GetRowSpan(row));
+
+            ++row;
+        }
     }
 }

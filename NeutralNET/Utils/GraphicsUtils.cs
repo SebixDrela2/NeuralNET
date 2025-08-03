@@ -8,7 +8,7 @@ using System.Runtime.Versioning;
 
 namespace NeutralNET.Stuff;
 
-public static class GraphicsUtils
+public static partial class GraphicsUtils
 {
     private const int FontSize = Height/2;
     private const int UpScale = 4;
@@ -22,8 +22,8 @@ public static class GraphicsUtils
 
     private static readonly Random _rng = new(RandomSeed);
 
-    public const int Width = 32;
-    public const int Height = 32;
+    public const int Width = 16;
+    public const int Height = 16;
 
     public const int PixelCount = Width * Height;
 
@@ -138,6 +138,18 @@ public static class GraphicsUtils
         }
 
         return brightStruct;
+    }
+
+    public static float[] LoadPixels(string path, PixelType type = PixelType.RGB)
+    {
+        var image = LoadImage(path);
+
+        if (type is PixelType.RGB)
+        {
+            return ImageToFloatRGB(image);
+        }
+
+        return ImageToFloatGrayScale(image);
     }
 
     public static Bitmap LoadImage(string path)

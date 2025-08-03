@@ -12,7 +12,7 @@ internal class Program
 
     static void Main()
     {
-        RunInfiniteFunction();
+        RunNetworkDigit();
     }
 
     public static void RunNetwork()
@@ -23,6 +23,8 @@ internal class Program
         var network = new NeuralNetworkBuilder<Architecture>(model)
             .WithArchitecture([32, 32])
             .WithEpochs(10000)
+            .WithHiddenLayerActivation(ActivationType.ReLU)
+            .WithOutputLayerActivation(ActivationType.Sigmoid)
             .WithBatchSize(BatchSize)
             .WithLearningRate(0.01f)
             .WithWeightDecay(1e-5f)
@@ -39,11 +41,13 @@ internal class Program
         model.Prepare();
 
         var network = new NeuralNetworkBuilder<Architecture>(model)
-            .WithArchitecture([16, 16, 16])
-            .WithEpochs(3000)
+            .WithArchitecture([32, 32, 32])
+            .WithEpochs(30000)
             .WithBatchSize(BatchSize)
-            .WithLearningRate(1e-10f)
-            .WithWeightDecay(1e-5f)
+            .WithHiddenLayerActivation(ActivationType.LeakyReLU)
+            .WithOutputLayerActivation(ActivationType.Sigmoid)
+            .WithLearningRate(1e-3f)
+            .WithWeightDecay(1e-4f)
             .WithBeta1(0.9f)   
             .WithBeta2(0.999f) 
             .WithEpsilon(1e-8f)
@@ -112,7 +116,7 @@ internal class Program
         var model = new FunctionModel();
         var network = new NeuralNetworkBuilder<Architecture>(model)
             .WithArchitecture([32, 32])
-            .WithEpochs(2000)
+            .WithEpochs(20000)
             .WithHiddenLayerActivation(ActivationType.ReLU)
             .WithOutputLayerActivation(ActivationType.Identity)
             .WithBatchSize(BatchSize)
