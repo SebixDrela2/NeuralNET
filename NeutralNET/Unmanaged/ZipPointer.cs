@@ -44,9 +44,9 @@ internal readonly unsafe struct Zip2Pointer(float* aPtr, float* bPtr, float* end
     public static Zip2Pointer operator +(Zip2Pointer self, int value) => self with { A = self.A + value, B = self.B + value };
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public readonly void GetVectors(out Vector256<float> aVec, out Vector256<float> bVec)
+    public readonly void GetVectors(out Vector512<float> aVec, out Vector512<float> bVec)
     {
-        aVec = Vector256.LoadAligned(A);
-        bVec = Vector256.LoadAligned(B);
+        aVec = Vector512.LoadAligned(A);
+        bVec = Vector512.LoadAligned(B);
     }
 }

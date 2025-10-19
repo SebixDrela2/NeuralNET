@@ -34,17 +34,17 @@ public unsafe readonly struct NeuralVector(
     public static NeuralVector operator -(NeuralVector row, int count) => row + -count;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public Vector256<float> LoadVectorUnaligned(int index)
+    public Vector512<float> LoadVectorUnaligned(int index)
     {
-        return Vector256.LoadUnsafe(ref *Pointer, (nuint)index);
+        return Vector512.LoadUnsafe(ref *Pointer, (nuint)index);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public Vector256<float> LoadVectorAligned(int index)
+    public Vector512<float> LoadVectorAligned(int index)
     {
         AssertAligned();
 
-        return Vector256.LoadAligned(Pointer + index);
+        return Vector512.LoadAligned(Pointer + index);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

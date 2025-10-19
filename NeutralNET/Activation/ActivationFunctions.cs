@@ -16,12 +16,12 @@ public static unsafe class ActivationFunctions
     {
         float* end = ptr + allocatedLength;
 
-        var one = Vector256<float>.One;
+        var one = Vector512<float>.One;
 
-        for (; ptr != end; ptr += Vector256<float>.Count)
+        for (; ptr != end; ptr += NeuralMatrix.Alignment)
         {
-            var vec = Vector256.LoadAligned(ptr);
-            var sigmoid = Avx.Divide(one, Avx.Add(one, Vector256.Exp(Avx.Multiply(vec, Vector256.Create(-1.0f)))));
+            var vec = Vector512.LoadAligned(ptr);
+            var sigmoid = Avx512F.Divide(one, Avx512F.Add(one, Vector512.Exp(Avx512F.Multiply(vec, Vector512.Create(-1.0f)))));
             sigmoid.StoreAligned(ptr);
         }
     }
@@ -36,14 +36,14 @@ public static unsafe class ActivationFunctions
 
         if (Avx2.IsSupported)
         {
-            Vector256<float> one = Vector256.Create(1.0f);
-            Vector256<float> two = Vector256.Create(2.0f);
+            Vector512<float> one = Vector512.Create(1.0f);
+            Vector512<float> two = Vector512.Create(2.0f);
 
-            for (; ptr != end; ptr += Vector256<float>.Count)
+            for (; ptr != end; ptr += NeuralMatrix.Alignment)
             {
-                var x = Vector256.LoadAligned(ptr);
-                var exp2x = Vector256.Exp(Avx.Multiply(x, two));
-                var tanh = Avx.Divide(Avx.Subtract(exp2x, one), Avx.Add(exp2x, one));
+                var x = Vector512.LoadAligned(ptr);
+                var exp2x = Vector512.Exp(Avx512F.Multiply(x, two));
+                var tanh = Avx512F.Divide(Avx512F.Subtract(exp2x, one), Avx512F.Add(exp2x, one));
                 tanh.StoreAligned(ptr);
             }
         }
@@ -63,12 +63,12 @@ public static unsafe class ActivationFunctions
     public static void ApplyReLUVectorized(float* ptr, int allocatedLength)
     {
         float* end = ptr + allocatedLength;
-        Vector256<float> zero = Vector256<float>.Zero;
+        Vector512<float> zero = Vector512<float>.Zero;
 
-        for (; ptr != end; ptr += Vector256<float>.Count)
+        for (; ptr != end; ptr += NeuralMatrix.Alignment)
         {
-            var vec = Vector256.LoadAligned(ptr);
-            vec = Avx.Max(vec, zero);
+            var vec = Vector512.LoadAligned(ptr);
+            vec = Avx512F.Max(vec, zero);
             vec.StoreAligned(ptr);
         }
     }
@@ -80,16 +80,16 @@ public static unsafe class ActivationFunctions
     public static unsafe void ApplyLeakyReLUVectorized(float* ptr, int allocatedLength)
     {
         float* end = ptr + allocatedLength;
-        Vector256<float> zero = Vector256<float>.Zero;
-        Vector256<float> alpha = Vector256.Create(0.01f);
+        Vector512<float> zero = Vector512<float>.Zero;
+        Vector512<float> alpha = Vector512.Create(0.01f);
 
-        for (; ptr != end; ptr += Vector256<float>.Count)
+        for (; ptr != end; ptr += NeuralMatrix.Alignment)
         {
-            var vec = Vector256.LoadAligned(ptr);
-            var mask = Avx.CompareLessThan(vec, zero);
-            var negPart = Avx.Multiply(vec, alpha);
-            var posPart = Avx.Max(vec, zero);         
-            vec = Avx.BlendVariable(posPart, negPart, mask);
+            var vec = Vector512.LoadAligned(ptr);
+            var mask = Avx512F.CompareLessThan(vec, zero);
+            var negPart = Avx512F.Multiply(vec, alpha);
+            var posPart = Avx512F.Max(vec, zero);         
+            vec = Avx512F.BlendVariable(posPart, negPart, mask);
             vec.StoreAligned(ptr);
         }
     }

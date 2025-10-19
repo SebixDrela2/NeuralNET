@@ -33,15 +33,15 @@ internal unsafe class SGDOptimizer<TArch>(
 
         if (Avx2.IsSupported)
         {
-            var factorVec = Vector256.Create(factor);
-            var rateVec = Vector256.Create(-config.LearningRate);
+            var factorVec = Vector512.Create(factor);
+            var rateVec = Vector512.Create(-config.LearningRate);
 
-            for (; aPtr != aEnd; aPtr += Vector256<float>.Count, bPtr += Vector256<float>.Count)
+            for (; aPtr != aEnd; aPtr += NeuralMatrix.Alignment, bPtr += NeuralMatrix.Alignment)
             {
-                var aVec = Vector256.LoadAligned(aPtr);
-                var bVec = Vector256.LoadAligned(bPtr);
+                var aVec = Vector512.LoadAligned(aPtr);
+                var bVec = Vector512.LoadAligned(bPtr);
 
-                var result = Fma.MultiplyAdd(bVec, rateVec, Avx.Multiply(aVec, factorVec));
+                var result = Avx512F.FusedMultiplyAdd(bVec, rateVec, Avx512F.Multiply(aVec, factorVec));
 
                 result.StoreAligned(aPtr);
             }

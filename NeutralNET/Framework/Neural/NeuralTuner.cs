@@ -13,66 +13,66 @@ internal unsafe class NeuralTuner(Random rng)
         float* inPtr = input.Pointer;
         int rows = input.Rows;
 
-        int vecWidth = Vector256<float>.Count;
+        int vecWidth = NeuralMatrix.Alignment;
 
         int colBlockCount = cols / vecWidth;
         int colRemainder = cols % vecWidth;
 
-        Vector256<float> momentumVec = Vector256.Create(bn.Momentum);
-        Vector256<float> oneMinusMomentumVec = Vector256.Create(1f - bn.Momentum);
-        Vector256<float> epsilonVec = Vector256.Create(bn.Epsilon);
+        Vector512<float> momentumVec = Vector512.Create(bn.Momentum);
+        Vector512<float> oneMinusMomentumVec = Vector512.Create(1f - bn.Momentum);
+        Vector512<float> epsilonVec = Vector512.Create(bn.Epsilon);
 
         for (int block = 0; block < colBlockCount; block++)
         {
             int j = block * vecWidth;
 
-            Vector256<float> sumVec = Vector256<float>.Zero;
+            Vector512<float> sumVec = Vector512<float>.Zero;
 
             for (int i = 0; i < rows; i++)
             {
                 float* ptr = inPtr + i * stride + j;
-                Vector256<float> rowVec = Avx.LoadAlignedVector256(ptr);
-                sumVec = Avx.Add(sumVec, rowVec);
+                Vector512<float> rowVec = Avx512F.LoadAlignedVector512(ptr);
+                sumVec = Avx512F.Add(sumVec, rowVec);
             }
 
-            Vector256<float> meanVec = Avx.Divide(sumVec, Vector256.Create((float)rows));
-            Vector256<float> varSumVec = Vector256<float>.Zero;
+            Vector512<float> meanVec = Avx512F.Divide(sumVec, Vector512.Create((float)rows));
+            Vector512<float> varSumVec = Vector512<float>.Zero;
 
             for (int i = 0; i < rows; i++)
             {
                 float* ptr = inPtr + i * stride + j;
-                Vector256<float> rowVec = Avx.LoadAlignedVector256(ptr);
-                Vector256<float> diff = Avx.Subtract(rowVec, meanVec);
-                Vector256<float> sq = Avx.Multiply(diff, diff);
-                varSumVec = Avx.Add(varSumVec, sq);
+                Vector512<float> rowVec = Avx512F.LoadAlignedVector512(ptr);
+                Vector512<float> diff = Avx512F.Subtract(rowVec, meanVec);
+                Vector512<float> sq = Avx512F.Multiply(diff, diff);
+                varSumVec = Avx512F.Add(varSumVec, sq);
             }
 
-            Vector256<float> varVec = Avx.Divide(varSumVec, Vector256.Create((float)rows));
-            Vector256<float> stdVec = Avx.Sqrt(Avx.Add(varVec, epsilonVec));
+            Vector512<float> varVec = Avx512F.Divide(varSumVec, Vector512.Create((float)rows));
+            Vector512<float> stdVec = Avx512F.Sqrt(Avx512F.Add(varVec, epsilonVec));
 
             float* runningMeanPtr = &bn.RunningMean.Pointer[j];
             float* runningVarPtr = &bn.RunningVar.Pointer[j];
             float* gammaPtr = &bn.Gamma.Pointer[j];
             float* betaPtr = &bn.Beta.Pointer[j];
 
-            Vector256<float> runningMeanVec = Avx.LoadAlignedVector256(runningMeanPtr);
-            Vector256<float> runningVarVec = Avx.LoadAlignedVector256(runningVarPtr);
-            Vector256<float> gammaVec = Avx.LoadAlignedVector256(gammaPtr);
-            Vector256<float> betaVec = Avx.LoadAlignedVector256(betaPtr);
+            Vector512<float> runningMeanVec = Avx512F.LoadAlignedVector512(runningMeanPtr);
+            Vector512<float> runningVarVec = Avx512F.LoadAlignedVector512(runningVarPtr);
+            Vector512<float> gammaVec = Avx512F.LoadAlignedVector512(gammaPtr);
+            Vector512<float> betaVec = Avx512F.LoadAlignedVector512(betaPtr);
 
-            runningMeanVec = Avx.Add(Avx.Multiply(momentumVec, meanVec), Avx.Multiply(oneMinusMomentumVec, runningMeanVec));
-            runningVarVec = Avx.Add(Avx.Multiply(momentumVec, varVec), Avx.Multiply(oneMinusMomentumVec, runningVarVec));
+            runningMeanVec = Avx512F.Add(Avx512F.Multiply(momentumVec, meanVec), Avx512F.Multiply(oneMinusMomentumVec, runningMeanVec));
+            runningVarVec = Avx512F.Add(Avx512F.Multiply(momentumVec, varVec), Avx512F.Multiply(oneMinusMomentumVec, runningVarVec));
 
-            Avx.Store(runningMeanPtr, runningMeanVec);
-            Avx.Store(runningVarPtr, runningVarVec);
+            Avx512F.Store(runningMeanPtr, runningMeanVec);
+            Avx512F.Store(runningVarPtr, runningVarVec);
 
             for (int i = 0; i < rows; i++)
             {
                 float* ptr = inPtr + i * stride + j;
-                Vector256<float> valVec = Avx.LoadAlignedVector256(ptr);
-                Vector256<float> normVec = Avx.Divide(Avx.Subtract(valVec, meanVec), stdVec);
-                Vector256<float> scaledVec = Avx.Add(Avx.Multiply(normVec, gammaVec), betaVec);
-                Avx.StoreAligned(ptr, scaledVec);
+                Vector512<float> valVec = Avx512F.LoadAlignedVector512(ptr);
+                Vector512<float> normVec = Avx512F.Divide(Avx512F.Subtract(valVec, meanVec), stdVec);
+                Vector512<float> scaledVec = Avx512F.Add(Avx512F.Multiply(normVec, gammaVec), betaVec);
+                Avx512F.StoreAligned(ptr, scaledVec);
             }
         }
 
@@ -125,19 +125,19 @@ internal unsafe class NeuralTuner(Random rng)
 
         if (Avx2.IsSupported)
         {
-            int vectorSize = Vector256<float>.Count;
-            var scaleVec = Vector256.Create(scale);
-            var dropoutRateVec = Vector256.Create(dropoutRate);
+            int vectorSize = NeuralMatrix.Alignment;
+            var scaleVec = Vector512.Create(scale);
+            var dropoutRateVec = Vector512.Create(dropoutRate);
 
             for (; i <= total - vectorSize; i += vectorSize)
             {
-                var vec = Avx.LoadVector256(activations.Pointer + i);
-                Vector256<float> randVec = GenerateRandomVector256();
+                var vec = Avx512F.LoadVector512(activations.Pointer + i);
+                Vector512<float> randVec = GenerateRandomVector512();
 
-                var mask = Avx.CompareGreaterThan(randVec, dropoutRateVec);
-                var scaledVec = Avx.Multiply(vec, scaleVec);
+                var mask = Avx512F.CompareGreaterThan(randVec, dropoutRateVec);
+                var scaledVec = Avx512F.Multiply(vec, scaleVec);
 
-                var result = Avx.BlendVariable(scaledVec, Vector256<float>.Zero, mask);
+                var result = Avx512F.BlendVariable(scaledVec, Vector512<float>.Zero, mask);
                 vec.StoreAligned(activations.Pointer + i);
             }
         }
@@ -149,15 +149,15 @@ internal unsafe class NeuralTuner(Random rng)
         }
     }
 
-    private unsafe Vector256<float> GenerateRandomVector256()
+    private unsafe Vector512<float> GenerateRandomVector512()
     {
-        float* randArray = stackalloc float[Vector256<float>.Count];
+        float* randArray = stackalloc float[NeuralMatrix.Alignment];
 
-        for (int i = 0; i < Vector256<float>.Count; i++)
+        for (int i = 0; i < NeuralMatrix.Alignment; i++)
         {
             randArray[i] = (float)rng.NextDouble();
         }
 
-        return Avx.LoadVector256(randArray);
+        return Avx512F.LoadVector512(randArray);
     }
 }

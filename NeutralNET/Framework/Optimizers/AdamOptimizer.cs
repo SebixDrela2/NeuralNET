@@ -57,25 +57,25 @@ internal class AdamOptimizer<TArch>(
         float* gPtr = gradient.Pointer;
         float* end = mPtr + mMatrix.AllocatedLength;
 
-        var beta1Vec = Vector256.Create(beta1);
-        var beta2Vec = Vector256.Create(beta2);
-        var oneMinusBeta1 = Vector256.Create(1 - beta1);
-        var oneMinusBeta2 = Vector256.Create(1 - beta2);
+        var beta1Vec = Vector512.Create(beta1);
+        var beta2Vec = Vector512.Create(beta2);
+        var oneMinusBeta1 = Vector512.Create(1 - beta1);
+        var oneMinusBeta2 = Vector512.Create(1 - beta2);
 
         if (Avx2.IsSupported)
         {
             for (; mPtr != end;)
             {
-                var m = Avx.LoadVector256(mPtr);
-                var v = Avx.LoadVector256(vPtr);
-                var g = Avx.LoadVector256(gPtr);
+                var m = Avx512F.LoadVector512(mPtr);
+                var v = Avx512F.LoadVector512(vPtr);
+                var g = Avx512F.LoadVector512(gPtr);
 
-                var newM = Avx.Add(Avx.Multiply(beta1Vec, m),
-                              Avx.Multiply(oneMinusBeta1, g));
+                var newM = Avx512F.Add(Avx512F.Multiply(beta1Vec, m),
+                              Avx512F.Multiply(oneMinusBeta1, g));
 
-                var gSq = Avx.Multiply(g, g);
-                var newV = Avx.Add(Avx.Multiply(beta2Vec, v),
-                              Avx.Multiply(oneMinusBeta2, gSq));
+                var gSq = Avx512F.Multiply(g, g);
+                var newV = Avx512F.Add(Avx512F.Multiply(beta2Vec, v),
+                              Avx512F.Multiply(oneMinusBeta2, gSq));
 
                 newM.Store(mPtr);
                 newV.Store(vPtr);
@@ -102,30 +102,30 @@ internal class AdamOptimizer<TArch>(
         float beta1T = MathF.Pow(beta1, t);
         float beta2T = MathF.Pow(beta2, t);
 
-        var mCorrVec = Vector256.Create(1 / (1 - beta1T));
-        var vCorrVec = Vector256.Create(1 / (1 - beta2T));
-        var lrVec = Vector256.Create(lr);
-        var epsVec = Vector256.Create(epsilon);
-        var wdVec = Vector256.Create(lr * wd);
+        var mCorrVec = Vector512.Create(1 / (1 - beta1T));
+        var vCorrVec = Vector512.Create(1 / (1 - beta2T));
+        var lrVec = Vector512.Create(lr);
+        var epsVec = Vector512.Create(epsilon);
+        var wdVec = Vector512.Create(lr * wd);
 
         if (Avx2.IsSupported)
         {
             for (; p != end;)
             {
-                var paramVec = Avx.LoadVector256(p);
-                var mVec = Avx.LoadVector256(mPtr);
-                var vVec = Avx.LoadVector256(vPtr);
+                var paramVec = Avx512F.LoadVector512(p);
+                var mVec = Avx512F.LoadVector512(mPtr);
+                var vVec = Avx512F.LoadVector512(vPtr);
 
-                var mHat = Avx.Multiply(mVec, mCorrVec);
-                var vHat = Avx.Multiply(vVec, vCorrVec);
+                var mHat = Avx512F.Multiply(mVec, mCorrVec);
+                var vHat = Avx512F.Multiply(vVec, vCorrVec);
 
-                var sqrtV = Avx.Sqrt(vHat);
-                var denom = Avx.Add(sqrtV, epsVec);
-                var step = Avx.Divide(mHat, denom);
-                step = Avx.Multiply(lrVec, step);
+                var sqrtV = Avx512F.Sqrt(vHat);
+                var denom = Avx512F.Add(sqrtV, epsVec);
+                var step = Avx512F.Divide(mHat, denom);
+                step = Avx512F.Multiply(lrVec, step);
 
-                var decay = Avx.Multiply(wdVec, paramVec);
-                var newParam = Avx.Subtract(Avx.Subtract(paramVec, decay), step);
+                var decay = Avx512F.Multiply(wdVec, paramVec);
+                var newParam = Avx512F.Subtract(Avx512F.Subtract(paramVec, decay), step);
 
                 newParam.Store(p);
 

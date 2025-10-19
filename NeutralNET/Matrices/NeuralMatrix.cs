@@ -11,7 +11,8 @@ namespace NeutralNET.Matrices;
 
 public unsafe readonly struct NeuralMatrix
 {
-    private const int Alignment = 8;
+    public const int Alignment = 8;
+
     private const int AlignmentMask = Alignment - 1;
     private const int ByteAlignment = Alignment * sizeof(float);
     private const int ByteAlignmentMask = ByteAlignment - 1;
@@ -93,7 +94,7 @@ public unsafe readonly struct NeuralMatrix
         int inFeatures = UsedColumns;
         int outFeatures = other.Rows;
         int batchSize = Rows;
-        int vecSize = Vector256<float>.Count;
+        int vecSize = NeuralMatrix.Alignment;
 
         var inputRow = GetMatrixRow(0);
         var resultRow = result.GetMatrixRow(0);
@@ -107,17 +108,17 @@ public unsafe readonly struct NeuralMatrix
                 var sum = 0f;
                 var k = 0;
 
-                var sumVec = Vector256<float>.Zero;
+                var sumVec = Vector512<float>.Zero;
                 var vectorizable = inFeatures - (inFeatures % vecSize);
 
                 for (; k < vectorizable; k += vecSize)
                 {
                     var inputVec = inputRow.LoadVectorAligned(k);
                     var weightVec = weights.LoadVectorAligned(k);
-                    sumVec = Fma.MultiplyAdd(inputVec, weightVec, sumVec);
+                    sumVec = Avx512F.FusedMultiplyAdd(inputVec, weightVec, sumVec);
                 }
 
-                sum += Vector256.Sum(sumVec);
+                sum += Vector512.Sum(sumVec);
 
                 for (; k < inFeatures; k++)
                 {
@@ -197,10 +198,10 @@ public unsafe readonly struct NeuralMatrix
             {
                 zipPointer.GetVectors(out var aVec, out var bVec);
 
-                var resultVec = Avx.Add(aVec, bVec);
+                var resultVec = Avx512F.Add(aVec, bVec);
                 resultVec.StoreAligned(zipPointer.A);
 
-                zipPointer += Vector256<float>.Count;
+                zipPointer += NeuralMatrix.Alignment;
             }
         }
         else
@@ -242,13 +243,13 @@ public unsafe readonly struct NeuralMatrix
 
         if (Avx2.IsSupported)
         {
-            var meanVec = Vector256.Create(mean);
-            var stddevVec = Vector256.Create(stddev);
-            var multiplierVec = Vector256.Create(multiplier);
+            var meanVec = Vector512.Create(mean);
+            var stddevVec = Vector512.Create(stddev);
+            var multiplierVec = Vector512.Create(multiplier);
 
-            while (ptr + Vector256<float>.Count <= end)
+            while (ptr + NeuralMatrix.Alignment <= end)
             {
-                var u1 = Vector256.Create(
+                var u1 = Vector512.Create(
                     RandomUtils.GetFloat(multiplier, seed),
                     RandomUtils.GetFloat(multiplier, seed),
                     RandomUtils.GetFloat(multiplier, seed),
@@ -256,9 +257,7 @@ public unsafe readonly struct NeuralMatrix
                     RandomUtils.GetFloat(multiplier, seed),
                     RandomUtils.GetFloat(multiplier, seed),
                     RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed));
-
-                var u2 = Vector256.Create(
+                    RandomUtils.GetFloat(multiplier, seed),
                     RandomUtils.GetFloat(multiplier, seed),
                     RandomUtils.GetFloat(multiplier, seed),
                     RandomUtils.GetFloat(multiplier, seed),
@@ -268,44 +267,65 @@ public unsafe readonly struct NeuralMatrix
                     RandomUtils.GetFloat(multiplier, seed),
                     RandomUtils.GetFloat(multiplier, seed));
 
-                u1 = Avx.Max(u1, Vector256.Create(1e-38f));
+                var u2 = Vector512.Create(
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed),
+                    RandomUtils.GetFloat(multiplier, seed));
+
+                u1 = Avx512F.Max(u1, Vector512.Create(1e-38f));
 
                 float[] u1Array = new float[8];
                 fixed (float* u1Ptr = u1Array)
                 {
-                    Avx.Store(u1Ptr, u1);
+                    Avx512F.Store(u1Ptr, u1);
                     for (int i = 0; i < 8; i++)
                         u1Ptr[i] = MathF.Log(u1Ptr[i]);
                 }
 
-                var logU1Vec = Vector256.Create(
+                // DANIEL PLZ FIX
+                var logU1Vec = Vector512.Create(
+                    u1Array[0], u1Array[1], u1Array[2], u1Array[3],
+                    u1Array[4], u1Array[5], u1Array[6], u1Array[7],
                     u1Array[0], u1Array[1], u1Array[2], u1Array[3],
                     u1Array[4], u1Array[5], u1Array[6], u1Array[7]);
 
-                var sqrtPart = Avx.Sqrt(Avx.Multiply(Vector256.Create(-2.0f), logU1Vec));
+                var sqrtPart = Avx512F.Sqrt(Avx512F.Multiply(Vector512.Create(-2.0f), logU1Vec));
 
                 float[] sinInput = new float[8];
                 float[] sinOutput = new float[8];
                 fixed (float* sinInputPtr = sinInput)
                 {
-                    Avx.Multiply(Vector256.Create(2.0f * MathF.PI), u2).Store(sinInputPtr);
+                    Avx512F.Multiply(Vector512.Create(2.0f * MathF.PI), u2).Store(sinInputPtr);
                     for (int i = 0; i < 8; i++)
                         sinInput[i] = MathF.Sin(sinInput[i]);
                 }
 
-                var sinVec = Vector256.Create(
+                var sinVec = Vector512.Create(
                     sinInput[0], sinInput[1], sinInput[2], sinInput[3],
                     sinInput[4], sinInput[5], sinInput[6], sinInput[7]);
 
-                var z0 = Avx.Multiply(sqrtPart, sinVec);
+                var z0 = Avx512F.Multiply(sqrtPart, sinVec);
 
-                z0 = Fma.MultiplyAdd(
-                    Avx.Multiply(z0, stddevVec),
+                z0 = Avx512F.FusedMultiplyAdd(
+                    Avx512F.Multiply(z0, stddevVec),
                     multiplierVec,
                     meanVec);
 
-                Avx.StoreAligned(ptr, z0);
-                ptr += Vector256<float>.Count;
+                Avx512F.StoreAligned(ptr, z0);
+                ptr += NeuralMatrix.Alignment;
             }
         }
 
@@ -337,15 +357,15 @@ public unsafe readonly struct NeuralMatrix
         float* ptr = Pointer;
         float* end = ptr + AllocatedLength;
 
-        var minVec = Vector256.Create(min);
-        var maxVec = Vector256.Create(max);
+        var minVec = Vector512.Create(min);
+        var maxVec = Vector512.Create(max);
 
         if (Avx2.IsSupported)
         {
-            for (; ptr != end; ptr += Vector256<float>.Count)
+            for (; ptr != end; ptr += NeuralMatrix.Alignment)
             {
-                var vec = Vector256.LoadAligned(ptr);
-                vec = Avx.Min(maxVec, Avx.Max(minVec, vec));
+                var vec = Vector512.LoadAligned(ptr);
+                vec = Avx512F.Min(maxVec, Avx512F.Max(minVec, vec));
                 vec.StoreAligned(ptr);
             }
         }
@@ -365,9 +385,9 @@ public unsafe readonly struct NeuralMatrix
         float* ptr = Pointer;
         float* end = ptr + AllocatedLength;
 
-        var vec = Vector256.Create(value);
+        var vec = Vector512.Create(value);
 
-        for (; ptr != end; ptr += Vector256<float>.Count)
+        for (; ptr != end; ptr += NeuralMatrix.Alignment)
         {
             vec.StoreAligned(ptr);
         }

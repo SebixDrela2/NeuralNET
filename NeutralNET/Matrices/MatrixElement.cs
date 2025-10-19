@@ -26,15 +26,15 @@ public readonly unsafe struct MatrixElement(float* pointer, int length)
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public Vector256<float> LoadVectorAligned(int index)
+    public Vector512<float> LoadVectorAligned(int index)
     {
         AssertAligned();
         
-        return Vector256.LoadAligned(Pointer + index);
+        return Vector512.LoadAligned(Pointer + index);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public Vector256<float> LoadVectorUnaligned(int index) => Vector256.LoadUnsafe(ref Reference, (nuint)index);
+    public Vector512<float> LoadVectorUnaligned(int index) => Vector512.LoadUnsafe(ref Reference, (nuint)index);
 
     [Conditional("DEBUG")]
     private void AssertAligned()

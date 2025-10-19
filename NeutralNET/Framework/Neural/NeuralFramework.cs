@@ -298,17 +298,17 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         float* bPtr = gradientMatrixes[index].Pointer;
         float* aEnd = aPtr + matrixes[index].AllocatedLength;
 
-        if (Avx2.IsSupported)
+        if (Avx512F.IsSupported)
         {
-            var factorVec = Vector256.Create(factor);
-            var rateVec = Vector256.Create(-_config.LearningRate);
+            var factorVec = Vector512.Create(factor);
+            var rateVec = Vector512.Create(-_config.LearningRate);
 
-            for (; aPtr != aEnd; aPtr += Vector256<float>.Count, bPtr += Vector256<float>.Count)
+            for (; aPtr != aEnd; aPtr += NeuralMatrix.Alignment, bPtr += NeuralMatrix.Alignment)
             {
-                var aVec = Vector256.LoadAligned(aPtr);
-                var bVec = Vector256.LoadAligned(bPtr);
+                var aVec = Vector512.LoadAligned(aPtr);
+                var bVec = Vector512.LoadAligned(bPtr);
 
-                var result = Fma.MultiplyAdd(bVec, rateVec, Avx.Multiply(aVec, factorVec));
+                var result = Avx512F.FusedMultiplyAdd(bVec, rateVec, Avx512F.Multiply(aVec, factorVec));
 
                 result.StoreAligned(aPtr);
             }
@@ -356,13 +356,13 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         var gradOutputErrorPtr = _gradientArchitecture.MatrixNeurons[^1].Pointer;
         float* aEnd = archOutputPtr + Architecture.MatrixNeurons[^1].AllocatedLength;
 
-        if (Avx2.IsSupported)
+        if (Avx512F.IsSupported)
         {
-            for (; archOutputPtr != aEnd; archOutputPtr += Vector256<float>.Count, gradOutputErrorPtr += Vector256<float>.Count, trainingOutputPointer += Vector256<float>.Count)
+            for (; archOutputPtr != aEnd; archOutputPtr += NeuralMatrix.Alignment, gradOutputErrorPtr += NeuralMatrix.Alignment, trainingOutputPointer += NeuralMatrix.Alignment)
             {
-                var predVec = Vector256.LoadAligned(archOutputPtr);
-                var targetVec = Vector256.LoadAligned(trainingOutputPointer);
-                var diff = Avx.Subtract(predVec, targetVec);
+                var predVec = Vector512.LoadAligned(archOutputPtr);
+                var targetVec = Vector512.LoadAligned(trainingOutputPointer);
+                var diff = Avx512F.Subtract(predVec, targetVec);
                 diff.StoreAligned(gradOutputErrorPtr);
             }
         }
@@ -426,30 +426,30 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         ref float* prevGradWeights,
         float* prevGradNeurons,
         float neuronGradient)
-    {
-        var neuronGradientsVec = Vector256.Create(neuronGradient);
-
-        if (Avx2.IsSupported)
+    {       
+        if (Avx512F.IsSupported)
         {
+            var neuronGradientsVec = Vector512.Create(neuronGradient);
+
             for (; prevArchNeuronsPtr != prevArchNeuronsPtrEnd;
-                prevArchNeuronsPtr += Vector256<float>.Count,
-                prevArchWeightsPtr += Vector256<float>.Count,
-                prevGradWeights += Vector256<float>.Count,
-                prevGradNeurons += Vector256<float>.Count)
+                prevArchNeuronsPtr += NeuralMatrix.Alignment,
+                prevArchWeightsPtr += NeuralMatrix.Alignment,
+                prevGradWeights += NeuralMatrix.Alignment,
+                prevGradNeurons += NeuralMatrix.Alignment)
             {
-                var prevArchNeuronsVector = Vector256.LoadAligned(prevArchNeuronsPtr);
-                var prevArchWeightsVector = Vector256.LoadAligned(prevArchWeightsPtr);
+                var prevArchNeuronsVector = Vector512.LoadAligned(prevArchNeuronsPtr);
+                var prevArchWeightsVector = Vector512.LoadAligned(prevArchWeightsPtr);
 
-                var wGrad = Avx.Multiply(neuronGradientsVec, prevArchNeuronsVector);
-                var pGrad = Avx.Multiply(neuronGradientsVec, prevArchWeightsVector);
+                var wGrad = Avx512F.Multiply(neuronGradientsVec, prevArchNeuronsVector);
+                var pGrad = Avx512F.Multiply(neuronGradientsVec, prevArchWeightsVector);
 
-                var existingWGrad = Vector256.LoadAligned(prevGradWeights);
-                var existingPGrad = Vector256.LoadAligned(prevGradNeurons);
+                var existingWGrad = Vector512.LoadAligned(prevGradWeights);
+                var existingPGrad = Vector512.LoadAligned(prevGradNeurons);
 
-                var grad = Avx.Add(existingWGrad, wGrad);
+                var grad = Avx512F.Add(existingWGrad, wGrad);
                 grad.StoreAligned(prevGradWeights);
 
-                grad = Avx.Add(existingPGrad, pGrad);
+                grad = Avx512F.Add(existingPGrad, pGrad);
                 grad.StoreAligned(prevGradNeurons);
             }
         }
@@ -467,7 +467,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void NormalizeGradientsVectorized(int rowNumber)
     {
-        var divisorVec = Vector256.Create((float)rowNumber);
+        var divisorVec = Vector512.Create((float)rowNumber);
         var divisorScalar = (float)rowNumber;
 
         for (var i = 0; i < _gradientArchitecture.Count; i++)
@@ -478,17 +478,17 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void NormalizeArray(NeuralMatrix matrix, Vector256<float> divisorVec, float divisorScalar)
+    private static void NormalizeArray(NeuralMatrix matrix, Vector512<float> divisorVec, float divisorScalar)
     {
         var ptr = matrix.Pointer;
         float* end = ptr + matrix.AllocatedLength;
 
-        if (Avx2.IsSupported)
+        if (Avx512F.IsSupported)
         {
-            for (; ptr != end; ptr += Vector256<float>.Count)
+            for (; ptr != end; ptr += NeuralMatrix.Alignment)
             {
-                var vec = Vector256.LoadAligned(ptr);
-                vec = Avx.Divide(vec, divisorVec);
+                var vec = Vector512.LoadAligned(ptr);
+                vec = Avx512F.Divide(vec, divisorVec);
                 vec.StoreAligned(ptr);
             }
         }
@@ -520,7 +520,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         var aPtr = realFirstNeuronMatrix.Pointer;
         var realLastNeuronPtr = realLastNeuronMatrix.Pointer;
 
-        var sumMask = Vector256.Create(_trainingOutputStrideMask).AsSingle();
+        var sumMask = Vector512.Create(_trainingOutputStrideMask).AsSingle();
 
         foreach (var pair in batch)
         {
@@ -535,18 +535,18 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
             var predicted = realLastNeuronMatrix;
             var batchLoss = 0f;
 
-            var lossVec = Vector256<float>.Zero;
+            var lossVec = Vector512<float>.Zero;
 
-            for (; cPtr != cEnd; bPtr += Vector256<float>.Count, cPtr += Vector256<float>.Count)
+            for (; cPtr != cEnd; bPtr += NeuralMatrix.Alignment, cPtr += NeuralMatrix.Alignment)
             {
-                var predVec = Vector256.LoadAligned(bPtr);
-                var targetVec = Vector256.LoadAligned(cPtr);
-                var diff = Avx.Subtract(predVec, targetVec);
-                lossVec = Avx.Add(lossVec, Avx.Multiply(diff, diff));
+                var predVec = Vector512.LoadAligned(bPtr);
+                var targetVec = Vector512.LoadAligned(cPtr);
+                var diff = Avx512F.Subtract(predVec, targetVec);
+                lossVec = Avx512F.Add(lossVec, Avx512F.Multiply(diff, diff));
             }
 
-            lossVec = Avx.And(lossVec, sumMask);
-            batchLoss += Vector256.Sum(lossVec);
+            lossVec = Avx512F.And(lossVec.AsInt32(), sumMask.AsInt32()).AsSingle();
+            batchLoss += Vector512.Sum(lossVec);
 
             loss += batchLoss;
         }

@@ -13,7 +13,7 @@ public static class MatrixUtils
 
     public static uint[] GetStrideMask(int columns)
     {
-        var strideMask = new uint[Vector256<float>.Count];
+        var strideMask = new uint[NeuralMatrix.Alignment];
         var computation = columns & AlignmentMask;
         computation = computation is 0 ? Alignment : computation;
 
