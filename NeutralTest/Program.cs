@@ -98,16 +98,6 @@ internal class Program
             .WithShuffle(true)
             .Build();
 
-        //var matrixes = network.RunEpoch();
-
-        //foreach (var matrix in matrixes)
-        //{
-        //    matrix.Print("EPOCH");
-        //    model.TrainingOutput.Print("OUTPUT");
-
-        //    Thread.Sleep(1000);
-        //}
-
         var forward = network.RunModel();
     }
 
