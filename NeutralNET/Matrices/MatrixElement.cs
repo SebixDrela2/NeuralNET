@@ -7,8 +7,6 @@ namespace NeutralNET.Matrices;
 
 public readonly unsafe struct MatrixElement(float* pointer, int length)
 {
-    public const int UnalignedBits = 31;
-
     public readonly float* Pointer = pointer;
 
     public readonly int Count = length;
@@ -28,21 +26,13 @@ public readonly unsafe struct MatrixElement(float* pointer, int length)
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Vector512<float> LoadVectorAligned(int index)
     {
-        AssertAligned();
-        
+        AssertAligned(index);
         return Vector512.LoadAligned(Pointer + index);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Vector512<float> LoadVectorUnaligned(int index) => Vector512.LoadUnsafe(ref Reference, (nuint)index);
 
-    [Conditional("DEBUG")]
-    private void AssertAligned()
-    {
-        UIntPtr ptr = (UIntPtr)Pointer;
-
-        var end = (ptr & UnalignedBits) == 0;
-
-        Debug.Assert(end);
-    }
+    [Conditional("DEBUG"), MethodImpl(Inline)] private void AssertAligned() => Debug.Assert(SIMD.IsAligned(Pointer));
+    [Conditional("DEBUG"), MethodImpl(Inline)] private void AssertAligned(int offset) => Debug.Assert(SIMD.IsAligned(Pointer + offset));
 }

@@ -6,83 +6,40 @@ using System.Runtime.Intrinsics;
 
 namespace NeutralNET.Unmanaged;
 
-public unsafe readonly struct NeuralVector(
-    float* pointer,
-    int columns,
-    int stride)
+public readonly unsafe struct NeuralVector(float* pointer, int columns, int stride)
 {
     public readonly float* Pointer = pointer;
     public readonly int Columns = columns;
     public readonly int Stride = stride;
+    public readonly uint UsedByteSize { [MethodImpl(Inline)] get => unchecked((uint)(sizeof(float) * Columns)); }
 
-    public Span<float> Span
-    {
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        get => new(Pointer, Columns);
-    }
+    public Span<float> Span { [MethodImpl(Inline)] get => new(Pointer, Columns); }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [MethodImpl(Inline)]
     public static NeuralVector operator ++(NeuralVector row) => row + 1;
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [MethodImpl(Inline)]
     public static NeuralVector operator --(NeuralVector row) => row - 1;
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [MethodImpl(Inline)]
     public static NeuralVector operator +(NeuralVector row, int count) => new(row.Pointer + row.Stride * count, row.Columns, row.Stride);
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [MethodImpl(Inline)]
     public static NeuralVector operator -(NeuralVector row, int count) => row + -count;
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public Vector512<float> LoadVectorUnaligned(int index)
-    {
-        return Vector512.LoadUnsafe(ref *Pointer, (nuint)index);
-    }
+    [MethodImpl(Inline)]
+    public Vector512<float> LoadVectorUnaligned(int index) => SIMD.LoadUnaligned(Pointer + index);
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    [MethodImpl(Inline)]
     public Vector512<float> LoadVectorAligned(int index)
     {
         AssertAligned();
-
-        return Vector512.LoadAligned(Pointer + index);
+        return SIMD.LoadAligned(Pointer + index);
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void CopyTo(MatrixElement other)
-    {
-        var byteLength = sizeof(float) * Columns;
+    [MethodImpl(Inline)] public void CopyTo(MatrixElement other) => CopyTo(other.Pointer);
+    [MethodImpl(Inline)] public void CopyTo(float* ptr) => NativeMemory.Copy(Pointer, ptr, UsedByteSize);
 
-        NativeMemory.Copy(Pointer, other.Pointer, (uint)byteLength);
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void CopyTo(float* ptr)
-    {
-        var byteLength = sizeof(float) * Columns;
-
-        NativeMemory.Copy(Pointer, ptr, (uint)byteLength);
-    }
-
-    [Conditional("DEBUG")]
-    private void AssertAligned()
-    {
-        nuint ptr = (nuint)Pointer;
-
-        var end = (ptr & MatrixElement.UnalignedBits) == 0;
-
-        Debug.Assert(end);
-    }
-
-    [Conditional("DEBUG")]
-    private void TraceUnaligned()
-    {
-        nuint ptr = (nuint)Pointer;
-
-        var end = (ptr & MatrixElement.UnalignedBits) != 0;
-
-        if (end)
-        {
-            Console.WriteLine("Unneccesary aligned.");
-        }
-    }
+    [Conditional("DEBUG"), MethodImpl(Inline)]
+    private void AssertAligned() => Debug.Assert((SIMD.ByteAlignMask & (nuint)Pointer) is 0);
 }
