@@ -27,11 +27,7 @@ public partial class Form1 : Form
     private Graphics _backGraphics;
 
     private readonly Stopwatch _animationWatch = new();
-    private readonly Dictionary<string, float[]> _imagesDict = new()
-    {
-        {"greenEagle256", GraphicsUtils.LoadPixels(@"C:\Users\Seba\Documents\Desktop\Central-Nic-Http-master\greenEagle256.png")},
-        {"blueWolf256", GraphicsUtils.LoadPixels(@"C:\Users\Seba\Documents\Desktop\Central-Nic-Http-master\blueWolf256.png")}
-    };
+    private readonly Dictionary<string, float[]> _imagesDict = [];
 
     private float AnimationProgress { get; set; }
     private float[] BitMapValues { get; set; }
@@ -97,7 +93,7 @@ public partial class Form1 : Form
 
     private void Prepare()
     {
-        _model = new BitMapTransformationModel();
+        _model = new GrayScaleImageModel();
         _model.Prepare();
 
         _network = new NeuralNetworkBuilder<Architecture>(_model)

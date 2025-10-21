@@ -41,12 +41,13 @@ internal class Program
         model.Prepare();
 
         var network = new NeuralNetworkBuilder<Architecture>(model)
-            .WithArchitecture([32, 32, 32])
-            .WithEpochs(30000)
+            .WithArchitecture([128, 128, 64, 64, 32, 32, 16, 16])
+            .WithEpochs(10000)
             .WithBatchSize(BatchSize)
             .WithHiddenLayerActivation(ActivationType.LeakyReLU)
-            .WithOutputLayerActivation(ActivationType.Sigmoid)
-            .WithLearningRate(1e-3f)
+            .WithOutputLayerActivation(ActivationType.LeakyReLU)
+            .WithOptimizer(OptimizerType.SGD)
+            .WithLearningRate(1e-2f)
             .WithWeightDecay(1e-4f)
             .WithBeta1(0.9f)   
             .WithBeta2(0.999f) 
@@ -64,8 +65,8 @@ internal class Program
         model.Prepare();
 
         var network = new NeuralNetworkBuilder<Architecture>(model)
-            .WithArchitecture([16, 16, 16, 16])
-            .WithEpochs(10000)
+            .WithArchitecture([64, 64, 64, 64])
+            .WithEpochs(20)
             .WithHiddenLayerActivation(ActivationType.ReLU)
             .WithOutputLayerActivation(ActivationType.Sigmoid)
             .WithBatchSize(BatchSize)

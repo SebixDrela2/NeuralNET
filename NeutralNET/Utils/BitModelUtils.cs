@@ -2,5 +2,5 @@
 
 public static class BitModelUtils
 {
-    public const int Bits = 5;
+    public const int Bits = 10;
 }

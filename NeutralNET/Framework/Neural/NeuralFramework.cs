@@ -181,10 +181,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
             loss /= totalExamples;
 
-            if (epoch % 100 is 0)
-            {
-                DisplayEpochResult(stopWatch.Elapsed, batchProcessCount, loss, epoch);
-            }
+            DisplayEpochResult(stopWatch.Elapsed, batchProcessCount, loss, epoch);
         }
     }
 
@@ -243,6 +240,11 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
     private void DisplayEpochResult(TimeSpan elapsed, int batchProcessCount, float loss, int epoch)
     {
+        if (epoch % 64 != 0)
+        {
+            return;
+        }
+
         var batchesPerSecond = batchProcessCount / elapsed.TotalSeconds;
         var lossToPercent = 100.0 * (1.0 - Math.Min(loss, 1.0));
 
@@ -252,7 +254,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         var rReadyLoss = Math.Clamp((int)(rLoss * 255), 0, 255);
         var gReadyLoss = Math.Clamp((int)(gLoss * 255), 0, 255);
 
-        var result = $"Epoch ({epoch}/{_config.Epochs}) Accuracy: {lossToPercent:F5}% Loss:{loss} BPS:{batchesPerSecond}/s TP:{elapsed}";
+        var result = $"Epoch ({epoch, 6}/{_config.Epochs, -6}) Accuracy: {lossToPercent:F5}% Loss:{loss, 15:G13} BPS:{batchesPerSecond:F4}/s TP:{elapsed}";
         result = result.WithColor(System.Drawing.Color.FromArgb(255, rReadyLoss, gReadyLoss, 0));
 
         Console.WriteLine(result);
