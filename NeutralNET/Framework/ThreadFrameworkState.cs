@@ -34,10 +34,10 @@ internal record ThreadFrameworkState<TArch>(
 
             index++;
 
-            //if (index < BatchNormLayer.Count)
-            //{
-            //    NeuralWinder.ApplyBatchNormForward(Architecture.MatrixNeurons[index + 1], BatchNormLayer[index]);
-            //}
+            if (index < BatchNormLayer.Count)
+            {
+                NeuralWinder.ApplyBatchNormForward(Architecture.MatrixNeurons[index + 1], BatchNormLayer[index]);
+            }
 
             if (index < Architecture.Count - 1)
             {
