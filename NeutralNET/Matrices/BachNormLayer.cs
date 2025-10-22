@@ -7,8 +7,16 @@ public class BatchNormLayer
     public NeuralMatrix RunningMean;
     public NeuralMatrix RunningVar;
 
-    public float Momentum = 0.1f;
-    public float Epsilon = 1e-5f;
+    public const float Momentum = 0.1f;
+    public const float Epsilon = 1e-5f;
+
+    private BatchNormLayer(BatchNormLayer other)
+    {
+        Gamma = other.Gamma.Copy();
+        Beta = other.Beta.Copy();
+        RunningMean = other.RunningMean.Copy();
+        RunningVar = other.RunningVar.Copy();
+    }
 
     public BatchNormLayer(int size)
     {
@@ -20,4 +28,6 @@ public class BatchNormLayer
         Gamma.Fill(1.0f);
         Beta.Fill(0.0f);
     }
+
+    public BatchNormLayer Copy() => new(this);
 }

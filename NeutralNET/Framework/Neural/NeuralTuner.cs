@@ -18,9 +18,9 @@ internal unsafe class NeuralTuner(Random rng)
         int colBlockCount = cols / vecWidth;
         int colRemainder = cols % vecWidth;
 
-        Vector512<float> momentumVec = Vector512.Create(bn.Momentum);
-        Vector512<float> oneMinusMomentumVec = Vector512.Create(1f - bn.Momentum);
-        Vector512<float> epsilonVec = Vector512.Create(bn.Epsilon);
+        Vector512<float> momentumVec = Vector512.Create(BatchNormLayer.Momentum);
+        Vector512<float> oneMinusMomentumVec = Vector512.Create(1f - BatchNormLayer.Momentum);
+        Vector512<float> epsilonVec = Vector512.Create(BatchNormLayer.Epsilon);
 
         for (int block = 0; block < colBlockCount; block++)
         {
@@ -94,15 +94,15 @@ internal unsafe class NeuralTuner(Random rng)
                     var += val * val;
                 }
                 var /= rows;
-                float std = MathF.Sqrt(var + bn.Epsilon);
+                float std = MathF.Sqrt(var + BatchNormLayer.Epsilon);
 
                 ref float runningMean = ref bn.RunningMean.At(0, j);
                 ref float runningVar = ref bn.RunningVar.At(0, j);
                 ref float gamma = ref bn.Gamma.At(0, j);
                 ref float beta = ref bn.Beta.At(0, j);
 
-                runningMean = bn.Momentum * mean + (1f - bn.Momentum) * runningMean;
-                runningVar = bn.Momentum * var + (1f - bn.Momentum) * runningVar;
+                runningMean = BatchNormLayer.Momentum * mean + (1f - BatchNormLayer.Momentum) * runningMean;
+                runningVar = BatchNormLayer.Momentum * var + (1f - BatchNormLayer.Momentum) * runningVar;
 
                 for (int i = 0; i < rows; i++)
                 {

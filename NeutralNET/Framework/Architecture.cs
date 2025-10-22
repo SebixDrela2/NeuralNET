@@ -1,6 +1,7 @@
 ﻿using NeutralNET.Attributes;
 using NeutralNET.Matrices;
 using NeutralNET.Models;
+using System.Runtime.InteropServices;
 
 namespace NeutralNET.Framework;
 
@@ -62,6 +63,39 @@ public partial class Architecture : IArchitecture<Architecture>
             );
         }
     }
+
+    private Architecture(Architecture other)
+    {
+        Count = other.Count;
+
+        var architectureLength = Count + 1;
+
+        MatrixNeurons = new NeuralMatrix[architectureLength];
+        MatrixWeights = new NeuralMatrix[Count];
+        MatrixBiases = new NeuralMatrix[Count];
+
+        MatrixMWeights = new NeuralMatrix[Count];
+        MatrixVWeights = new NeuralMatrix[Count];
+        MatrixMBiases = new NeuralMatrix[Count];
+        MatrixVBiases = new NeuralMatrix[Count];
+
+        for (var i = 0; i < architectureLength; i++)
+        {
+            MatrixNeurons[i] = other.MatrixNeurons[i].Copy();
+        }
+
+        for (var i = 0; i < Count; i++)
+        {
+            MatrixWeights[i] = other.MatrixWeights[i].Copy();
+            MatrixBiases[i] = other.MatrixBiases[i].Copy();
+            MatrixMWeights[i] = other.MatrixMWeights[i].Copy();
+            MatrixVWeights[i] = other.MatrixVWeights[i].Copy();
+            MatrixMBiases[i] = other.MatrixMBiases[i].Copy();
+            MatrixVBiases[i] = other.MatrixVBiases[i].Copy();
+        }
+    }
+
+    public Architecture Copy() => new(this);
 
     public static Architecture Create(params ReadOnlySpan<int> architecture) => new(architecture);
 

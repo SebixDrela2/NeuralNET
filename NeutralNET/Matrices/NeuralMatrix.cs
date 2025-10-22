@@ -175,6 +175,15 @@ public unsafe readonly struct NeuralMatrix
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public float* GetRowPointer(int row) => row * ColumnsStride + Pointer;
 
+    public NeuralMatrix Copy()
+    {
+        var other = new NeuralMatrix(Rows, UsedColumns);
+
+        other.CopyDataFrom(this);
+
+        return other;
+    }
+
     public void CopyRowFrom(NeuralMatrix other, int row)
     {
         other.GetRowSpan(row).CopyTo(GetRowSpan(row));

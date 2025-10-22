@@ -4,8 +4,8 @@ public unsafe class FiniteBatchesView : BaseBatchView
 {
     private readonly int[] _indicies;
 
-    private readonly float* _trainingInput;
-    private readonly float* _trainingOutput;
+    public float* TrainingInput { get; }
+    public float* TrainingOutput { get; }
 
     private readonly int _lastChunkPartSize;
     private readonly int _chunksCount;
@@ -19,8 +19,9 @@ public unsafe class FiniteBatchesView : BaseBatchView
         int chunkSize) : base(chunkSize, trainingInput.ColumnsStride, trainingOutput.ColumnsStride)
     {
         _indicies = indicies;
-        _trainingInput = trainingInput.Pointer;
-        _trainingOutput = trainingOutput.Pointer;
+
+        TrainingInput = trainingInput.Pointer;
+        TrainingOutput = trainingOutput.Pointer;
 
         (_chunksCount, _lastChunkPartSize) = int.DivRem(indicies.Length, chunkSize);
 
@@ -42,8 +43,8 @@ public unsafe class FiniteBatchesView : BaseBatchView
         var index = _indicies[offset];
 
         return new(
-            (index * InputStride) + _trainingInput,
-            (index * OutputStride) + _trainingOutput
+            (index * InputStride) + TrainingInput,
+            (index * OutputStride) + TrainingOutput
         );
     }
 

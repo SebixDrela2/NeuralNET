@@ -19,5 +19,6 @@ public interface IArchitecture<TSelf> where TSelf : IArchitecture<TSelf>
 
     static abstract TSelf Create(params ReadOnlySpan<int> architecture);
 
+    TSelf Copy();
     void ZeroOut();
 }
