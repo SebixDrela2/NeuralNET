@@ -331,12 +331,48 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
     {
         _gradientArchitecture.ZeroOut();
 
+        if (_config.UsePararell)
+        {
+            ForwardPropagateThread(batch);
+        }
+        else
+        {
+            ForwardPropagate(batch);
+        }
+   
+        NormalizeGradientsVectorized(batch.ActualSize);
+        ClipGradients();
+    }
+    
+    private void ForwardPropagate(OrderedBatchView batch)
+    {
+        int rowCount = 0;
+        foreach (var trainingPair in batch)
+        {
+            NativeMemory.Copy(trainingPair.Input, Architecture.MatrixNeurons[0].Pointer, sizeof(float) * (nuint)batch.BatchesView.InputStride);
+
+            Forward();
+
+            for (var j = 0; j < Architecture.Count; j++)
+            {
+                _gradientArchitecture.MatrixNeurons[j].Clear();
+            }
+
+            ComputeOutputLayer(trainingPair.Output);
+            PropagateToPreviousLayer();
+
+            ++rowCount;
+        }
+    }
+
+    private void ForwardPropagateThread(OrderedBatchView batch)
+    {
         var length = batch.ActualSize;
         var offset = batch.Offset;
         var finiteBatchView = (FiniteBatchesView)batch.BatchesView;
         var concurrentBag = new ConcurrentBag<ThreadFrameworkState<TArch>>();
 
-        Parallel.For(offset, offset + length, new ParallelOptions { MaxDegreeOfParallelism = 1 },
+        Parallel.For(offset, offset + length, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
            () =>
            {
                var frameworkState = PararellLoopInit(batch, finiteBatchView);
@@ -344,8 +380,8 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
                return frameworkState;
            },
-           ParallelLoopBody,_ => { });
-        
+           ParallelLoopBody, _ => { });
+
         foreach (var item in concurrentBag)
         {
             SumGradientNeuralMatrixes(_gradientArchitecture.MatrixNeurons, item.GradientArchitecture.MatrixNeurons);
@@ -363,9 +399,6 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
                 if (!epiclist[i].RunningVar.SpanWithGarbage.SequenceEqual(_batchNormLayers[i].RunningVar.SpanWithGarbage)) throw new Exception();
             }
         }
-        
-        NormalizeGradientsVectorized(length);
-        ClipGradients();
     }
 
     private void SumGradientNeuralMatrixes(NeuralMatrix[] gradientMatrixes, NeuralMatrix[] pararellGradientMatrixes)
