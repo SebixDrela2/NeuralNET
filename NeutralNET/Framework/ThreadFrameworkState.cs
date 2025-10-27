@@ -36,12 +36,12 @@ internal record ThreadFrameworkState<TArch>(
 
             if (index < BatchNormLayer.Count)
             {
-                NeuralWinder.ApplyBatchNormForward(Architecture.MatrixNeurons[index + 1], BatchNormLayer[index]);
+                //NeuralWinder.ApplyBatchNormForward(Architecture.MatrixNeurons[index + 1], BatchNormLayer[index]);
             }
 
             if (index < Architecture.Count - 1)
             {
-                NeuralWinder.ApplyDropout(Architecture.MatrixNeurons[index], Config.DropoutRate);
+                //NeuralWinder.ApplyDropout(Architecture.MatrixNeurons[index], Config.DropoutRate);
             }
 
             if (index >= Architecture.Count)

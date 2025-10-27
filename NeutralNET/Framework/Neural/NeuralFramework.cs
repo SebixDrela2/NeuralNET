@@ -242,6 +242,11 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
     private void DisplayEpochResult(TimeSpan elapsed, int batchProcessCount, float loss, int epoch)
     {
+        if (epoch % 64 != 0)
+        {
+            return;
+        }
+
         var batchesPerSecond = batchProcessCount / elapsed.TotalSeconds;
         var lossToPercent = 100.0 * (1.0 - Math.Min(loss, 1.0));
 
@@ -331,7 +336,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         var finiteBatchView = (FiniteBatchesView)batch.BatchesView;
         var concurrentBag = new ConcurrentBag<ThreadFrameworkState<TArch>>();
 
-        Parallel.For(offset, offset + length, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+        Parallel.For(offset, offset + length, new ParallelOptions { MaxDegreeOfParallelism = 1 },
            () =>
            {
                var frameworkState = PararellLoopInit(batch, finiteBatchView);
