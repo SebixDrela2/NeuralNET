@@ -7,8 +7,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NeutralNET", "NeutralNET\Ne
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NeutralNET.Test", "NeutralTest\NeutralNET.Test.csproj", "{93C4CF74-E9A5-4A4E-8F88-F03F2F8EB648}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NeutralNET.CodeGen", "NeutralNET.CodeGen\NeutralNET.CodeGen.csproj", "{9B533111-5076-458D-9DFB-923DD4E6DFB4}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NeutralNET.ImageEpochViewer", "NeutralNET.ImageEpochViewer.cs\NeutralNET.ImageEpochViewer.csproj", "{6978BF1D-334E-40DD-BFEC-67D659B91459}"
 EndProject
 Global
@@ -25,10 +23,6 @@ Global
 		{93C4CF74-E9A5-4A4E-8F88-F03F2F8EB648}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{93C4CF74-E9A5-4A4E-8F88-F03F2F8EB648}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{93C4CF74-E9A5-4A4E-8F88-F03F2F8EB648}.Release|Any CPU.Build.0 = Release|Any CPU
-		{9B533111-5076-458D-9DFB-923DD4E6DFB4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{9B533111-5076-458D-9DFB-923DD4E6DFB4}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{9B533111-5076-458D-9DFB-923DD4E6DFB4}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{9B533111-5076-458D-9DFB-923DD4E6DFB4}.Release|Any CPU.Build.0 = Release|Any CPU
 		{6978BF1D-334E-40DD-BFEC-67D659B91459}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{6978BF1D-334E-40DD-BFEC-67D659B91459}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{6978BF1D-334E-40DD-BFEC-67D659B91459}.Release|Any CPU.ActiveCfg = Release|Any CPU
