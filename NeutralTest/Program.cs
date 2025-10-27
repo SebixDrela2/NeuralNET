@@ -65,8 +65,8 @@ internal class Program
         model.Prepare();
 
         var network = new NeuralNetworkBuilder<Architecture>(model)
-            .WithArchitecture([64, 64, 64, 64])
-            .WithEpochs(20000)
+            .WithArchitecture([64, 64, 64])
+            .WithEpochs(1000)
             .WithHiddenLayerActivation(ActivationType.LeakyReLU)
             .WithOutputLayerActivation(ActivationType.Sigmoid)
             .WithBatchSize(BatchSize)
@@ -74,6 +74,7 @@ internal class Program
             .WithBeta2(0.999f)
             .WithLearningRate(1e-2f)
             .WithOptimizer(OptimizerType.SGD)
+            .WithPararell(true)
             .WithEpsilon(1e-8f)
             .WithShuffle(true)
             .Build();

@@ -93,6 +93,13 @@ public class NeuralNetworkBuilder<TArch> where TArch : IArchitecture<TArch>
         return this;
     }
 
+    public NeuralNetworkBuilder<TArch>WithPararell(bool useProcThreads)
+    {
+        _config.UsePararell = useProcThreads;
+
+        return this;
+    }
+
     public NeuralNetworkBuilder<TArch> WithBeta1(float beta1)
     {
         _config.Beta1 = beta1;
