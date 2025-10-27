@@ -14,6 +14,7 @@ public class NeuralNetworkConfig
     public bool WithShuffle { get; set; }
 
     public bool UsePararell { get; set; } = false;
+    public int PararellSize { get; set; } = Environment.ProcessorCount;
 
     public float DropoutRate = 0.3f;
 

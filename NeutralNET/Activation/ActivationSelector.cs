@@ -4,13 +4,30 @@ using System.Runtime.CompilerServices;
 
 namespace NeutralNET.Activation;
 
+using static LocalScope;
+
+public delegate void ActivationFunction(NeuralMatrix matrix);
+public delegate float DerivativeFunction(float activation);
+
+public record struct ActivationFunctionCollection(ActivationFunctionPair Hidden, ActivationFunctionPair Output);
+public record struct ActivationFunctionPair(ActivationFunction Activation, DerivativeFunction Derivative)
+{
+    public static implicit operator ActivationFunctionPair(ActivationType x) => new(GetActivation(x), GetDerivative(x));
+}
+
 public class ActivationSelector
 {
-    public delegate void ActivationFunction(NeuralMatrix matrix);
-    public delegate float DerivativeFunction(float activation);
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public ActivationFunction GetActivation(ActivationType type) => LocalScope.GetActivation(type);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public ActivationFunction GetActivation(ActivationType type)
+    public static DerivativeFunction GetDerivative(ActivationType type) => LocalScope.GetDerivative(type);
+}
+
+file static class LocalScope
+{
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static ActivationFunction GetActivation(ActivationType type)
     {
         return type switch
         {
@@ -24,12 +41,12 @@ public class ActivationSelector
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public DerivativeFunction GetDerivative(ActivationType type, float leakyAlpha = 0.01f)
+    public static DerivativeFunction GetDerivative(ActivationType type)
     {
         return type switch
         {
             ActivationType.ReLU => activation => activation > 0 ? 1f : 0f,
-            ActivationType.LeakyReLU => activation => activation > 0 ? 1f : leakyAlpha,
+            ActivationType.LeakyReLU => activation => activation > 0 ? 1f : 0.01f,
             ActivationType.Sigmoid => activation => Math.Max(activation * (1 - activation), 0.01f), // CLIP IT
             ActivationType.Tanh => activation => Math.Max(1 - activation * activation, 0.01f),
             ActivationType.Identity => activation => 1,

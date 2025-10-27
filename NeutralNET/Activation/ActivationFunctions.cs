@@ -88,7 +88,7 @@ public static unsafe class ActivationFunctions
             var vec = Vector256.LoadAligned(ptr);
             var mask = Avx.CompareLessThan(vec, zero);
             var negPart = Avx.Multiply(vec, alpha);
-            var posPart = Avx.Max(vec, zero);         
+            var posPart = Avx.Max(vec, zero);
             vec = Avx.BlendVariable(posPart, negPart, mask);
             vec.StoreAligned(ptr);
         }

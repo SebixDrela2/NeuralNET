@@ -104,7 +104,7 @@ public unsafe readonly struct NeuralMatrix
             var weights = other.GetMatrixRow(0);
 
             for (int neuronIdx = 0; neuronIdx < outFeatures; neuronIdx++, ++weights)
-            {               
+            {
                 var sum = 0f;
                 var k = 0;
 
@@ -245,7 +245,7 @@ public unsafe readonly struct NeuralMatrix
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void RandomizeGaussian(float mean = 0f, float stddev = 1f, float multiplier = 1f, int? seed = null)
+    public void RandomizeGaussian(float mean = 0f, float stddev = 1f, float multiplier = 1f)
     {
         float* ptr = Pointer;
         float* end = ptr + AllocatedLength;
@@ -259,24 +259,24 @@ public unsafe readonly struct NeuralMatrix
             while (ptr + Alignment <= end)
             {
                 var u1 = Vector256.Create(
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed));
+                    RandomUtils.GetFloat(multiplier),
+                    RandomUtils.GetFloat(multiplier),
+                    RandomUtils.GetFloat(multiplier),
+                    RandomUtils.GetFloat(multiplier),
+                    RandomUtils.GetFloat(multiplier),
+                    RandomUtils.GetFloat(multiplier),
+                    RandomUtils.GetFloat(multiplier),
+                    RandomUtils.GetFloat(multiplier));
 
                 var u2 = Vector256.Create(
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed));
+                    RandomUtils.GetFloat(multiplier),
+                    RandomUtils.GetFloat(multiplier),
+                    RandomUtils.GetFloat(multiplier),
+                    RandomUtils.GetFloat(multiplier),
+                    RandomUtils.GetFloat(multiplier),
+                    RandomUtils.GetFloat(multiplier),
+                    RandomUtils.GetFloat(multiplier),
+                    RandomUtils.GetFloat(multiplier));
 
                 u1 = Avx.Max(u1, Vector256.Create(1e-38f));
 
@@ -404,5 +404,5 @@ public unsafe readonly struct NeuralMatrix
         Console.WriteLine();
     }
 
-    public override string ToString() => $"{Rows}x{UsedColumns}";   
+    public override string ToString() => $"{Rows}x{UsedColumns}";
 }

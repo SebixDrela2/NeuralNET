@@ -1,6 +1,6 @@
 ﻿namespace NeutralNET.Matrices;
 
-public class BatchNormLayer
+public class BatchNormLayer : IDisposable
 {
     public NeuralMatrix Gamma;
     public NeuralMatrix Beta;
@@ -30,4 +30,12 @@ public class BatchNormLayer
     }
 
     public BatchNormLayer Copy() => new(this);
+
+    public void Dispose()
+    {
+        Gamma.Dispose();
+        Beta.Dispose();
+        RunningMean.Dispose();
+        RunningVar.Dispose();
+    }
 }

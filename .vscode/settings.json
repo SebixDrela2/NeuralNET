@@ -3,4 +3,6 @@
         "**/bin/": true,
         "**/obj/": true,
     },
+    "editor.indentSize": "tabSize",
+    "editor.tabSize": 4,
 }

@@ -4,7 +4,8 @@ using NeutralNET.Models;
 
 namespace NeutralNET.Framework;
 
-public interface IArchitecture<TSelf> where TSelf : IArchitecture<TSelf>
+public interface IArchitecture<TSelf> : IDisposable
+    where TSelf : IArchitecture<TSelf>
 {
     int Count { get; }
 
@@ -20,5 +21,7 @@ public interface IArchitecture<TSelf> where TSelf : IArchitecture<TSelf>
     static abstract TSelf Create(params ReadOnlySpan<int> architecture);
 
     TSelf Copy();
+    void CopyFrom(TSelf src);
+    void CopyTo(TSelf dst);
     void ZeroOut();
 }

@@ -2,21 +2,28 @@
 
 public static class RandomUtils
 {
-    private static readonly Random _random = new();
+    // private static readonly Random _random = Random.Shared;
+    private static readonly Random _rng = new Random(0x6547);
 
-    public static double GetDouble(double multiplier, int? seed = null)
+    public static double GetDouble(double multiplier = 1, int? seed = null)
     {
+        // return .5;
         if (seed is null)
         {
-            return _random.NextDouble() * multiplier;
+            lock (_rng)
+            {
+                return _rng.NextDouble() * multiplier;
+            }
         }
 
-        return new Random((int)seed).NextDouble() * multiplier;
+        throw new NotImplementedException(); // DEBUG later
+        //return new Random((int)seed).NextDouble() * multiplier;
     }
 
-    public static float GetFloat(double multiplier, int? seed = null)
+    public static float GetFloat(double multiplier = 1, int? seed = null)
     {
-        return (float) GetDouble(multiplier, seed);
+        // return .5f;
+        return (float)GetDouble(multiplier, seed);
     }
 
     public static float GetGaussian(float mean = 0f, float stddev = 1f, float multiplier = 1f, int? seed = null)

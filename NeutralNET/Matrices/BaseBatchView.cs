@@ -6,8 +6,7 @@ namespace NeutralNET.Matrices;
 public abstract class BaseBatchView(int chunkSize, int inputStride, int outputStride) : IEnumerable<OrderedBatchView>, IDisposable
 {
     public readonly int BatchSize = chunkSize;
-    public readonly int InputStride = inputStride;
-    public readonly int OutputStride = outputStride;
+    public readonly (int Input, int Output) Stride = (inputStride, outputStride);
     public readonly int RowStride = inputStride + outputStride;
 
     protected abstract OrderedBatchView GetCurrentGroup(int offset);
@@ -67,6 +66,7 @@ public readonly struct OrderedBatchView(BaseBatchView batchesView, int offset, i
 {
     public int Offset => offset;
     public int ActualSize => length;
+    public int EndOffset => offset + length;
     public BaseBatchView BatchesView => batchesView;
 
     public Enumerator GetEnumerator() => new(batchesView, offset, offset + length);

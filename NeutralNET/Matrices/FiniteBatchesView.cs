@@ -43,8 +43,8 @@ public unsafe class FiniteBatchesView : BaseBatchView
         var index = _indicies[offset];
 
         return new(
-            (index * InputStride) + TrainingInput,
-            (index * OutputStride) + TrainingOutput
+            (index * Stride.Input) + TrainingInput,
+            (index * Stride.Output) + TrainingOutput
         );
     }
 

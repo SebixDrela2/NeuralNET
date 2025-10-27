@@ -49,8 +49,8 @@ internal class Program
             .WithOptimizer(OptimizerType.SGD)
             .WithLearningRate(1e-2f)
             .WithWeightDecay(1e-4f)
-            .WithBeta1(0.9f)   
-            .WithBeta2(0.999f) 
+            .WithBeta1(0.9f)
+            .WithBeta2(0.999f)
             .WithEpsilon(1e-8f)
             .WithShuffle(true)
             .Build();
@@ -76,9 +76,9 @@ internal class Program
             .WithOptimizer(OptimizerType.SGD)
             .WithPararell(true)
             .WithEpsilon(1e-8f)
-            .WithShuffle(true)
+            .WithShuffle(false)
             .Build();
-        
+
         var forward = network.RunModel();
         model.Validate(forward);
     }
@@ -117,7 +117,7 @@ internal class Program
             .WithLearningRate(1e-5f)
             .WithOptimizer(OptimizerType.Adam)
             .WithEpsilon(1e-8f)
-            .WithShuffle(true)           
+            .WithShuffle(true)
             .Build();
 
         var forward = network.RunDynamicModel();

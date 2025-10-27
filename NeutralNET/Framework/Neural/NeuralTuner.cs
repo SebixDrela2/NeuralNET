@@ -4,7 +4,7 @@ using System.Runtime.Intrinsics.X86;
 
 namespace NeutralNET.Framework.Neural;
 
-internal unsafe class NeuralTuner(Random rng)
+public unsafe class NeuralTuner(Random rng)
 {
     public void ApplyBatchNormForward(NeuralMatrix input, BatchNormLayer bn)
     {

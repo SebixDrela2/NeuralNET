@@ -1,4 +1,5 @@
 ﻿using NeutralNET.Models;
+using NeutralNET.Stuff;
 using NeutralNET.Utils;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
@@ -27,7 +28,7 @@ internal unsafe class InfiniteBatchesView : BaseBatchView
         var byteCount = (nuint)(count * sizeof(float) * BatchSize);
         var alignment = (nuint)(NeuralMatrix.Alignment * sizeof(float));
 
-        _lastValues = (float*)NativeMemory.AlignedAlloc(byteCount, alignment);       
+        _lastValues = (float*)NativeMemory.AlignedAlloc(byteCount, alignment);
     }
 
     public override void Dispose()
@@ -52,7 +53,7 @@ internal unsafe class InfiniteBatchesView : BaseBatchView
         var relativeOffset = offset % BatchSize;
 
         var lastValues = _lastValues + (relativeOffset * RowStride);
-        var lastValuesOutput = lastValues + InputStride;
+        var lastValuesOutput = lastValues + Stride.Input;
 
         return new TrainingPair(lastValues, lastValuesOutput);
     }
@@ -89,15 +90,15 @@ internal unsafe class InfiniteBatchesView : BaseBatchView
 
         for (var i = 0; i < BatchSize; ++i, ptr += RowStride)
         {
-            var a = Random.Shared.NextSingle() * FunctionModel.MaxRange;
-            var b = Random.Shared.NextSingle() * FunctionModel.MaxRange;
+            var a = RandomUtils.GetFloat() * FunctionModel.MaxRange;
+            var b = RandomUtils.GetFloat() * FunctionModel.MaxRange;
 
             ptr[0] = Model.TranslateInto(a);
             ptr[1] = Model.TranslateInto(b);
 
             var scaledOutput = Model.PrepareFunction(a, b);
 
-            ptr[InputStride] = Model.TranslateInto(scaledOutput);
+            ptr[Stride.Input] = Model.TranslateInto(scaledOutput);
         }
 
         return true;

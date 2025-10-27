@@ -11,8 +11,8 @@ public class BitMapTransformationModel : IModel
 
     private readonly string[] Paths = ["greenEagle256.png", "blueWolf256.png"];
 
-    public NeuralMatrix TrainingInput { get ; set ; }
-    public NeuralMatrix TrainingOutput { get ; set ; }
+    public NeuralMatrix TrainingInput { get; set; }
+    public NeuralMatrix TrainingOutput { get; set; }
 
     public BitMapTransformationModel()
     {
@@ -22,7 +22,6 @@ public class BitMapTransformationModel : IModel
 
     public void Prepare()
     {
-        var random = new Random();
         var row = 0;
 
         foreach (var (firstPath, secondPath) in Paths.Zip(Paths.Reverse()))

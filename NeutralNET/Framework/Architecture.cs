@@ -14,9 +14,9 @@ public partial class Architecture : IArchitecture<Architecture>
 
     public NeuralMatrix[] MatrixMWeights { get; }
     public NeuralMatrix[] MatrixVWeights { get; }
-    public NeuralMatrix[] MatrixMBiases { get; } 
+    public NeuralMatrix[] MatrixMBiases { get; }
     public NeuralMatrix[] MatrixVBiases { get; }
-    
+
     public int Count { get; }
 
     public Architecture(params ReadOnlySpan<int> architecture)
@@ -44,7 +44,7 @@ public partial class Architecture : IArchitecture<Architecture>
             );
             MatrixBiases[layerIndex] = new NeuralMatrix(1, architecture[i]);
             MatrixNeurons[i] = new NeuralMatrix(1, architecture[i]);
-            
+
             MatrixMWeights[layerIndex] = new NeuralMatrix(
                 MatrixWeights[layerIndex].Rows,
                 MatrixWeights[layerIndex].UsedColumns
@@ -96,6 +96,27 @@ public partial class Architecture : IArchitecture<Architecture>
     }
 
     public Architecture Copy() => new(this);
+    public void CopyFrom(Architecture src)
+    {
+        ArgumentOutOfRangeException.ThrowIfNotEqual(src.Count, Count);
+
+        var n = Count + 1;
+        for (var i = 0; i < n; i++)
+        {
+            MatrixNeurons[i].CopyDataFrom(src.MatrixNeurons[i]);
+        }
+
+        for (var i = 0; i < Count; i++)
+        {
+            MatrixWeights[i].CopyDataFrom(src.MatrixWeights[i]);
+            MatrixBiases[i].CopyDataFrom(src.MatrixBiases[i]);
+            MatrixMWeights[i].CopyDataFrom(src.MatrixMWeights[i]);
+            MatrixVWeights[i].CopyDataFrom(src.MatrixVWeights[i]);
+            MatrixMBiases[i].CopyDataFrom(src.MatrixMBiases[i]);
+            MatrixVBiases[i].CopyDataFrom(src.MatrixVBiases[i]);
+        }
+    }
+    public void CopyTo(Architecture dst) => dst.CopyFrom(this);
 
     public static Architecture Create(params ReadOnlySpan<int> architecture) => new(architecture);
 
@@ -106,6 +127,25 @@ public partial class Architecture : IArchitecture<Architecture>
             MatrixNeurons[i].Clear();
             MatrixWeights[i].Clear();
             MatrixBiases[i].Clear();
+        }
+    }
+
+    public void Dispose()
+    {
+        var architectureLength = Count + 1;
+        for (var i = 0; i < architectureLength; i++)
+        {
+            MatrixNeurons[i].Dispose();
+        }
+
+        for (var i = 0; i < Count; i++)
+        {
+            MatrixWeights[i].Dispose();
+            MatrixBiases[i].Dispose();
+            MatrixMWeights[i].Dispose();
+            MatrixVWeights[i].Dispose();
+            MatrixMBiases[i].Dispose();
+            MatrixVBiases[i].Dispose();
         }
     }
 }

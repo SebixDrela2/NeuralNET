@@ -20,9 +20,9 @@ internal unsafe class SGDOptimizer<TArch>(
     }
 
     private void LearnInternalVectorized(
-    NeuralMatrix[] matrixes,
-    NeuralMatrix[] gradientMatrixes,
-    int index)
+        NeuralMatrix[] matrixes,
+        NeuralMatrix[] gradientMatrixes,
+        int index)
     {
         var weightDecay = config.WeightDecay;
         float factor = 1.0f - config.LearningRate * weightDecay;
