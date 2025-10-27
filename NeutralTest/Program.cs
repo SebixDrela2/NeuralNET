@@ -8,11 +8,11 @@ namespace NeutralTest;
 
 internal class Program
 {
-    private const int BatchSize = 64;
+    private const int BatchSize = 16;
 
     static void Main()
     {
-        RunNetworkDigit();
+        RunSumBitsModel();
     }
 
     public static void RunNetwork()
@@ -41,12 +41,13 @@ internal class Program
         model.Prepare();
 
         var network = new NeuralNetworkBuilder<Architecture>(model)
-            .WithArchitecture([32, 32, 32])
-            .WithEpochs(30000)
+            .WithArchitecture([128, 128, 64, 64, 32, 32, 16, 16])
+            .WithEpochs(10000)
             .WithBatchSize(BatchSize)
             .WithHiddenLayerActivation(ActivationType.LeakyReLU)
-            .WithOutputLayerActivation(ActivationType.Sigmoid)
-            .WithLearningRate(1e-3f)
+            .WithOutputLayerActivation(ActivationType.LeakyReLU)
+            .WithOptimizer(OptimizerType.SGD)
+            .WithLearningRate(1e-2f)
             .WithWeightDecay(1e-4f)
             .WithBeta1(0.9f)   
             .WithBeta2(0.999f) 
@@ -64,9 +65,9 @@ internal class Program
         model.Prepare();
 
         var network = new NeuralNetworkBuilder<Architecture>(model)
-            .WithArchitecture([16, 16, 16, 16])
-            .WithEpochs(10000)
-            .WithHiddenLayerActivation(ActivationType.ReLU)
+            .WithArchitecture([64, 64, 64, 64])
+            .WithEpochs(20000)
+            .WithHiddenLayerActivation(ActivationType.LeakyReLU)
             .WithOutputLayerActivation(ActivationType.Sigmoid)
             .WithBatchSize(BatchSize)
             .WithBeta1(0.9f)
@@ -97,16 +98,6 @@ internal class Program
             .WithEpsilon(1e-8f)
             .WithShuffle(true)
             .Build();
-
-        //var matrixes = network.RunEpoch();
-
-        //foreach (var matrix in matrixes)
-        //{
-        //    matrix.Print("EPOCH");
-        //    model.TrainingOutput.Print("OUTPUT");
-
-        //    Thread.Sleep(1000);
-        //}
 
         var forward = network.RunModel();
     }

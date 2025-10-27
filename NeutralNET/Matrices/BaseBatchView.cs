@@ -65,6 +65,7 @@ public readonly unsafe struct TrainingPair(float* input, float* output)
 
 public readonly struct OrderedBatchView(BaseBatchView batchesView, int offset, int length)
 {
+    public int Offset => offset;
     public int ActualSize => length;
     public BaseBatchView BatchesView => batchesView;
 

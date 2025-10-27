@@ -11,7 +11,8 @@ namespace NeutralNET.Matrices;
 
 public unsafe readonly struct NeuralMatrix
 {
-    private const int Alignment = 8;
+    public const int Alignment = 8;
+
     private const int AlignmentMask = Alignment - 1;
     private const int ByteAlignment = Alignment * sizeof(float);
     private const int ByteAlignmentMask = ByteAlignment - 1;
@@ -93,7 +94,7 @@ public unsafe readonly struct NeuralMatrix
         int inFeatures = UsedColumns;
         int outFeatures = other.Rows;
         int batchSize = Rows;
-        int vecSize = Vector256<float>.Count;
+        int vecSize = Alignment;
 
         var inputRow = GetMatrixRow(0);
         var resultRow = result.GetMatrixRow(0);
@@ -174,6 +175,15 @@ public unsafe readonly struct NeuralMatrix
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public float* GetRowPointer(int row) => row * ColumnsStride + Pointer;
 
+    public NeuralMatrix Copy()
+    {
+        var other = new NeuralMatrix(Rows, UsedColumns);
+
+        other.CopyDataFrom(this);
+
+        return other;
+    }
+
     public void CopyRowFrom(NeuralMatrix other, int row)
     {
         other.GetRowSpan(row).CopyTo(GetRowSpan(row));
@@ -200,7 +210,7 @@ public unsafe readonly struct NeuralMatrix
                 var resultVec = Avx.Add(aVec, bVec);
                 resultVec.StoreAligned(zipPointer.A);
 
-                zipPointer += Vector256<float>.Count;
+                zipPointer += Alignment;
             }
         }
         else
@@ -246,7 +256,7 @@ public unsafe readonly struct NeuralMatrix
             var stddevVec = Vector256.Create(stddev);
             var multiplierVec = Vector256.Create(multiplier);
 
-            while (ptr + Vector256<float>.Count <= end)
+            while (ptr + Alignment <= end)
             {
                 var u1 = Vector256.Create(
                     RandomUtils.GetFloat(multiplier, seed),
@@ -270,11 +280,11 @@ public unsafe readonly struct NeuralMatrix
 
                 u1 = Avx.Max(u1, Vector256.Create(1e-38f));
 
-                float[] u1Array = new float[8];
+                float[] u1Array = new float[Alignment];
                 fixed (float* u1Ptr = u1Array)
                 {
                     Avx.Store(u1Ptr, u1);
-                    for (int i = 0; i < 8; i++)
+                    for (int i = 0; i < Alignment; i++)
                         u1Ptr[i] = MathF.Log(u1Ptr[i]);
                 }
 
@@ -284,12 +294,12 @@ public unsafe readonly struct NeuralMatrix
 
                 var sqrtPart = Avx.Sqrt(Avx.Multiply(Vector256.Create(-2.0f), logU1Vec));
 
-                float[] sinInput = new float[8];
-                float[] sinOutput = new float[8];
+                float[] sinInput = new float[Alignment];
+                float[] sinOutput = new float[Alignment];
                 fixed (float* sinInputPtr = sinInput)
                 {
                     Avx.Multiply(Vector256.Create(2.0f * MathF.PI), u2).Store(sinInputPtr);
-                    for (int i = 0; i < 8; i++)
+                    for (int i = 0; i < Alignment; i++)
                         sinInput[i] = MathF.Sin(sinInput[i]);
                 }
 
@@ -305,7 +315,7 @@ public unsafe readonly struct NeuralMatrix
                     meanVec);
 
                 Avx.StoreAligned(ptr, z0);
-                ptr += Vector256<float>.Count;
+                ptr += Alignment;
             }
         }
 
@@ -342,7 +352,7 @@ public unsafe readonly struct NeuralMatrix
 
         if (Avx2.IsSupported)
         {
-            for (; ptr != end; ptr += Vector256<float>.Count)
+            for (; ptr != end; ptr += Alignment)
             {
                 var vec = Vector256.LoadAligned(ptr);
                 vec = Avx.Min(maxVec, Avx.Max(minVec, vec));
@@ -367,7 +377,7 @@ public unsafe readonly struct NeuralMatrix
 
         var vec = Vector256.Create(value);
 
-        for (; ptr != end; ptr += Vector256<float>.Count)
+        for (; ptr != end; ptr += Alignment)
         {
             vec.StoreAligned(ptr);
         }

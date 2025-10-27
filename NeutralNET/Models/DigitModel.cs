@@ -7,20 +7,20 @@ namespace NeutralNET.Models;
 
 public class DigitModel : IModel, IValidator
 {
-    private const int VariantFontCount = 10;
-    public const int PixelCount = 16 * 16;
+    private const int VariantFontCount = 1;
+    public const int PixelCount = GraphicsUtils.Width * GraphicsUtils.Height;
     public const int DigitLimit = 10;
 
     public NeuralMatrix TrainingInput { get; set; }
     public NeuralMatrix TrainingOutput { get; set; }
 
-    private readonly string[] _fontNames = 
+    private static readonly string[] _allfontNames = 
         ["Arial", 
+        "Times New Roman", 
         "Arial Black",
         "Bahnschrift SemiBold",
         "Courier New",
-        "Curlz MT",
-        "BlizzardGlobal",
+        "Curlz MT",      
         "Georgia",
         "Helvetica",
         "Century",
@@ -30,7 +30,6 @@ public class DigitModel : IModel, IValidator
         "Rockwell",
         "Symbol",
         "Rubik",
-        "Times New Roman", 
         "Trebuchet MS", 
         "Verdana",
         "Vladimir Script",        
@@ -43,7 +42,9 @@ public class DigitModel : IModel, IValidator
         "Lucida Sans Unicode",
         "Cascadia Code",
         "Candara",
-        "Calibri"];      
+        "Calibri"];
+
+    private static readonly string[] _fontNames = _allfontNames[..1]; 
     private readonly int _rowCount;
 
     public DigitModel()
@@ -80,7 +81,7 @@ public class DigitModel : IModel, IValidator
 
     public void Validate(NeuralForward forward)
     {
-        var pixelStructs = GraphicsUtils.GetDigitsDataSet("BlizzardGlobal");
+        var pixelStructs = GraphicsUtils.GetDigitsDataSet("Arial");
         var inputRow = TrainingInput.GetRowSpan(0);
 
         Console.WriteLine();

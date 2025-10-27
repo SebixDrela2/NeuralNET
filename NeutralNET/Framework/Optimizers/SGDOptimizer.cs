@@ -36,7 +36,7 @@ internal unsafe class SGDOptimizer<TArch>(
             var factorVec = Vector256.Create(factor);
             var rateVec = Vector256.Create(-config.LearningRate);
 
-            for (; aPtr != aEnd; aPtr += Vector256<float>.Count, bPtr += Vector256<float>.Count)
+            for (; aPtr != aEnd; aPtr += NeuralMatrix.Alignment, bPtr += NeuralMatrix.Alignment)
             {
                 var aVec = Vector256.LoadAligned(aPtr);
                 var bVec = Vector256.LoadAligned(bPtr);

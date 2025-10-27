@@ -18,7 +18,7 @@ public static unsafe class ActivationFunctions
 
         var one = Vector256<float>.One;
 
-        for (; ptr != end; ptr += Vector256<float>.Count)
+        for (; ptr != end; ptr += NeuralMatrix.Alignment)
         {
             var vec = Vector256.LoadAligned(ptr);
             var sigmoid = Avx.Divide(one, Avx.Add(one, Vector256.Exp(Avx.Multiply(vec, Vector256.Create(-1.0f)))));
@@ -39,7 +39,7 @@ public static unsafe class ActivationFunctions
             Vector256<float> one = Vector256.Create(1.0f);
             Vector256<float> two = Vector256.Create(2.0f);
 
-            for (; ptr != end; ptr += Vector256<float>.Count)
+            for (; ptr != end; ptr += NeuralMatrix.Alignment)
             {
                 var x = Vector256.LoadAligned(ptr);
                 var exp2x = Vector256.Exp(Avx.Multiply(x, two));
@@ -65,7 +65,7 @@ public static unsafe class ActivationFunctions
         float* end = ptr + allocatedLength;
         Vector256<float> zero = Vector256<float>.Zero;
 
-        for (; ptr != end; ptr += Vector256<float>.Count)
+        for (; ptr != end; ptr += NeuralMatrix.Alignment)
         {
             var vec = Vector256.LoadAligned(ptr);
             vec = Avx.Max(vec, zero);
@@ -83,7 +83,7 @@ public static unsafe class ActivationFunctions
         Vector256<float> zero = Vector256<float>.Zero;
         Vector256<float> alpha = Vector256.Create(0.01f);
 
-        for (; ptr != end; ptr += Vector256<float>.Count)
+        for (; ptr != end; ptr += NeuralMatrix.Alignment)
         {
             var vec = Vector256.LoadAligned(ptr);
             var mask = Avx.CompareLessThan(vec, zero);

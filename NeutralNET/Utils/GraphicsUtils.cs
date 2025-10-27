@@ -22,8 +22,8 @@ public static partial class GraphicsUtils
 
     private static readonly Random _rng = new(RandomSeed);
 
-    public const int Width = 16;
-    public const int Height = 16;
+    public const int Width = 64;
+    public const int Height = 64;
 
     public const int PixelCount = Width * Height;
 
@@ -36,8 +36,6 @@ public static partial class GraphicsUtils
         {
             throw new NotSupportedException();
         }
-
-        Directory.CreateDirectory("Digits");
 
         var result = new PixelStruct[DigitLimit];
         var c = '0';
@@ -54,7 +52,7 @@ public static partial class GraphicsUtils
                 var scaleX = float.Lerp(0.95f, 1.05f, _rng.NextSingle());
                 var scaleY = float.Lerp(0.95f, 1.05f, _rng.NextSingle());
 
-                transformation = CreateTranformationMatrix(angle, scaleX, scaleY);
+                transformation = CreateTranformationMatrix(angle, 1, 1);
             }
             else
             {
@@ -121,6 +119,8 @@ public static partial class GraphicsUtils
                 GraphicsUnit.Pixel
             );
         }
+
+        bitMap.Save($@"C:\Users\Sebastian\source\repos\NeutralNET\NeutralNET\bin\Debug\net9.0\Imuges\{@char}_{font.Name}_{DateTime.Now.Ticks}.png");
 
         var result = new float[Size];
         var index = 0;

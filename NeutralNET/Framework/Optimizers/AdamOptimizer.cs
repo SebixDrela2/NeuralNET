@@ -80,7 +80,7 @@ internal class AdamOptimizer<TArch>(
                 newM.Store(mPtr);
                 newV.Store(vPtr);
 
-                mPtr += 8; vPtr += 8; gPtr += 8;
+                mPtr += NeuralMatrix.Alignment; vPtr += NeuralMatrix.Alignment; gPtr += NeuralMatrix.Alignment;
             }
         }
         else
@@ -129,7 +129,7 @@ internal class AdamOptimizer<TArch>(
 
                 newParam.Store(p);
 
-                p += 8; mPtr += 8; vPtr += 8;
+                p += NeuralMatrix.Alignment; mPtr += NeuralMatrix.Alignment; vPtr += NeuralMatrix.Alignment;
             }
         }
     }

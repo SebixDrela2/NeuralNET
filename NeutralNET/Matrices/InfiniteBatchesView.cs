@@ -25,7 +25,7 @@ internal unsafe class InfiniteBatchesView : BaseBatchView
         var count = inputStride + outputStride;
 
         var byteCount = (nuint)(count * sizeof(float) * BatchSize);
-        var alignment = (nuint)(Vector256<float>.Count * sizeof(float));
+        var alignment = (nuint)(NeuralMatrix.Alignment * sizeof(float));
 
         _lastValues = (float*)NativeMemory.AlignedAlloc(byteCount, alignment);       
     }

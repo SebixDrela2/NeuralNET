@@ -13,14 +13,14 @@ internal unsafe class NeuralTuner(Random rng)
         float* inPtr = input.Pointer;
         int rows = input.Rows;
 
-        int vecWidth = Vector256<float>.Count;
+        int vecWidth = NeuralMatrix.Alignment;
 
         int colBlockCount = cols / vecWidth;
         int colRemainder = cols % vecWidth;
 
-        Vector256<float> momentumVec = Vector256.Create(bn.Momentum);
-        Vector256<float> oneMinusMomentumVec = Vector256.Create(1f - bn.Momentum);
-        Vector256<float> epsilonVec = Vector256.Create(bn.Epsilon);
+        Vector256<float> momentumVec = Vector256.Create(BatchNormLayer.Momentum);
+        Vector256<float> oneMinusMomentumVec = Vector256.Create(1f - BatchNormLayer.Momentum);
+        Vector256<float> epsilonVec = Vector256.Create(BatchNormLayer.Epsilon);
 
         for (int block = 0; block < colBlockCount; block++)
         {
@@ -94,15 +94,15 @@ internal unsafe class NeuralTuner(Random rng)
                     var += val * val;
                 }
                 var /= rows;
-                float std = MathF.Sqrt(var + bn.Epsilon);
+                float std = MathF.Sqrt(var + BatchNormLayer.Epsilon);
 
                 ref float runningMean = ref bn.RunningMean.At(0, j);
                 ref float runningVar = ref bn.RunningVar.At(0, j);
                 ref float gamma = ref bn.Gamma.At(0, j);
                 ref float beta = ref bn.Beta.At(0, j);
 
-                runningMean = bn.Momentum * mean + (1f - bn.Momentum) * runningMean;
-                runningVar = bn.Momentum * var + (1f - bn.Momentum) * runningVar;
+                runningMean = BatchNormLayer.Momentum * mean + (1f - BatchNormLayer.Momentum) * runningMean;
+                runningVar = BatchNormLayer.Momentum * var + (1f - BatchNormLayer.Momentum) * runningVar;
 
                 for (int i = 0; i < rows; i++)
                 {
@@ -125,9 +125,9 @@ internal unsafe class NeuralTuner(Random rng)
 
         if (Avx2.IsSupported)
         {
-            int vectorSize = Vector256<float>.Count;
             var scaleVec = Vector256.Create(scale);
             var dropoutRateVec = Vector256.Create(dropoutRate);
+            int vectorSize = NeuralMatrix.Alignment;
 
             for (; i <= total - vectorSize; i += vectorSize)
             {
@@ -151,9 +151,9 @@ internal unsafe class NeuralTuner(Random rng)
 
     private unsafe Vector256<float> GenerateRandomVector256()
     {
-        float* randArray = stackalloc float[Vector256<float>.Count];
+        float* randArray = stackalloc float[NeuralMatrix.Alignment];
 
-        for (int i = 0; i < Vector256<float>.Count; i++)
+        for (int i = 0; i < NeuralMatrix.Alignment; i++)
         {
             randArray[i] = (float)rng.NextDouble();
         }
