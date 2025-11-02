@@ -28,11 +28,9 @@ public unsafe partial class NeuralFramework<TArch>
     private readonly TArch _architecture;
     private readonly TArch _gradientArchitecture;
     private readonly IOptimizer _optimizer;
-    private readonly ConcurrentBag<NeuralWorker> _inBag = [];
-    private readonly ConcurrentBag<NeuralWorker> _outBag = [];
+    private readonly ConcurrentBag<ThreadFrameworkState<TArch>> _inBag = [];
+    private readonly ConcurrentBag<ThreadFrameworkState<TArch>> _outBag = [];
     private readonly Random _rng;
-
-    public (int Input, int Output) Stride;
 
     public readonly ActivationFunctionCollection _activations;
 
@@ -69,11 +67,6 @@ public unsafe partial class NeuralFramework<TArch>
 
         _optimizer = new OptimizerFactory<TArch>(config, _architecture, _gradientArchitecture)
             .GetOptimizer();
-
-        Stride = (
-            _architecture.MatrixNeurons[0].AllocatedLength,
-            _architecture.MatrixNeurons[^1].AllocatedLength
-        );
     }
 
     public void Print(string name)
@@ -367,34 +360,40 @@ public unsafe partial class NeuralFramework<TArch>
         }
     }
 
-    private NeuralWorker GetOrCreateBuffer(TrainingPair trRow) => _inBag.TryTake(out var buff)
+    private ThreadFrameworkState<TArch> GetOrCreateBuffer(FiniteBatchesView batch) => _inBag.TryTake(out var buff)
         ? buff.Reuse(this)
-        : new(this, trRow)
+        : new(this, batch)
     ;
     private void ForwardPropagateThread(OrderedBatchView batch)
     {
         var bv = (FiniteBatchesView)batch.BatchesView;
-        TrainingPair trRow = new(bv.TrainingInput, bv.TrainingOutput);
         var (start, end) = (batch.Offset, batch.EndOffset);
 
+        // _inBag.Clear();
         Parallel.For(start, end, _lelOptions, LoopInit, LoopBody, LoopEnd);
 
         while (_outBag.TryTake(out var item))
         {
-            SumGradientNeuralMatrixes(_gradientArchitecture.MatrixNeurons, item.Grad.MatrixNeurons);
-            SumGradientNeuralMatrixes(_gradientArchitecture.MatrixWeights, item.Grad.MatrixWeights);
-            SumGradientNeuralMatrixes(_gradientArchitecture.MatrixBiases, item.Grad.MatrixBiases);
-            //_inBag.Add(item);
-            item.Dispose();
+            SumGradientNeuralMatrixes(_gradientArchitecture.MatrixNeurons, item.GradientArchitecture.MatrixNeurons);
+            SumGradientNeuralMatrixes(_gradientArchitecture.MatrixWeights, item.GradientArchitecture.MatrixWeights);
+            SumGradientNeuralMatrixes(_gradientArchitecture.MatrixBiases, item.GradientArchitecture.MatrixBiases);
+            _inBag.Add(item);
+            //item.Dispose();
         }
 
-        NeuralWorker LoopInit() => GetOrCreateBuffer(trRow);
-        static NeuralWorker LoopBody(int i, ParallelLoopState state, NeuralWorker self)
+        ThreadFrameworkState<TArch> LoopInit()
         {
-            self.StepOnce(i, state);
-            return self;
+            // ThreadFrameworkState<TArch> buff = new(this, bv);
+            // _inBag.Add(buff);
+            // return buff;
+            return GetOrCreateBuffer(bv);
         }
-        void LoopEnd(NeuralWorker x)
+
+        static ThreadFrameworkState<TArch> LoopBody(int i, ParallelLoopState state, ThreadFrameworkState<TArch> self)
+        {
+            return self.ParallelLoopBody(i, state);
+        }
+        void LoopEnd(ThreadFrameworkState<TArch> x)
         {
             _outBag.Add(x);
         }

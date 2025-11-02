@@ -8,7 +8,7 @@ namespace NeutralTest;
 
 internal class Program
 {
-    private const int BatchSize = 16;
+    private const int BatchSize = 64;
 
     static void Main()
     {
