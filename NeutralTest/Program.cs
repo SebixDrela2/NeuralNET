@@ -1,4 +1,4 @@
-﻿using NeutralNET.Activation;
+using NeutralNET.Activation;
 using NeutralNET.Framework;
 using NeutralNET.Framework.Neural;
 using NeutralNET.Framework.Optimizers;
@@ -12,7 +12,7 @@ internal class Program
 
     static void Main()
     {
-        RunNetworkDigit();
+        RunSumBitsModel();
     }
 
     public static void RunNetwork()
@@ -66,7 +66,7 @@ internal class Program
 
         var network = new NeuralNetworkBuilder<Architecture>(model)
             .WithArchitecture([64, 64, 64, 64])
-            .WithEpochs(20)
+            .WithEpochs(200)
             .WithHiddenLayerActivation(ActivationType.ReLU)
             .WithOutputLayerActivation(ActivationType.Sigmoid)
             .WithBatchSize(BatchSize)
