@@ -1,6 +1,6 @@
-﻿namespace NeutralNET.Stuff;
+namespace NeutralNET.Stuff;
 
 public static class BitModelUtils
 {
-    public const int Bits = 10;
+    public const int Bits = 7;
 }

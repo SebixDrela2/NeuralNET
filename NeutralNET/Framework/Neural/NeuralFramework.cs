@@ -1,4 +1,4 @@
-﻿using NeutralNET.Activation;
+using NeutralNET.Activation;
 using NeutralNET.Framework.Optimizers;
 using NeutralNET.Matrices;
 using NeutralNET.Models;
@@ -240,11 +240,6 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
     private void DisplayEpochResult(TimeSpan elapsed, int batchProcessCount, float loss, int epoch)
     {
-        if (epoch % 64 != 0)
-        {
-            return;
-        }
-
         var batchesPerSecond = batchProcessCount / elapsed.TotalSeconds;
         var lossToPercent = 100.0 * (1.0 - Math.Min(loss, 1.0));
 
