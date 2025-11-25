@@ -81,7 +81,7 @@ public unsafe readonly struct NeuralMatrix
         }
 
         var stack = new StackTrace();
-        var frames = string.Join("\n", stack.GetFrames().Reverse()
+        var frames = string.Join("\n", stack.GetFrames().AsEnumerable().Reverse()
             .Select(x => $"{x.GetMethod()?.DeclaringType?.FullName}.{x.GetMethod()?.Name}"));
         Traces.TryAdd(frames, stack);
 
@@ -104,7 +104,7 @@ public unsafe readonly struct NeuralMatrix
             var weights = other.GetMatrixRow(0);
 
             for (int neuronIdx = 0; neuronIdx < outFeatures; neuronIdx++, ++weights)
-            {               
+            {
                 var sum = 0f;
                 var k = 0;
 
@@ -420,5 +420,5 @@ public unsafe readonly struct NeuralMatrix
         Console.WriteLine();
     }
 
-    public override string ToString() => $"{Rows}x{UsedColumns}";   
+    public override string ToString() => $"{Rows}x{UsedColumns}";
 }
