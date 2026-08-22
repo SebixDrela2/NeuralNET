@@ -1,6 +1,7 @@
-﻿using NeutralNET.Activation;
+using NeutralNET.Activation;
 using NeutralNET.Framework;
 using NeutralNET.Framework.Neural;
+using NeutralNET.Framework.Optimizers;
 using NeutralNET.Matrices;
 using NeutralNET.Models;
 using NeutralNET.Stuff;
@@ -80,7 +81,7 @@ public partial class Form1 : Form
     {
         if (BitMapValues != null && _backBuffer != null)
         {           
-            DrawRGB(BitMapValues);
+            DrawGrayscale(BitMapValues);
 
             e.Graphics.DrawImageUnscaled(_backBuffer, 0, 0);
         }
@@ -97,12 +98,13 @@ public partial class Form1 : Form
         _model.Prepare();
 
         _network = new NeuralNetworkBuilder<Architecture>(_model)
-            .WithArchitecture([128, 64, 64, 32, 16])
+            .WithArchitecture([64, 32, 32, 16])
+            .WithOptimizer(OptimizerType.SGD)
             .WithEpochs(1000000)
             .WithBatchSize(BatchSize)
-            .WithLearningRate(1e-5f)
+            .WithLearningRate(3e-4f)
             .WithHiddenLayerActivation(ActivationType.LeakyReLU)
-            .WithOutputLayerActivation(ActivationType.Sigmoid)
+            .WithOutputLayerActivation(ActivationType.ReLU)
             .WithWeightDecay(1e-5f)
             .WithBeta1(0.9f)
             .WithBeta2(0.999f)
@@ -129,17 +131,37 @@ public partial class Form1 : Form
 
         var span = _network.Architecture.MatrixNeurons[0].GetRowSpan(0);
         var normalizedAnimation = AnimationProgress * ImageVariants;
-        var index = (int)(normalizedAnimation * span.Length);
+        //var index = (int)(normalizedAnimation * span.Length);
 
-        var eaglePixels = _imagesDict["greenEagle256"];
-        var wolfPixels = _imagesDict["blueWolf256"];
+        //var eaglePixels = _imagesDict["greenEagle256"];
+        //var wolfPixels = _imagesDict["blueWolf256"];
 
-        eaglePixels[..index].CopyTo(span);
-        wolfPixels[index..].CopyTo(span);
+        //eaglePixels[..index].CopyTo(span);
+        //wolfPixels[index..].CopyTo(span);
 
-        BitMapValues = _network.Forward().GetRowSpan(0).ToArray();
+        BitMapValues = GetBitMapValues();
 
         return true;
+    }
+
+    private float[] GetBitMapValues()
+    {
+        var outputs = new float[BitmapWidth * BitmapHeight];
+        float normX = 1f / (BitmapWidth - 1);
+        float normY = 1f / (BitmapHeight - 1);
+
+        for (int x = 0; x < BitmapWidth; x++)
+        {
+            for (int y = 0; y < BitmapHeight; y++)
+            {
+                float[] input = [x * normX, y * normY];
+                var inputSpan = _network.Architecture.MatrixNeurons[0].GetRowSpan(0);
+                input.CopyTo(inputSpan);
+
+                outputs[x * BitmapHeight + y] = _network.Forward().GetRowSpan(0)[0];
+            }
+        }
+        return outputs;
     }
 
     private float GetAnimationProgress()

@@ -249,7 +249,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         var rReadyLoss = Math.Clamp((int)(rLoss * 255), 0, 255);
         var gReadyLoss = Math.Clamp((int)(gLoss * 255), 0, 255);
 
-        var result = $"Epoch ({epoch, 6}/{_config.Epochs, -6}) Accuracy: {lossToPercent:F5}% Loss:{loss, 15:G13} BPS:{batchesPerSecond:F4}/s TP:{elapsed}";
+        var result = $"Epoch ({epoch, 6}/{_config.Epochs, -6}) Accuracy: {lossToPercent:F5}% Loss: {loss,16:G13} BPS: {batchesPerSecond:F4}/s TP: {elapsed}";
         result = result.WithColor(System.Drawing.Color.FromArgb(255, rReadyLoss, gReadyLoss, 0));
 
         Console.WriteLine(result);

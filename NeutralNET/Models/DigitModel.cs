@@ -1,50 +1,21 @@
-﻿using NeutralNET.Framework.Neural;
+using NeutralNET.Framework.Neural;
 using NeutralNET.Matrices;
+using NeutralNET.Models;
 using NeutralNET.Stuff;
 using NeutralNET.Validators;
 
-namespace NeutralNET.Models;
-
 public class DigitModel : IModel, IValidator
 {
-    private const int VariantFontCount = 1;
+    private const int VariantFontCount = 10;
     public const int PixelCount = GraphicsUtils.Width * GraphicsUtils.Height;
     public const int DigitLimit = 10;
 
     public NeuralMatrix TrainingInput { get; set; }
     public NeuralMatrix TrainingOutput { get; set; }
 
-    private static readonly string[] _allfontNames = 
-        ["Arial", 
-        "Times New Roman", 
-        "Arial Black",
-        "Bahnschrift SemiBold",
-        "Courier New",
-        "Curlz MT",      
-        "Georgia",
-        "Helvetica",
-        "Century",
-        "Bahnschrift Light",
-        "Cambria",
-        "Carlito",
-        "Rockwell",
-        "Symbol",
-        "Rubik",
-        "Trebuchet MS", 
-        "Verdana",
-        "Vladimir Script",        
-        "Tahoma", 
-        "Palatino Linotype", 
-        "Lucida Console", 
-        "Comic Sans MS", 
-        "Impact",
-        "System",
-        "Lucida Sans Unicode",
-        "Cascadia Code",
-        "Candara",
-        "Calibri"];
+    private static readonly string[] _fontNames =
+        ["Arial", "Times New Roman", "Georgia", "Verdana", "Tahoma"];
 
-    private static readonly string[] _fontNames = _allfontNames[..1]; 
     private readonly int _rowCount;
 
     public DigitModel()
@@ -52,7 +23,7 @@ public class DigitModel : IModel, IValidator
         _rowCount = _fontNames.Length * DigitLimit * VariantFontCount;
 
         TrainingInput = new NeuralMatrix(_rowCount, PixelCount);
-        TrainingOutput = new NeuralMatrix(_rowCount, 1);    
+        TrainingOutput = new NeuralMatrix(_rowCount, 1);
     }
 
     public void Prepare()
@@ -87,7 +58,7 @@ public class DigitModel : IModel, IValidator
         Console.WriteLine();
 
         for (var i = 0; i < DigitLimit; ++i)
-        {           
+        {
             var pixelStruct = pixelStructs[i];
 
             pixelStruct.Values.CopyTo(inputRow);
@@ -95,7 +66,7 @@ public class DigitModel : IModel, IValidator
             var actual = forward().GetRowSpan(0)[0];
             var expected = pixelStruct.MappedValue;
 
-            Console.WriteLine($"ACTUAL: {actual,9:F6}, EXPECTED: {expected,9:F6}, DIFF: {(actual - expected)*9,7:F4}");
+            Console.WriteLine($"ACTUAL: {actual,9:F6}, EXPECTED: {expected,9:F6}, DIFF: {actual - expected,9:F4}");
         }
     }
 }

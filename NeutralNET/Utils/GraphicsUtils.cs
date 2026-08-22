@@ -1,4 +1,4 @@
-﻿using NeutralNET.Utils;
+using NeutralNET.Utils;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -48,7 +48,7 @@ public static partial class GraphicsUtils
 
             if (applyTransformation)
             {
-                var angle = float.Lerp(-10, 10, _rng.NextSingle());
+                var angle = float.Lerp(-5, 5, _rng.NextSingle());
                 var scaleX = float.Lerp(0.95f, 1.05f, _rng.NextSingle());
                 var scaleY = float.Lerp(0.95f, 1.05f, _rng.NextSingle());
 
