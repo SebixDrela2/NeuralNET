@@ -120,7 +120,7 @@ public static partial class GraphicsUtils
             );
         }
 
-        bitMap.Save($@"C:\Users\Sebastian\source\repos\NeutralNET\NeutralNET\bin\Debug\net9.0\Imuges\{@char}_{font.Name}_{DateTime.Now.Ticks}.png");
+        //bitMap.Save($@"C:\Users\Sebastian\source\repos\NeutralNET\NeutralNET\bin\Debug\net9.0\Imuges\{@char}_{font.Name}_{DateTime.Now.Ticks}.png");
 
         var result = new float[Size];
         var index = 0;

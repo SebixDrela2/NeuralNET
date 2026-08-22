@@ -3,12 +3,14 @@ using NeutralNET.Matrices;
 using NeutralNET.Models;
 using NeutralNET.Stuff;
 using NeutralNET.Validators;
+using System;
 
 public class DigitModel : IModel, IValidator
 {
     private const int VariantFontCount = 10;
     public const int PixelCount = GraphicsUtils.Width * GraphicsUtils.Height;
     public const int DigitLimit = 10;
+    public const int NumClasses = 10;  // 10 digits (0-9)
 
     public NeuralMatrix TrainingInput { get; set; }
     public NeuralMatrix TrainingOutput { get; set; }
@@ -23,7 +25,7 @@ public class DigitModel : IModel, IValidator
         _rowCount = _fontNames.Length * DigitLimit * VariantFontCount;
 
         TrainingInput = new NeuralMatrix(_rowCount, PixelCount);
-        TrainingOutput = new NeuralMatrix(_rowCount, 1);
+        TrainingOutput = new NeuralMatrix(_rowCount, NumClasses);  // 10 output neurons
     }
 
     public void Prepare()
@@ -36,15 +38,17 @@ public class DigitModel : IModel, IValidator
             {
                 var pixelStructs = GraphicsUtils.GetDigitsDataSet(_fontNames[j]);
 
-                for (var pixelIndex = 0; pixelIndex < DigitLimit; ++pixelIndex, ++index)
+                for (var digit = 0; digit < DigitLimit; ++digit, ++index)
                 {
+                    // Input: Copy pixel values
                     var inputRow = TrainingInput.GetRowSpan(index);
-                    var pixelStruct = pixelStructs[pixelIndex];
-
+                    var pixelStruct = pixelStructs[digit];
                     pixelStruct.Values.CopyTo(inputRow);
 
-                    var outputCell = TrainingOutput.GetRowSpan(index);
-                    outputCell[0] = pixelStruct.MappedValue;
+                    // Output: One-hot encoding
+                    var outputRow = TrainingOutput.GetRowSpan(index);
+                    outputRow.Clear();              // Reset all to 0
+                    outputRow[digit] = 1.0f;        // Set the correct class to 1
                 }
             }
         }
@@ -52,21 +56,60 @@ public class DigitModel : IModel, IValidator
 
     public void Validate(NeuralForward forward)
     {
-        var pixelStructs = GraphicsUtils.GetDigitsDataSet("Arial");
+        // Test on Arial without transformations for consistent results
+        var pixelStructs = GraphicsUtils.GetDigitsDataSet("Arial", applyTransformation: false);
         var inputRow = TrainingInput.GetRowSpan(0);
 
         Console.WriteLine();
+        Console.WriteLine("=== RAW OUTPUT VALUES (All 10 Neurons) ===");
+        Console.WriteLine("Digit | Expected | [0]    [1]    [2]    [3]    [4]    [5]    [6]    [7]    [8]    [9]    | Result");
+        Console.WriteLine("------|----------|-----------------------------------------------------------------|--------");
 
-        for (var i = 0; i < DigitLimit; ++i)
+        int correct = 0;
+
+        for (var digit = 0; digit < DigitLimit; ++digit)
         {
-            var pixelStruct = pixelStructs[i];
-
+            var pixelStruct = pixelStructs[digit];
             pixelStruct.Values.CopyTo(inputRow);
 
-            var actual = forward().GetRowSpan(0)[0];
-            var expected = pixelStruct.MappedValue;
+            var output = forward();
+            var outputSpan = output.GetRowSpan(0);
+            int predicted = GetPredictedDigit(output);
+            float confidence = outputSpan[predicted];
 
-            Console.WriteLine($"ACTUAL: {actual,9:F6}, EXPECTED: {expected,9:F6}, DIFF: {actual - expected,9:F4}");
+            Console.Write($"  {digit}   |    {digit}     | ");
+
+            for (int j = 0; j < NumClasses; j++)
+            {
+                Console.Write($"{outputSpan[j]:F4} ");
+            }
+
+            bool isCorrect = predicted == digit;
+            if (isCorrect) correct++;
+
+            Console.Write($"| Pred: {predicted} ({confidence:F4})");
+            Console.WriteLine(isCorrect ? " ✓" : " ✗");
         }
+
+        Console.WriteLine($"\nAccuracy: {correct}/{DigitLimit} = {100f * correct / DigitLimit:F2}%");
+        Console.WriteLine();
+    }
+
+    private int GetPredictedDigit(NeuralMatrix output)
+    {
+        var span = output.GetRowSpan(0);
+        int maxIndex = 0;
+        float maxValue = span[0];
+
+        for (int i = 1; i < span.Length; i++)
+        {
+            if (span[i] > maxValue)
+            {
+                maxValue = span[i];
+                maxIndex = i;
+            }
+        }
+
+        return maxIndex;
     }
 }

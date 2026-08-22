@@ -41,19 +41,19 @@ internal class Program
         model.Prepare();
 
         var network = new NeuralNetworkBuilder<Architecture>(model)
-        .WithArchitecture([128, 64, 32])
-        .WithEpochs(3000)
-        .WithBatchSize(64)
-        .WithHiddenLayerActivation(ActivationType.LeakyReLU)
-        .WithOutputLayerActivation(ActivationType.LeakyReLU)
-        .WithOptimizer(OptimizerType.Adam)
-        .WithLearningRate(0.001f)
-        .WithWeightDecay(1e-4f)
-        .WithBeta1(0.9f)
-        .WithBeta2(0.999f)
-        .WithEpsilon(1e-8f)
-        .WithShuffle(true)
-        .Build();
+            .WithArchitecture([128, 64, 32]) 
+            .WithEpochs(5000)
+            .WithBatchSize(64)
+            .WithHiddenLayerActivation(ActivationType.ReLU)
+            .WithOutputLayerActivation(ActivationType.Sigmoid)
+            .WithOptimizer(OptimizerType.Adam)
+            .WithLearningRate(0.001f)
+            .WithWeightDecay(1e-4f)
+            .WithBeta1(0.9f)
+            .WithBeta2(0.999f)
+            .WithEpsilon(1e-8f)
+            .WithShuffle(true)
+            .Build();
 
         var forward = network.RunModel();
         model.Validate(forward);
