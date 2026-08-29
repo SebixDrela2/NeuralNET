@@ -46,7 +46,7 @@ internal class Program
             .WithBatchSize(64)
             .WithHiddenLayerActivation(ActivationType.ReLU)
             .WithOutputLayerActivation(ActivationType.Sigmoid)
-            .WithOptimizer(OptimizerType.Adam)
+            .WithOptimizer(OptimizerType.AdamW)
             .WithLearningRate(0.001f)
             .WithWeightDecay(1e-4f)
             .WithBeta1(0.9f)

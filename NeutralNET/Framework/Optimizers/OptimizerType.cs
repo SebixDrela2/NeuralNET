@@ -1,7 +1,9 @@
-﻿namespace NeutralNET.Framework.Optimizers;
+namespace NeutralNET.Framework.Optimizers;
 
 public enum OptimizerType
 {
     SGD = 0,
-    Adam = 1
+    Adam = 1,
+
+    AdamW = 2
 }
