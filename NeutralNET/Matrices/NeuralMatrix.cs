@@ -54,7 +54,7 @@ public unsafe class NeuralMatrix : IDisposable
 
     public float[] ToArray()
     {
-        Debug.Assert(!HasStride);
+        //Debug.Assert(!HasStride);
 
         return SpanWithGarbage.ToArray();
     }

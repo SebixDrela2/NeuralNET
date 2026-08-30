@@ -16,106 +16,96 @@ internal class Program
 
     static void Main()
     {
-        RunCnnCifar10SingleImage();
+        RunCnnCifar10HundredImagesFast();
     }
 
-
-    public static void RunCnnCifar10SingleImage()
+    public static void RunCnnCifar10HundredImagesFast()
     {
         string dataDir = @"D:\Cifar\datasets\cifar-10-batches-bin";
 
-        var (trainImages, trainLabels, testImages, testLabels) = Cifar10Loader.Load(
+        // 1. Load data
+        var (trainImages, trainLabels, actualLabels) = Cifar10DataLoader.LoadBatches(
             dataDir: dataDir,
-            batchSize: 1,
-            maxTrainSamples: 1,   // Only 1 image
-            maxTestSamples: 0     // Skip test
+            batchSize: 10,
+            maxSamples: 100
         );
-        var singleImage = trainImages[0];
-        var singleLabel = trainLabels[0];
-
-        int actualLabel = GetLabelIndex(singleLabel);
-        Console.WriteLine($"Loaded 1 image with label: {actualLabel}");
 
         var cnnConfig = new CnnArchitectureConfig
         {
             ConvLayers = new List<CnnLayerConfig>
         {
-            new()
-            {
-                KernelHeight = 3,
-                KernelWidth = 3,
-                Filters = 8,
-                Stride = 1,
-                Padding = 1,
-                Activation = ActivationType.ReLU,
-                UseMaxPool = true,
-                PoolSize = 2
-            },
-            new()
-            {
-                KernelHeight = 3,
-                KernelWidth = 3,
-                Filters = 16,
-                Stride = 1,
-                Padding = 1,
-                Activation = ActivationType.ReLU,
-                UseMaxPool = true,
-                PoolSize = 2
-            }
+            new() { KernelHeight = 3, KernelWidth = 3, Filters = 16, Stride = 1, Padding = 1,
+                    Activation = ActivationType.ReLU, UseMaxPool = true, PoolSize = 2 },
+            new() { KernelHeight = 3, KernelWidth = 3, Filters = 32, Stride = 1, Padding = 1,
+                    Activation = ActivationType.ReLU, UseMaxPool = true, PoolSize = 2 }
         },
-            DenseArchitecture = new[] { 64, 10 },
+            DenseArchitecture = new[] { 128, 10 },
             DenseHiddenActivation = ActivationType.ReLU,
             OutputActivation = ActivationType.Softmax
         };
 
         var denseConfig = new NeuralNetworkConfig
         {
-            LearningRate = 0.01f,
+            LearningRate = 0.005f,
             WeightDecay = 0.0001f,
-            BatchSize = 1,
+            BatchSize = 10,
             Epochs = 1,
             DropoutRate = 0.0f,
-            WithShuffle = false,
+            WithShuffle = true,
+            OptimizerType = OptimizerType.SGD,
             Model = null
         };
 
-        using var framework = new CnnNeuralFramework<Architecture>(denseConfig, cnnConfig, 32, 32, 3);
+        using var network = new CnnBuilder<Architecture>()
+            .WithCnnConfig(cnnConfig)
+            .WithDenseConfig(denseConfig)
+            .WithInputSize(32, 32, 3)
+            .Build();
 
-        float learningRate = 0.01f;
-        int epochs = 50;
+        var validator = new CnnValidator();
 
-        Console.WriteLine("\nTraining on a single image...");
-        Console.WriteLine("Epoch\tLoss\tPrediction (should match label)");
+        float learningRate = 0.005f;
+        int epochs = 2000;
+
+        Console.WriteLine($"Training on {trainImages.Count} batches...");
+        Console.WriteLine("Epoch\tLoss\tAccuracy");
 
         for (int epoch = 0; epoch < epochs; epoch++)
         {
-            float loss = framework.Train(singleImage, singleLabel, learningRate);
-
-            if (epoch % 10 == 0 || epoch == epochs - 1)
+            float totalLoss = 0;
+            for (int batchIdx = 0; batchIdx < trainImages.Count; batchIdx++)
             {
-                using var output = framework.Forward(singleImage);
-                int predicted = ArgMax(output.GetRowSpan(0));
-                Console.WriteLine($"{epoch + 1,4}\t{loss:F6}\t{predicted} (actual: {actualLabel})");
+                float loss = network.TrainBatch(trainImages[batchIdx], trainLabels[batchIdx], learningRate);
+                totalLoss += loss;
             }
+            float avgLoss = totalLoss / trainImages.Count;
 
-            if (epoch > 10 && loss < 0.01f)
+            if (epoch % 25 == 0 || epoch == epochs - 1)
             {
-                Console.WriteLine($"\n✓ Network learned the image! Stopping early at epoch {epoch + 1}");
-                break;
+                var result = validator.Validate(network, trainImages, trainLabels);
+                Console.WriteLine($"{epoch + 1,4}\t{avgLoss:F6}\t{result.Accuracy:P2}");
             }
         }
 
-        using var finalOutput = framework.Forward(singleImage);
-        int finalPrediction = ArgMax(finalOutput.GetRowSpan(0));
-        Console.WriteLine($"\nFinal prediction: {finalPrediction}, Actual: {actualLabel}");
-        Console.WriteLine(finalPrediction == actualLabel ? "✓ SUCCESS" : "✗ FAILED");
+        var finalResult = validator.Validate(network, trainImages, trainLabels);
+        validator.PrintResults(finalResult);
+
+        foreach (var img in trainImages) img.Dispose();
+        foreach (var lbl in trainLabels) lbl.Dispose();
     }
 
     private static int GetLabelIndex(NeuralMatrix labelMatrix)
     {
         var row = labelMatrix.GetRowSpan(0);
+
         for (int i = 0; i < row.Length; i++)
-            if (row[i] > 0.5f) return i;
+        {
+            if (row[i] > 0.5f)
+            {
+                return i;
+            }
+        }
+
         return -1;
     }
 
@@ -123,6 +113,7 @@ internal class Program
     {
         int maxIdx = 0;
         float maxVal = row[0];
+
         for (int i = 1; i < row.Length; i++)
         {
             if (row[i] > maxVal)

@@ -103,46 +103,57 @@ public class CnnMatrix : IDisposable
         int outW = (paddedW - kernelW) / stride + 1;
         int patchSize = Channels * kernelH * kernelW;
 
-        var colMatrix = new NeuralMatrix(outH * outW, patchSize);
+        var colMatrix = new NeuralMatrix(Batch * outH * outW, patchSize);
         using var padded = new CnnMatrix(Batch, Channels, paddedH, paddedW);
         padded.Clear();
 
-        // Copy with padding using direct indexing
+        // Copy with padding
         for (int b = 0; b < Batch; b++)
         {
             for (int c = 0; c < Channels; c++)
             {
+                var srcSpan = GetChannelSpan(b, c);
+                var dstSpan = padded.GetChannelSpan(b, c);
+                int dstOffset = padding * padded.Width + padding;
                 for (int y = 0; y < Height; y++)
                 {
+                    int srcRowOffset = y * Width;
+                    int dstRowOffset = dstOffset + (y + padding) * padded.Width;
                     for (int x = 0; x < Width; x++)
                     {
-                        padded[b, c, y + padding, x + padding] = this[b, c, y, x];
+                        dstSpan[dstRowOffset + x] = srcSpan[srcRowOffset + x];
                     }
                 }
             }
         }
 
-        // Extract patches using direct indexing
+        // Extract patches
         for (int b = 0; b < Batch; b++)
         {
             for (int c = 0; c < Channels; c++)
             {
+                var paddedSpan = padded.GetChannelSpan(b, c);
                 int channelOffset = c * kernelH * kernelW;
+
                 for (int oh = 0; oh < outH; oh++)
                 {
                     for (int ow = 0; ow < outW; ow++)
                     {
                         int startY = oh * stride;
                         int startX = ow * stride;
-                        int patchRow = (oh * outW + ow);
+                        int patchRow = (b * outH + oh) * outW + ow;
 
+                        int kyOffset = 0;
                         for (int ky = 0; ky < kernelH; ky++)
                         {
+                            int rowStart = (startY + ky) * padded.Width + startX;
                             for (int kx = 0; kx < kernelW; kx++)
                             {
-                                int colIdx = channelOffset + ky * kernelW + kx;
-                                colMatrix.At(patchRow, colIdx) = padded[b, c, startY + ky, startX + kx];
+                                int colIdx = channelOffset + kyOffset + kx;
+                                int paddedIdx = rowStart + kx;
+                                colMatrix.At(patchRow, colIdx) = paddedSpan[paddedIdx];
                             }
+                            kyOffset += kernelW;
                         }
                     }
                 }
@@ -174,7 +185,8 @@ public class CnnMatrix : IDisposable
                 {
                     int startY = oh * stride;
                     int startX = ow * stride;
-                    int patchRow = (oh * outW + ow);
+                    // FIX: Include batch in patchRow
+                    int patchRow = (b * outH + oh) * outW + ow;
 
                     for (int c = 0; c < Channels; c++)
                     {
@@ -207,6 +219,14 @@ public class CnnMatrix : IDisposable
                 }
             }
         }
+    }
+
+    public void DebugPrint(string label, int maxElements = 10)
+    {
+        Console.Write($"{label}: ");
+        for (int i = 0; i < Math.Min(maxElements, AllocatedLength); i++)
+            Console.Write($"{_data[i]:F4} ");
+        Console.WriteLine($" (sum: {_data.Take(Math.Min(100, AllocatedLength)).Sum(Math.Abs):F6})");
     }
 
     public void Dispose()

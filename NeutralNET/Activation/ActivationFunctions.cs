@@ -106,14 +106,15 @@ public static unsafe class ActivationFunctions
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void ApplySoftmaxVectorized(NeuralMatrix matrix)
-    => ApplySoftmaxVectorized(matrix.Pointer, matrix.Rows, matrix.UsedColumns);
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static void ApplySoftmaxVectorized(float* ptr, int rows, int cols)
     {
+        float* ptr = matrix.Pointer;
+        int rows = matrix.Rows;
+        int cols = matrix.UsedColumns;
+        int stride = matrix.ColumnsStride;   // ← THE FIX
+
         for (int r = 0; r < rows; r++)
         {
-            float* row = ptr + r * cols;
+            float* row = ptr + r * stride;   // ← Use stride, not cols
 
             // Find max for numerical stability
             float max = row[0];
