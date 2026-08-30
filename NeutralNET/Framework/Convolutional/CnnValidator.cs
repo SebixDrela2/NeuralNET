@@ -22,9 +22,11 @@ public class CnnValidator
                 int pred = ArgMax(output.GetRowSpan(i));
                 int actual = ArgMax(label.GetRowSpan(i));
 
-                if (pred == actual) correct++;
+                if (pred == actual)
+                {
+                    correct++;
+                }
 
-                // Track all samples (no limit) or up to maxSamplesToShow
                 if (samplePredictions.Count < maxSamplesToShow)
                 {
                     var probs = output.GetRowSpan(i).ToArray();
@@ -63,6 +65,7 @@ public class CnnValidator
         {
             string status = sample.IsCorrect ? "✓" : "✗";
             string probs = string.Join(" ", sample.Probabilities.Select(p => p.ToString("F3")));
+
             Console.WriteLine($"{sample.SampleIndex,5}\t{sample.Predicted,3}\t{sample.Actual,5}\t{status,4}\t{probs}");
         }
     }
@@ -71,6 +74,7 @@ public class CnnValidator
     {
         int maxIdx = 0;
         float maxVal = row[0];
+
         for (int i = 1; i < row.Length; i++)
         {
             if (row[i] > maxVal)
@@ -81,26 +85,4 @@ public class CnnValidator
         }
         return maxIdx;
     }
-
-    private static int ArgMax(NeuralMatrix matrix, int row)
-    {
-        return ArgMax(matrix.GetRowSpan(row));
-    }
-}
-
-public class ValidationResult
-{
-    public float Accuracy { get; set; }
-    public int Correct { get; set; }
-    public int Total { get; set; }
-    public List<SamplePrediction> SamplePredictions { get; set; } = new();
-}
-
-public class SamplePrediction
-{
-    public int SampleIndex { get; set; }
-    public int Predicted { get; set; }
-    public int Actual { get; set; }
-    public bool IsCorrect { get; set; }
-    public float[] Probabilities { get; set; } = Array.Empty<float>();
 }

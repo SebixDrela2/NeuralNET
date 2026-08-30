@@ -27,7 +27,7 @@ internal class Program
         var (trainImages, trainLabels, actualLabels) = Cifar10DataLoader.LoadBatches(
             dataDir: dataDir,
             batchSize: 10,
-            maxSamples: 10
+            maxSamples: 1000
         );
 
         var cnnConfig = new CnnArchitectureConfig
@@ -96,7 +96,7 @@ internal class Program
             float avgLoss = totalLoss / trainImages.Count;
 
             // Evaluate every 10 epochs to save time
-            if (epoch % 10 == 0 || epoch == maxEpochs - 1)
+            if (true)
             {
                 var result = validator.Validate(network, trainImages, trainLabels);
                 float accuracy = result.Accuracy;

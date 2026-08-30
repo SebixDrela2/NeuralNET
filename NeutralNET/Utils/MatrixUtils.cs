@@ -1,19 +1,11 @@
-﻿using NeutralNET.Matrices;
-using System.Reflection;
-using System.Runtime.InteropServices;
-using System.Runtime.Intrinsics;
-
 namespace NeutralNET.Utils;
 
 public static class MatrixUtils
 {
     public static readonly uint[][] StrideMaskLookup = MakeStrideMaskLookup();
     public static int GetStride(int columns) => (columns + SIMD.AlignMask) & ~SIMD.AlignMask;
-
-    // TODO: ensure this is not modified
     public static uint[] GetStrideMask(int columns) => StrideMaskLookup[GetLeftoverSize(columns)];
     private static int GetLeftoverSize(int columns) => columns & SIMD.AlignMask;
-    private static int GetPadSize(int columns) => SIMD.AlignSize - GetLeftoverSize(columns);
 
     static uint[][] MakeStrideMaskLookup()
     {
@@ -25,6 +17,7 @@ public static class MatrixUtils
         {
             (item = prev.ToArray())[pos++] = uint.MaxValue;
         }
+
         return result;
     }
 }

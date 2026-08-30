@@ -10,16 +10,16 @@ namespace NeutralNET.Framework.Convolutional;
 /// </summary>
 public class CnnMatrix : IDisposable
 {
-    private float[] _data;
+    private readonly float[] _data;
     private readonly int _allocatedLength;
 
-    private static readonly ConcurrentBag<CnnMatrix> _pool = [];
+    private static readonly Stack<CnnMatrix> _pool = [];
 
-    public static CnnMatrix GetOrCreate(int batch, int channels, int height, int width)
+    public static CnnMatrix GetOrCreate(int batch, int channels, int height, int width, bool readOnly = false)
     {
-        if (!_pool.TryTake(out var item))
+        if (!_pool.TryPop(out var item))
         {
-            item = new CnnMatrix(batch, channels, height, width);
+            item = new CnnMatrix(batch, channels, height, width, readOnly);
 
             return item;
         }
@@ -82,22 +82,21 @@ public class CnnMatrix : IDisposable
         Clear();
     }
 
+    [MethodImpl(Inline)]
     public int GetIndex(int batch, int channel, int y, int x)
         => (batch * StrideN) + (channel * StrideC) + (y * StrideH) + (x * StrideW);
 
     public ref float this[int batch, int channel, int y, int x]
-        => ref _data[GetIndex(batch, channel, y, x)];
+    {
+        [MethodImpl(Inline)]
+        get => ref _data[GetIndex(batch, channel, y, x)];
+    }
 
+    [MethodImpl(Inline)]
     public Span<float> GetChannelSpan(int batch, int channel)
     {
         int start = (batch * StrideN) + (channel * StrideC);
         return _data.AsSpan(start, Height * Width);
-    }
-
-    public Span<float> GetRowSpan(int batch, int channel, int y)
-    {
-        int start = (batch * StrideN) + (channel * StrideC) + (y * StrideH);
-        return _data.AsSpan(start, Width);
     }
 
     public void Clear()
@@ -105,11 +104,7 @@ public class CnnMatrix : IDisposable
         Array.Clear(_data, 0, UnsafeSize);
     }
 
-    public void Fill(float value)
-    {
-        Array.Fill(_data, value, 0, UnsafeSize);
-    }
-
+    [MethodImpl(Inline)]
     public void CopyFrom(CnnMatrix other)
     {
         if (other._allocatedLength != _allocatedLength)
@@ -132,7 +127,6 @@ public class CnnMatrix : IDisposable
         using var padded = GetOrCreate(Batch, Channels, paddedH, paddedW);
         padded.Clear();
 
-        // Copy with padding
         for (int b = 0; b < Batch; b++)
         {
             for (int c = 0; c < Channels; c++)
@@ -140,10 +134,12 @@ public class CnnMatrix : IDisposable
                 var srcSpan = GetChannelSpan(b, c);
                 var dstSpan = padded.GetChannelSpan(b, c);
                 int dstOffset = padding * padded.Width + padding;
+
                 for (int y = 0; y < Height; y++)
                 {
                     int srcRowOffset = y * Width;
                     int dstRowOffset = dstOffset + (y + padding) * padded.Width;
+
                     for (int x = 0; x < Width; x++)
                     {
                         dstSpan[dstRowOffset + x] = srcSpan[srcRowOffset + x];
@@ -152,7 +148,6 @@ public class CnnMatrix : IDisposable
             }
         }
 
-        // Extract patches
         for (int b = 0; b < Batch; b++)
         {
             for (int c = 0; c < Channels; c++)
@@ -226,7 +221,6 @@ public class CnnMatrix : IDisposable
             }
         }
 
-        // Copy back from padded (excluding padding)
         for (int b = 0; b < Batch; b++)
         {
             for (int c = 0; c < Channels; c++)
@@ -244,12 +238,6 @@ public class CnnMatrix : IDisposable
 
     public void Dispose()
     {
-        if (ReadOnly)
-        {
-            throw new InvalidOperationException("Cannot dispose a read‑only CnnMatrix.");
-        }
-
-        Console.WriteLine($"pooled: {Height}x{Width}x{Batch}x{Channels}");
-        _pool.Add(this);
+        _pool.Push(this);
     }
 }

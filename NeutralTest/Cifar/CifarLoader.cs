@@ -95,7 +95,7 @@ public static class Cifar10Loader
             int end = Math.Min(start + batchSize, numSamples);
             int currentBatchSize = end - start;
 
-            var imgMat = CnnMatrix.GetOrCreate(currentBatchSize, 3, 32, 32);
+            var imgMat = CnnMatrix.GetOrCreate(currentBatchSize, 3, 32, 32, readOnly:true);
             var lblMat = NeuralMatrix.GetOrCreate(currentBatchSize, 10);
 
             for (int i = 0; i < currentBatchSize; i++)

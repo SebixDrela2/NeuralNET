@@ -23,24 +23,11 @@ public unsafe class NeuralMatrix : IDisposable
     private const int ByteAlignmentMask = ByteAlignment - 1;
 
     // ---------- Buffer Pool ----------
-    private static readonly ConcurrentBag<NeuralMatrix> _pool = [];
+    private static readonly Stack<NeuralMatrix> _pool = [];
 
     private static readonly int CommonAllocatedLength = 0x280000;
     private readonly int _allocatedLength;
 
-    public static NeuralMatrix GetOrCreate(int rows, int columns)
-    {
-        if (!_pool.TryTake(out var item))
-        {
-            item = new NeuralMatrix(rows, columns);
-            return item;
-        }
-
-        item.Resize(rows, columns);
-        return item;
-    }
-
-    // ---------- Instance ----------
     public float* Pointer;
 
     public int Rows;
@@ -50,10 +37,19 @@ public unsafe class NeuralMatrix : IDisposable
     public uint[] StrideMasks;
     public int UnsafeSize;
 
-    public bool HasStride => ColumnsStride != UsedColumns;
     public Span<float> SpanWithGarbage => new(Pointer, UnsafeSize);
 
-    // ---------- Constructors ----------
+    public static NeuralMatrix GetOrCreate(int rows, int columns)
+    {
+        if (!_pool.TryPop(out var item))
+        {
+            item = new NeuralMatrix(rows, columns);
+            return item;
+        }
+
+        item.Resize(rows, columns);
+        return item;
+    }
 
     private NeuralMatrix(int rows, int columns)
     {
@@ -62,7 +58,7 @@ public unsafe class NeuralMatrix : IDisposable
         UsedColumns = columns;
 
         LogicalLength = Rows * UsedColumns;
-        _allocatedLength = CommonAllocatedLength;// ((nuint)(AllocatedLength * sizeof(float)) + ByteAlignmentMask) & ~(uint)ByteAlignmentMask;
+        _allocatedLength = CommonAllocatedLength;
         UnsafeSize = Rows * ColumnsStride;
 
         Pointer = (float*)NativeMemory.AlignedAlloc((nuint)_allocatedLength * sizeof(float), ByteAlignment);
@@ -70,10 +66,14 @@ public unsafe class NeuralMatrix : IDisposable
         SpanWithGarbage.Clear();
     }
 
-    // ---------- Disposal ----------
+    private bool _inUse = true;
+
     public void Dispose()
     {
-        _pool.Add(this);
+        Debug.Assert(_inUse);
+
+        _inUse = false;
+        _pool.Push(this);
     }
 
     public void Resize(int rows, int columns)
@@ -90,22 +90,14 @@ public unsafe class NeuralMatrix : IDisposable
             throw new Exception();
         }
 
+        Debug.Assert(!_inUse);
+
+        _inUse = true;
         UnsafeSize = Rows * ColumnsStride;
+
+
         StrideMasks = MatrixUtils.GetStrideMask(columns);
-        SpanWithGarbage.Clear(); // clears the buffer
-    }
-
-    // ---------- Existing methods (unchanged) ----------
-    public float[] ToArray()
-    {
-        return SpanWithGarbage.ToArray();
-    }
-
-    [Conditional("DEBUG")]
-    public static void LogOrigin(int rows, int columns)
-    {
-        // kept for debug; not performance critical
-        // (original code removed for brevity; you can keep it if you want)
+        SpanWithGarbage.Clear();
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
