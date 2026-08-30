@@ -6,7 +6,7 @@ namespace NeutralNET.Framework.Neural.CNN;
 
 public class CnnValidator
 {
-    public ValidationResult Validate(CnnNetwork<Architecture> network, List<CnnMatrix> images, List<NeuralMatrix> labels)
+    public ValidationResult Validate(CnnNetwork<Architecture> network, List<CnnMatrix> images, List<NeuralMatrix> labels, int maxSamplesToShow = int.MaxValue)
     {
         int correct = 0;
         int total = 0;
@@ -24,12 +24,13 @@ public class CnnValidator
 
                 if (pred == actual) correct++;
 
-                if (i < 10 && batchIdx == 0) // Track first 10 samples
+                // Track all samples (no limit) or up to maxSamplesToShow
+                if (samplePredictions.Count < maxSamplesToShow)
                 {
                     var probs = output.GetRowSpan(i).ToArray();
                     samplePredictions.Add(new SamplePrediction
                     {
-                        SampleIndex = i,
+                        SampleIndex = total,
                         Predicted = pred,
                         Actual = actual,
                         IsCorrect = pred == actual,
@@ -49,7 +50,7 @@ public class CnnValidator
         };
     }
 
-    public void PrintResults(ValidationResult result, int samplesToShow = 10)
+    public void PrintResults(ValidationResult result, int samplesToShow = 100)
     {
         Console.WriteLine($"\n=== VALIDATION RESULTS ===");
         Console.WriteLine($"Accuracy: {result.Accuracy:P2} ({result.Correct}/{result.Total})");

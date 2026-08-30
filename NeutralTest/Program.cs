@@ -27,7 +27,7 @@ internal class Program
         var (trainImages, trainLabels, actualLabels) = Cifar10DataLoader.LoadBatches(
             dataDir: dataDir,
             batchSize: 10,
-            maxSamples: 100
+            maxSamples: 1000
         );
 
         var cnnConfig = new CnnArchitectureConfig
@@ -35,24 +35,34 @@ internal class Program
             ConvLayers = new List<CnnLayerConfig>
         {
             new() { KernelHeight = 3, KernelWidth = 3, Filters = 16, Stride = 1, Padding = 1,
-                    Activation = ActivationType.ReLU, UseMaxPool = true, PoolSize = 2 },
+                    Activation = ActivationType.LeakyReLU, UseMaxPool = true, PoolSize = 2 },
             new() { KernelHeight = 3, KernelWidth = 3, Filters = 32, Stride = 1, Padding = 1,
-                    Activation = ActivationType.ReLU, UseMaxPool = true, PoolSize = 2 }
+                    Activation = ActivationType.LeakyReLU, UseMaxPool = true, PoolSize = 2 }
         },
-            DenseArchitecture = [128, 10],
-            DenseHiddenActivation = ActivationType.ReLU,
-            OutputActivation = ActivationType.Softmax
+            DenseArchitecture = new[] { 128, 10 },
+            DenseHiddenActivation = ActivationType.LeakyReLU,
+            OutputActivation = ActivationType.Softmax,
+            // Use Adam optimizer with proper hyperparameters
+            OptimizerConfig = new CnnOptimizerConfig
+            {
+                OptimizerType = CnnOptimizerType.Adam,
+                LearningRate = 0.001f,
+                WeightDecay = 0.0005f,
+                Beta1 = 0.9f,
+                Beta2 = 0.999f,
+                Epsilon = 1e-8f
+            }
         };
 
         var denseConfig = new NeuralNetworkConfig
         {
-            LearningRate = 0.005f,
-            WeightDecay = 0.0001f,
+            LearningRate = 0.001f,      // Adam uses lower LR
+            WeightDecay = 0.0005f,
             BatchSize = 10,
             Epochs = 1,
             DropoutRate = 0.0f,
             WithShuffle = true,
-            OptimizerType = OptimizerType.SGD,
+            OptimizerType = OptimizerType.Adam,
             Model = null
         };
 
@@ -64,13 +74,18 @@ internal class Program
 
         var validator = new CnnValidator();
 
-        float learningRate = 0.005f;
-        int epochs = 2000;
+        float learningRate = 0.001f;    // Lower LR for Adam
+        int maxEpochs = 2000;
+        int earlyStopPatience = 100;    // Stop if no improvement for 100 epochs
+        float targetAccuracy = 0.95f;   // Stop when accuracy reaches 95%
 
         Console.WriteLine($"Training on {trainImages.Count} batches...");
-        Console.WriteLine("Epoch\tLoss\tAccuracy");
+        Console.WriteLine("Epoch\tLoss\tAccuracy\tBest");
 
-        for (int epoch = 0; epoch < epochs; epoch++)
+        float bestAccuracy = 0f;
+        int epochsSinceBest = 0;
+
+        for (int epoch = 0; epoch < maxEpochs; epoch++)
         {
             float totalLoss = 0;
             for (int batchIdx = 0; batchIdx < trainImages.Count; batchIdx++)
@@ -80,16 +95,47 @@ internal class Program
             }
             float avgLoss = totalLoss / trainImages.Count;
 
-            if (epoch % 25 == 0 || epoch == epochs - 1)
+            // Evaluate every 10 epochs to save time
+            if (epoch % 10 == 0 || epoch == maxEpochs - 1)
             {
                 var result = validator.Validate(network, trainImages, trainLabels);
-                Console.WriteLine($"{epoch + 1,4}\t{avgLoss:F6}\t{result.Accuracy:P2}");
+                float accuracy = result.Accuracy;
+
+                // Track best accuracy for early stopping
+                if (accuracy > bestAccuracy)
+                {
+                    bestAccuracy = accuracy;
+                    epochsSinceBest = 0;
+                    Console.WriteLine($"{epoch + 1,4}\t{avgLoss:F6}\t{accuracy:P2}\t*** NEW BEST ***");
+                }
+                else
+                {
+                    epochsSinceBest++;
+                    Console.WriteLine($"{epoch + 1,4}\t{avgLoss:F6}\t{accuracy:P2}\t{bestAccuracy:P2}");
+                }
+
+                // Early stopping conditions
+                if (accuracy >= targetAccuracy)
+                {
+                    Console.WriteLine($"\n🎯 Target accuracy {targetAccuracy:P2} reached! Stopping early at epoch {epoch + 1}");
+                    break;
+                }
+
+                if (epochsSinceBest >= earlyStopPatience && bestAccuracy > 0.5f)
+                {
+                    Console.WriteLine($"\n⏹️ No improvement for {earlyStopPatience} epochs. Stopping early at epoch {epoch + 1}");
+                    Console.WriteLine($"Best accuracy: {bestAccuracy:P2}");
+                    break;
+                }
             }
         }
 
+        // Final evaluation with detailed results
+        Console.WriteLine("\n=== FINAL EVALUATION ===");
         var finalResult = validator.Validate(network, trainImages, trainLabels);
         validator.PrintResults(finalResult);
 
+        // Cleanup
         foreach (var img in trainImages) img.Dispose();
         foreach (var lbl in trainLabels) lbl.Dispose();
     }

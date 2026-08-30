@@ -1,11 +1,11 @@
+using System.Buffers;
 using System.Runtime.InteropServices;
 using NeutralNET.Matrices;
 
 namespace NeutralNET.Framework.Convolutional;
 
 /// <summary>
-/// Safe 4D tensor (Batch, Channels, Height, Width) using managed arrays.
-/// No unsafe code, no pointers.
+/// 4D tensor (Batch, Channels, Height, Width) with array pooling for performance.
 /// </summary>
 public class CnnMatrix : IDisposable
 {
@@ -32,37 +32,23 @@ public class CnnMatrix : IDisposable
         Height = height;
         Width = width;
         AllocatedLength = batch * channels * height * width;
-        _data = new float[AllocatedLength];
         ReadOnly = readOnly;
+        _data = ArrayPool<float>.Shared.Rent(AllocatedLength);
         Clear();
     }
 
-    /// <summary>
-    /// Gets a pointer to the start of a specific (batch, channel, y, x) location.
-    /// Returns the index into the flat array.
-    /// </summary>
     public int GetIndex(int batch, int channel, int y, int x)
         => (batch * StrideN) + (channel * StrideC) + (y * StrideH) + (x * StrideW);
 
-    /// <summary>
-    /// Gets a reference to a specific element.
-    /// </summary>
     public ref float this[int batch, int channel, int y, int x]
         => ref _data[GetIndex(batch, channel, y, x)];
 
-    /// <summary>
-    /// Gets a span for a whole channel.
-    /// </summary>
     public Span<float> GetChannelSpan(int batch, int channel)
     {
         int start = (batch * StrideN) + (channel * StrideC);
         return _data.AsSpan(start, Height * Width);
     }
 
-
-    /// <summary>
-    /// Gets a span for a specific row within a channel.
-    /// </summary>
     public Span<float> GetRowSpan(int batch, int channel, int y)
     {
         int start = (batch * StrideN) + (channel * StrideC) + (y * StrideH);
@@ -71,30 +57,28 @@ public class CnnMatrix : IDisposable
 
     public void Clear()
     {
-        Array.Clear(_data, 0, _data.Length);
+        Array.Clear(_data, 0, AllocatedLength);
     }
 
     public void Fill(float value)
     {
-        Array.Fill(_data, value);
+        Array.Fill(_data, value, 0, AllocatedLength);
     }
 
     public void CopyFrom(CnnMatrix other)
     {
         if (other.AllocatedLength != AllocatedLength)
             throw new ArgumentException("Size mismatch");
-        Array.Copy(other._data, _data, AllocatedLength);
+        Array.Copy(other._data, 0, _data, 0, AllocatedLength);
     }
 
-    public float[] ToArray() => (float[])_data.Clone();
+    public float[] ToArray()
+    {
+        var copy = new float[AllocatedLength];
+        Array.Copy(_data, 0, copy, 0, AllocatedLength);
+        return copy;
+    }
 
-    /// <summary>
-    /// Extracts image patches into a 2D NeuralMatrix.
-    /// </summary>
-    /// <summary>
-    /// Extracts image patches into a 2D NeuralMatrix.
-    /// Output rows = (OutH * OutW), Output columns = (Channels * KernelH * KernelW)
-    /// </summary>
     public NeuralMatrix Im2Col(int kernelH, int kernelW, int stride, int padding)
     {
         int paddedH = Height + 2 * padding;
@@ -163,9 +147,6 @@ public class CnnMatrix : IDisposable
         return colMatrix;
     }
 
-    /// <summary>
-    /// Scatters gradients from a 2D NeuralMatrix back into this tensor.
-    /// </summary>
     public void Col2Im(NeuralMatrix colGradients, int kernelH, int kernelW, int stride, int padding, float scale = 1.0f)
     {
         int paddedH = Height + 2 * padding;
@@ -185,7 +166,6 @@ public class CnnMatrix : IDisposable
                 {
                     int startY = oh * stride;
                     int startX = ow * stride;
-                    // FIX: Include batch in patchRow
                     int patchRow = (b * outH + oh) * outW + ow;
 
                     for (int c = 0; c < Channels; c++)
@@ -221,25 +201,27 @@ public class CnnMatrix : IDisposable
         }
     }
 
+    public void Dispose()
+    {
+        if (ReadOnly)
+        {
+            throw new InvalidOperationException("Cannot dispose a read‑only CnnMatrix.");
+        }
+
+        if (!_disposed)
+        {
+            ArrayPool<float>.Shared.Return(_data);
+            _data = null!;
+            _disposed = true;
+        }
+    }
+
+    // Debug helper (optional)
     public void DebugPrint(string label, int maxElements = 10)
     {
         Console.Write($"{label}: ");
         for (int i = 0; i < Math.Min(maxElements, AllocatedLength); i++)
             Console.Write($"{_data[i]:F4} ");
         Console.WriteLine($" (sum: {_data.Take(Math.Min(100, AllocatedLength)).Sum(Math.Abs):F6})");
-    }
-
-    public void Dispose()
-    {
-        if (ReadOnly)
-        {
-            throw new Exception();
-        }
-
-        if (!_disposed)
-        {
-            _data = null!;
-            _disposed = true;
-        }
     }
 }
