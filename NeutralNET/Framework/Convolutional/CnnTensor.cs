@@ -7,7 +7,6 @@ namespace NeutralNET.Framework.Convolutional;
 /// </summary>
 public class CnnMatrix : IDisposable
 {
-    []
     private readonly float[] _data;
     private readonly int _allocatedLength;
 

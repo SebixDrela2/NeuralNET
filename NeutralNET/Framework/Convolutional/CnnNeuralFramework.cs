@@ -1,4 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 using NeutralNET.Activation;
 using NeutralNET.Framework.Connected;
 using NeutralNET.Framework.Connected.Neural;
@@ -424,7 +426,7 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
         return weightMat;
     }
 
-    private NeuralMatrix ComputeConvolution(NeuralMatrix colInput, NeuralMatrix weightMat)
+    private unsafe NeuralMatrix ComputeConvolution(NeuralMatrix colInput, NeuralMatrix weightMat)
     {
         int patches = colInput.Rows;
         int filters = weightMat.Rows;
@@ -432,14 +434,62 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
 
         var result = RentNeural(patches, filters);
 
+        float* colPtr = colInput.Pointer;
+        float* weightPtr = weightMat.Pointer;
+        float* resPtr = result.Pointer;
+        int colStride = colInput.ColumnsStride;
+        int weightStride = weightMat.ColumnsStride;
+        int resStride = result.ColumnsStride;
+
+        bool hasAvx512 = Avx512F.IsSupported;
+        bool hasAvx2 = Avx2.IsSupported;
+
+        const int avx512Size = 16;
+        const int avx2Size = 8;
+
         for (int patch = 0; patch < patches; patch++)
         {
+            float* colRow = colPtr + patch * colStride;
+            float* resRow = resPtr + patch * resStride;
+
             for (int f = 0; f < filters; f++)
             {
+                float* weightRow = weightPtr + f * weightStride;
                 float sum = 0;
-                for (int inner = 0; inner < innerDim; inner++)
-                    sum += colInput.At(patch, inner) * weightMat.At(f, inner);
-                result.At(patch, f) = sum;
+                int inner = 0;
+
+                if (hasAvx512)
+                {
+                    Vector512<float> sumVec = Vector512<float>.Zero;
+                    int vectorizable = innerDim - (innerDim % avx512Size);
+                    for (; inner < vectorizable; inner += avx512Size)
+                    {
+                        var colVec = Avx512F.LoadAlignedVector512(colRow + inner);
+                        var weightVec = Avx512F.LoadAlignedVector512(weightRow + inner);
+                        sumVec = Avx512F.FusedMultiplyAdd(colVec, weightVec, sumVec);
+                    }
+                    sum = Vector512.Sum(sumVec);
+                }
+                else if (hasAvx2)
+                {
+                    Vector256<float> sumVec = Vector256<float>.Zero;
+                    int vectorizable = innerDim - (innerDim % avx2Size);
+                    for (; inner < vectorizable; inner += avx2Size)
+                    {
+                        var colVec = Avx2.LoadAlignedVector256(colRow + inner);
+                        var weightVec = Avx2.LoadAlignedVector256(weightRow + inner);
+                        sumVec = Fma.MultiplyAdd(colVec, weightVec, sumVec);
+                    }
+                    sum = Vector256.Sum(sumVec);
+                }
+
+                // Remainder sequential
+                for (; inner < innerDim; inner++)
+                {
+                    sum += colRow[inner] * weightRow[inner];
+                }
+
+                resRow[f] = sum;
             }
         }
 
