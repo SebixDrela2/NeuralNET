@@ -39,7 +39,7 @@ internal class Program
             new() { KernelHeight = 3, KernelWidth = 3, Filters = 32, Stride = 1, Padding = 1,
                     Activation = ActivationType.ReLU, UseMaxPool = true, PoolSize = 2 }
         },
-            DenseArchitecture = new[] { 128, 10 },
+            DenseArchitecture = [128, 10],
             DenseHiddenActivation = ActivationType.ReLU,
             OutputActivation = ActivationType.Softmax
         };
@@ -92,37 +92,6 @@ internal class Program
 
         foreach (var img in trainImages) img.Dispose();
         foreach (var lbl in trainLabels) lbl.Dispose();
-    }
-
-    private static int GetLabelIndex(NeuralMatrix labelMatrix)
-    {
-        var row = labelMatrix.GetRowSpan(0);
-
-        for (int i = 0; i < row.Length; i++)
-        {
-            if (row[i] > 0.5f)
-            {
-                return i;
-            }
-        }
-
-        return -1;
-    }
-
-    private static int ArgMax(Span<float> row)
-    {
-        int maxIdx = 0;
-        float maxVal = row[0];
-
-        for (int i = 1; i < row.Length; i++)
-        {
-            if (row[i] > maxVal)
-            {
-                maxVal = row[i];
-                maxIdx = i;
-            }
-        }
-        return maxIdx;
     }
 
     public static void RunNetwork()
