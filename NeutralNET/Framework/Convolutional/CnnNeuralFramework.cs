@@ -47,10 +47,9 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
     private CnnMatrix _lastPooledOutput;
 
     private readonly Random _rng;
-    private static NeuralMatrix RentNeural(int rows, int cols, [CallerLineNumber] int ln = -1) => NeuralMatrix.GetOrCreate(rows, cols, ln);
+    private static NeuralMatrix RentNeural(int rows, int cols) => NeuralMatrix.GetOrCreate(rows, cols);
     private static CnnMatrix RentCnn(int batch, int channels, int h, int w) => CnnMatrix.GetOrCreate(batch, channels, h, w);
 
-    // ---------- Constructor ----------
     public CnnNeuralFramework(NeuralNetworkConfig baseConfig, CnnArchitectureConfig cnnConfig,
         int inputHeight = 32, int inputWidth = 32, int inputChannels = 3)
     {
@@ -63,7 +62,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
 
         int inChannels = inputChannels;
 
-        // Conv layers
         foreach (var layer in cnnConfig.ConvLayers)
         {
             var fanIn = inChannels * layer.KernelHeight * layer.KernelWidth;
@@ -137,7 +135,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
             _denseActivations.Add(act);
             _denseDerivatives.Add(der);
 
-            // Create optimizer for this dense layer
             var opt = CnnOptimizerFactory.Create(cnnConfig.OptimizerConfig);
             _denseOptimizers.Add(opt);
         }
@@ -687,7 +684,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                 }
             }
 
-            // Use optimizer for dense weights
             _denseOptimizers[i].UpdateDenseWeights(_denseWeights[i], _denseBiases[i], dW, dB);
 
             var gradInput = RentNeural(gradPre.Rows, weights.UsedColumns);

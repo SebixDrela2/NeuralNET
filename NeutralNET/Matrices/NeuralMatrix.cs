@@ -15,14 +15,8 @@ namespace NeutralNET.Matrices;
 /// <summary>
 /// High‑performance matrix with AVX‑512 support and a buffer pool for reuse.
 /// </summary>
-public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
+public unsafe class NeuralMatrix : IDisposable
 {
-    ~NeuralMatrix()
-    {
-        Console.WriteLine($"JEST ZLE: {Rows}x{UsedColumns}: {CallStack}");
-        NativeMemory.AlignedFree(Pointer);
-    }
-
     public const int Alignment = 16;
 
     private const int AlignmentMask = Alignment - 1;
@@ -46,7 +40,7 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
 
     public Span<float> SpanWithGarbage => new(Pointer, UnsafeSize);
 
-    public static NeuralMatrix GetOrCreate(int rows, int columns, [CallerLineNumber] int ln = -1)
+    public static NeuralMatrix GetOrCreate(int rows, int columns)
     {
         if (!_pool.TryPop(out var item))
         {
@@ -57,12 +51,8 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
             item.Resize(rows, columns);
         }
 
-        item.CallStack = $"[{ln}]:{new StackTrace()}";
-
         return item;
     }
-
-    private string CallStack;
 
     private NeuralMatrix(int rows, int columns)
     {
@@ -83,16 +73,6 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
 
     public void Dispose()
     {
-        if (!_inUse)
-        {
-            throw new NotImplementedException("JEst bardoz zle");
-        }
-
-        if (_pool.Count > 1024)
-        {
-            Console.WriteLine("jest zle");
-        }
-
         _inUse = false;
         _pool.Push(this);
     }

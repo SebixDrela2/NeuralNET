@@ -1,7 +1,3 @@
-using System.Buffers;
-using System.Collections.Concurrent;
-using System.Runtime.ConstrainedExecution;
-using System.Runtime.InteropServices;
 using NeutralNET.Matrices;
 
 namespace NeutralNET.Framework.Convolutional;
@@ -9,12 +5,9 @@ namespace NeutralNET.Framework.Convolutional;
 /// <summary>
 /// 4D tensor (Batch, Channels, Height, Width) with array pooling for performance.
 /// </summary>
-public class CnnMatrix : CriticalFinalizerObject, IDisposable
+public class CnnMatrix : IDisposable
 {
-    ~CnnMatrix()
-    {
-        
-    }
+    []
     private readonly float[] _data;
     private readonly int _allocatedLength;
 
@@ -101,6 +94,7 @@ public class CnnMatrix : CriticalFinalizerObject, IDisposable
     public Span<float> GetChannelSpan(int batch, int channel)
     {
         int start = (batch * StrideN) + (channel * StrideC);
+
         return _data.AsSpan(start, Height * Width);
     }
 

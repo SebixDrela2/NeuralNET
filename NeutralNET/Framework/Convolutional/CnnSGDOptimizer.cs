@@ -9,7 +9,6 @@ public class CnnSGDOptimizer : ICnnOptimizer
     private readonly float _weightDecay;
     private readonly float _momentum;
 
-    // State per layer – these will be created per optimizer instance
     private NeuralMatrix? _convVelocityWeights;
     private NeuralMatrix? _convVelocityBiases;
     private NeuralMatrix? _denseVelocityWeights;
@@ -27,7 +26,6 @@ public class CnnSGDOptimizer : ICnnOptimizer
         int innerDim = dW.Rows;
         int filters = dW.UsedColumns;
 
-        // Initialize velocities if needed
         if (_convVelocityWeights == null || _convVelocityWeights.Rows != innerDim || _convVelocityWeights.UsedColumns != filters)
         {
             _convVelocityWeights?.Dispose();
