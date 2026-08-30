@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Collections.Concurrent;
+using System.Runtime.ConstrainedExecution;
 using System.Runtime.InteropServices;
 using NeutralNET.Matrices;
 
@@ -8,8 +9,12 @@ namespace NeutralNET.Framework.Convolutional;
 /// <summary>
 /// 4D tensor (Batch, Channels, Height, Width) with array pooling for performance.
 /// </summary>
-public class CnnMatrix : IDisposable
+public class CnnMatrix : CriticalFinalizerObject, IDisposable
 {
+    ~CnnMatrix()
+    {
+        
+    }
     private readonly float[] _data;
     private readonly int _allocatedLength;
 

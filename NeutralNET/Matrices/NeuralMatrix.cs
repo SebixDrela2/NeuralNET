@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Drawing;
 using System.Runtime.CompilerServices;
+using System.Runtime.ConstrainedExecution;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
@@ -14,8 +15,14 @@ namespace NeutralNET.Matrices;
 /// <summary>
 /// High‑performance matrix with AVX‑512 support and a buffer pool for reuse.
 /// </summary>
-public unsafe class NeuralMatrix : IDisposable
+public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
 {
+    ~NeuralMatrix()
+    {
+        Console.WriteLine($"JEST ZLE: {Rows}x{UsedColumns}: {CallStack}");
+        NativeMemory.AlignedFree(Pointer);
+    }
+
     public const int Alignment = 16;
 
     private const int AlignmentMask = Alignment - 1;
@@ -39,17 +46,23 @@ public unsafe class NeuralMatrix : IDisposable
 
     public Span<float> SpanWithGarbage => new(Pointer, UnsafeSize);
 
-    public static NeuralMatrix GetOrCreate(int rows, int columns)
+    public static NeuralMatrix GetOrCreate(int rows, int columns, [CallerLineNumber] int ln = -1)
     {
         if (!_pool.TryPop(out var item))
         {
             item = new NeuralMatrix(rows, columns);
-            return item;
+        }
+        else
+        {
+            item.Resize(rows, columns);
         }
 
-        item.Resize(rows, columns);
+        item.CallStack = $"[{ln}]:{new StackTrace()}";
+
         return item;
     }
+
+    private string CallStack;
 
     private NeuralMatrix(int rows, int columns)
     {
@@ -70,7 +83,15 @@ public unsafe class NeuralMatrix : IDisposable
 
     public void Dispose()
     {
-        Debug.Assert(_inUse);
+        if (!_inUse)
+        {
+            throw new NotImplementedException("JEst bardoz zle");
+        }
+
+        if (_pool.Count > 1024)
+        {
+            Console.WriteLine("jest zle");
+        }
 
         _inUse = false;
         _pool.Push(this);
@@ -90,7 +111,10 @@ public unsafe class NeuralMatrix : IDisposable
             throw new Exception();
         }
 
-        Debug.Assert(!_inUse);
+        if (_inUse)
+        {
+            throw new NotImplementedException("JEst bardoz zle grubas");
+        }
 
         _inUse = true;
         UnsafeSize = Rows * ColumnsStride;

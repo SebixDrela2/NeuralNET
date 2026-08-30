@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using NeutralNET.Activation;
 using NeutralNET.Framework.Connected;
 using NeutralNET.Framework.Connected.Neural;
@@ -46,7 +47,7 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
     private CnnMatrix _lastPooledOutput;
 
     private readonly Random _rng;
-    private static NeuralMatrix RentNeural(int rows, int cols) => NeuralMatrix.GetOrCreate(rows, cols);
+    private static NeuralMatrix RentNeural(int rows, int cols, [CallerLineNumber] int ln = -1) => NeuralMatrix.GetOrCreate(rows, cols, ln);
     private static CnnMatrix RentCnn(int batch, int channels, int h, int w) => CnnMatrix.GetOrCreate(batch, channels, h, w);
 
     // ---------- Constructor ----------
@@ -185,7 +186,7 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
 
             if (layer.UseMaxPool)
             {
-                var pooled = MaxPoolForward(convOut, layer.PoolSize, out _);
+                var pooled = MaxPoolForward(convOut, layer.PoolSize);
                 convOut.Dispose();
                 current = pooled;
             }
@@ -207,7 +208,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
         return denseOut;
     }
 
-    // ---------- Training ----------
     public float Train(CnnMatrix input, NeuralMatrix target, float learningRate)
     {
         ClearIntermediates();
@@ -248,7 +248,8 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
         var flat = Flatten(current);
         _flattenedInput = flat;
 
-        var denseOutput = DenseForward(flat, true);
+        using (DenseForward(flat, true)) { }
+
         var probabilities = _densePostAct.Last();
         var loss = ComputeCrossEntropyLoss(probabilities, target);
 
@@ -495,6 +496,14 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
     }
 
     // ---------- MaxPool ----------
+    private CnnMatrix MaxPoolForward(CnnMatrix input, int poolSize)
+    {
+        var res = MaxPoolForward(input, poolSize, out NeuralMatrix indices);
+
+        indices.Dispose();
+
+        return res;
+    }
     private CnnMatrix MaxPoolForward(CnnMatrix input, int poolSize, out NeuralMatrix indices)
     {
         int outH = input.Height / poolSize;
@@ -576,7 +585,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
         return gradInput;
     }
 
-    // ---------- Dense Forward ----------
     private NeuralMatrix DenseForward(NeuralMatrix input, bool storeIntermediates)
     {
         var current = input;
@@ -592,7 +600,10 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                 {
                     float sum = 0;
                     for (int inFeature = 0; inFeature < current.UsedColumns; inFeature++)
+                    {
                         sum += current.At(r, inFeature) * weights.At(outNeuron, inFeature);
+                    }
+
                     result.At(r, outNeuron) = sum + biases.At(0, outNeuron);
                 }
             }
@@ -606,7 +617,12 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
 
             if (storeIntermediates)
             {
-                _densePostAct.Add(result);
+                _densePostAct.Add(result.Copy());
+            }
+
+            if (!ReferenceEquals(current, input))
+            {
+                current.Dispose();
             }
 
             current = result;
@@ -641,8 +657,12 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
             {
                 var derivativeFn = _denseDerivatives[i];
                 for (int r = 0; r < gradPre.Rows; r++)
+                {
                     for (int c = 0; c < gradPre.UsedColumns; c++)
+                    {
                         gradPre.At(r, c) *= derivativeFn(preAct.At(r, c));
+                    }
+                }
             }
 
             var weights = _denseWeights[i];
@@ -660,8 +680,12 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
 
             var dB = RentNeural(1, gradPre.UsedColumns);
             for (int r = 0; r < gradPre.Rows; r++)
+            {
                 for (int c = 0; c < gradPre.UsedColumns; c++)
+                {
                     dB.At(0, c) += gradPre.At(r, c);
+                }
+            }
 
             // Use optimizer for dense weights
             _denseOptimizers[i].UpdateDenseWeights(_denseWeights[i], _denseBiases[i], dW, dB);
@@ -788,14 +812,8 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
     // ---------- Cleanup ----------
     private void ClearIntermediates()
     {
-        foreach (var m in _densePostAct)
-        {
-            m.Dispose();
-        }
-
-        _densePostAct.Clear();
-        _densePreAct.Clear();
-
+        DisposeList(_densePostAct);
+        DisposeList(_densePreAct);
         DisposeList(_convInputs, skipFirst: true);
         DisposeList(_convPreAct);
         DisposeList(_convPostAct);
