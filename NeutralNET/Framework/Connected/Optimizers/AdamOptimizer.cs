@@ -55,7 +55,7 @@ internal class AdamOptimizer<TArch>(
         float* mPtr = mMatrix.Pointer;
         float* vPtr = vMatrix.Pointer;
         float* gPtr = gradient.Pointer;
-        float* end = mPtr + mMatrix.AllocatedLength;
+        float* end = mPtr + mMatrix.UnsafeSize;
 
         var beta1Vec = Vector512.Create(beta1);
         var beta2Vec = Vector512.Create(beta2);
@@ -97,7 +97,7 @@ internal class AdamOptimizer<TArch>(
         float* p = param.Pointer;
         float* mPtr = m.Pointer;
         float* vPtr = v.Pointer;
-        float* end = p + param.AllocatedLength;
+        float* end = p + param.UnsafeSize;
 
         float beta1T = MathF.Pow(beta1, t);
         float beta2T = MathF.Pow(beta2, t);

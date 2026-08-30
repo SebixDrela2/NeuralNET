@@ -24,8 +24,8 @@ public class DigitModel : IModel, IValidator
     {
         _rowCount = _fontNames.Length * DigitLimit * VariantFontCount;
 
-        TrainingInput = new NeuralMatrix(_rowCount, PixelCount);
-        TrainingOutput = new NeuralMatrix(_rowCount, NumClasses);  // 10 output neurons
+        TrainingInput = NeuralMatrix.GetOrCreate(_rowCount, PixelCount);
+        TrainingOutput = NeuralMatrix.GetOrCreate(_rowCount, NumClasses);  // 10 output neurons
     }
 
     public void Prepare()

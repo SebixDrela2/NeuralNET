@@ -30,7 +30,7 @@ internal unsafe class SGDOptimizer<TArch>(
 
         float* aPtr = matrixes[index].Pointer;
         float* bPtr = gradientMatrixes[index].Pointer;
-        float* aEnd = aPtr + matrixes[index].AllocatedLength;
+        float* aEnd = aPtr + matrixes[index].UnsafeSize;
 
         if (Avx2.IsSupported)
         {
@@ -49,7 +49,7 @@ internal unsafe class SGDOptimizer<TArch>(
         }
         else
         {
-            for (var i = 0; i < matrixes[index].AllocatedLength; i++)
+            for (var i = 0; i < matrixes[index].UnsafeSize; i++)
             {
                 aPtr[i] = aPtr[i] * factor - config.LearningRate * bPtr[i];
             }

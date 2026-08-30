@@ -9,7 +9,7 @@ public static unsafe class ActivationFunctions
 {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void ApplySigmoidVectorized(NeuralMatrix matrix)
-        => ApplySigmoidVectorized(matrix.Pointer, matrix.AllocatedLength);
+        => ApplySigmoidVectorized(matrix.Pointer, matrix.UnsafeSize);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void ApplySigmoidVectorized(float* ptr, int allocatedLength)
@@ -28,7 +28,7 @@ public static unsafe class ActivationFunctions
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void ApplyTanhVectorized(NeuralMatrix matrix)
-        => ApplyTanhVectorized(matrix.Pointer, matrix.AllocatedLength);
+        => ApplyTanhVectorized(matrix.Pointer, matrix.UnsafeSize);
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void ApplyTanhVectorized(float* ptr, int allocatedLength)
     {
@@ -58,7 +58,7 @@ public static unsafe class ActivationFunctions
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void ApplyReLUVectorized(NeuralMatrix matrix)
-        => ApplyReLUVectorized(matrix.Pointer, matrix.AllocatedLength);
+        => ApplyReLUVectorized(matrix.Pointer, matrix.UnsafeSize);
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void ApplyReLUVectorized(float* ptr, int allocatedLength)
     {
@@ -74,7 +74,7 @@ public static unsafe class ActivationFunctions
     }
 
     public static void ApplyLeakyReLUVectorized(NeuralMatrix matrix)
-    => ApplyLeakyReLUVectorized(matrix.Pointer, matrix.AllocatedLength);
+    => ApplyLeakyReLUVectorized(matrix.Pointer, matrix.UnsafeSize);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static unsafe void ApplyLeakyReLUVectorized(float* ptr, int allocatedLength)
@@ -96,7 +96,7 @@ public static unsafe class ActivationFunctions
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void ApplyLinearVectorized(NeuralMatrix matrix)
-        => ApplyLinearVectorized(matrix.Pointer, matrix.AllocatedLength);
+        => ApplyLinearVectorized(matrix.Pointer, matrix.UnsafeSize);
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void ApplyLinearVectorized(float* ptr, int allocatedLength)
     {

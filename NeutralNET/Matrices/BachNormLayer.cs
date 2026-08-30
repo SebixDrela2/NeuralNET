@@ -1,4 +1,4 @@
-﻿namespace NeutralNET.Matrices;
+namespace NeutralNET.Matrices;
 
 public class BatchNormLayer
 {
@@ -12,10 +12,10 @@ public class BatchNormLayer
 
     public BatchNormLayer(int size)
     {
-        Gamma = new NeuralMatrix(1, size);
-        Beta = new NeuralMatrix(1, size);
-        RunningMean = new NeuralMatrix(1, size);
-        RunningVar = new NeuralMatrix(1, size);
+        Gamma = NeuralMatrix.GetOrCreate(1, size);
+        Beta = NeuralMatrix.GetOrCreate(1, size);
+        RunningMean = NeuralMatrix.GetOrCreate(1, size);
+        RunningVar = NeuralMatrix.GetOrCreate(1, size);
 
         Gamma.Fill(1.0f);
         Beta.Fill(0.0f);

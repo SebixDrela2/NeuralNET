@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using NeutralNET.Matrices;
 
@@ -10,30 +11,74 @@ namespace NeutralNET.Framework.Convolutional;
 public class CnnMatrix : IDisposable
 {
     private float[] _data;
-    private bool _disposed;
+    private readonly int _allocatedLength;
 
-    public int Batch { get; }
-    public int Channels { get; }
-    public int Height { get; }
-    public int Width { get; }
-    public bool ReadOnly { get; }
-    public int AllocatedLength { get; }
+    private static readonly ConcurrentBag<CnnMatrix> _pool = [];
 
-    // Strides for NCHW layout
-    public int StrideW => 1;
-    public int StrideH => Width;
-    public int StrideC => Width * Height;
-    public int StrideN => Width * Height * Channels;
+    public static CnnMatrix GetOrCreate(int batch, int channels, int height, int width)
+    {
+        if (!_pool.TryTake(out var item))
+        {
+            item = new CnnMatrix(batch, channels, height, width);
 
-    public CnnMatrix(int batch, int channels, int height, int width, bool readOnly = false)
+            return item;
+        }
+
+        item.Resize(batch, channels, height, width);
+
+        return item;
+    }
+
+    private static readonly int CommonAllocatedLength = 163840;
+
+    public int Batch;
+    public int Channels;
+    public int Height;
+    public int Width;
+    public bool ReadOnly;
+
+    public int StrideW = 1;
+    public int StrideH;
+    public int StrideC;
+    public int StrideN;
+
+    public int UnsafeSize;
+
+    private CnnMatrix(int batch, int channels, int height, int width, bool readOnly = false)
     {
         Batch = batch;
         Channels = channels;
         Height = height;
         Width = width;
-        AllocatedLength = batch * channels * height * width;
+        _allocatedLength = CommonAllocatedLength;
+        UnsafeSize = batch * channels * height * width;
         ReadOnly = readOnly;
-        _data = ArrayPool<float>.Shared.Rent(AllocatedLength);
+        _data = new float[_allocatedLength];
+        StrideH = Width;
+        StrideC = Width * Height;
+        StrideN = Width * Height * Channels;
+        Clear();
+    }
+
+    public void Resize(int batch, int channels, int height, int width)
+    {
+        Batch = batch;
+        Channels = channels;
+        Height = height;
+        Width = width;
+
+        var allocatedLength = batch * channels * height * width;
+
+        if (_data.Length < allocatedLength)
+        {
+            throw new Exception();
+        }
+
+        UnsafeSize = batch * channels * height * width;
+        StrideH = Width;
+        StrideC = Width * Height;
+        StrideN = Width * Height * Channels;
+
         Clear();
     }
 
@@ -57,26 +102,22 @@ public class CnnMatrix : IDisposable
 
     public void Clear()
     {
-        Array.Clear(_data, 0, AllocatedLength);
+        Array.Clear(_data, 0, UnsafeSize);
     }
 
     public void Fill(float value)
     {
-        Array.Fill(_data, value, 0, AllocatedLength);
+        Array.Fill(_data, value, 0, UnsafeSize);
     }
 
     public void CopyFrom(CnnMatrix other)
     {
-        if (other.AllocatedLength != AllocatedLength)
+        if (other._allocatedLength != _allocatedLength)
+        {
             throw new ArgumentException("Size mismatch");
-        Array.Copy(other._data, 0, _data, 0, AllocatedLength);
-    }
+        }
 
-    public float[] ToArray()
-    {
-        var copy = new float[AllocatedLength];
-        Array.Copy(_data, 0, copy, 0, AllocatedLength);
-        return copy;
+        Array.Copy(other._data, 0, _data, 0, UnsafeSize);
     }
 
     public NeuralMatrix Im2Col(int kernelH, int kernelW, int stride, int padding)
@@ -87,8 +128,8 @@ public class CnnMatrix : IDisposable
         int outW = (paddedW - kernelW) / stride + 1;
         int patchSize = Channels * kernelH * kernelW;
 
-        var colMatrix = new NeuralMatrix(Batch * outH * outW, patchSize);
-        using var padded = new CnnMatrix(Batch, Channels, paddedH, paddedW);
+        var colMatrix = NeuralMatrix.GetOrCreate(Batch * outH * outW, patchSize);
+        using var padded = GetOrCreate(Batch, Channels, paddedH, paddedW);
         padded.Clear();
 
         // Copy with padding
@@ -155,7 +196,7 @@ public class CnnMatrix : IDisposable
         int outW = (paddedW - kernelW) / stride + 1;
         int patchSize = Channels * kernelH * kernelW;
 
-        using var paddedGrad = new CnnMatrix(Batch, Channels, paddedH, paddedW);
+        using var paddedGrad = GetOrCreate(Batch, Channels, paddedH, paddedW);
         paddedGrad.Clear();
 
         for (int b = 0; b < Batch; b++)
@@ -208,20 +249,7 @@ public class CnnMatrix : IDisposable
             throw new InvalidOperationException("Cannot dispose a read‑only CnnMatrix.");
         }
 
-        if (!_disposed)
-        {
-            ArrayPool<float>.Shared.Return(_data);
-            _data = null!;
-            _disposed = true;
-        }
-    }
-
-    // Debug helper (optional)
-    public void DebugPrint(string label, int maxElements = 10)
-    {
-        Console.Write($"{label}: ");
-        for (int i = 0; i < Math.Min(maxElements, AllocatedLength); i++)
-            Console.Write($"{_data[i]:F4} ");
-        Console.WriteLine($" (sum: {_data.Take(Math.Min(100, AllocatedLength)).Sum(Math.Abs):F6})");
+        Console.WriteLine($"pooled: {Height}x{Width}x{Batch}x{Channels}");
+        _pool.Add(this);
     }
 }

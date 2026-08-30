@@ -117,7 +117,7 @@ internal unsafe class NeuralTuner(Random rng)
 
     public void ApplyDropout(NeuralMatrix activations, float dropoutRate)
     {
-        int total = activations.AllocatedLength;
+        int total = activations.UnsafeSize;
         float keepProb = 1f - dropoutRate;
 
         float scale = 1f / keepProb;

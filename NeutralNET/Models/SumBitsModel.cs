@@ -25,8 +25,8 @@ public class SumBitsModel : IModel, IValidator
         var inputColumns = BitInput * 2;
         var outputColumns = BitOutput;
 
-        TrainingInput = new NeuralMatrix(BitRows, inputColumns);
-        TrainingOutput = new NeuralMatrix(BitRows, outputColumns);
+        TrainingInput = NeuralMatrix.GetOrCreate(BitRows, inputColumns);
+        TrainingOutput = NeuralMatrix.GetOrCreate(BitRows, outputColumns);
         TrainingOutputStrideMask = TrainingOutput.StrideMasks;
     }
 

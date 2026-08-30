@@ -31,32 +31,32 @@ public partial class Architecture : IArchitecture<Architecture>
         MatrixMBiases = new NeuralMatrix[Count];
         MatrixVBiases = new NeuralMatrix[Count];
 
-        MatrixNeurons[0] = new NeuralMatrix(1, architecture[0]);
+        MatrixNeurons[0] = NeuralMatrix.GetOrCreate(1, architecture[0]);
 
         for (var i = 1; i < architecture.Length; i++)
         {
             var layerIndex = i - 1;
 
-            MatrixWeights[layerIndex] = new NeuralMatrix(
+            MatrixWeights[layerIndex] = NeuralMatrix.GetOrCreate(
                 rows: architecture[i],
                 columns: MatrixNeurons[i - 1].UsedColumns
             );
-            MatrixBiases[layerIndex] = new NeuralMatrix(1, architecture[i]);
-            MatrixNeurons[i] = new NeuralMatrix(1, architecture[i]);
+            MatrixBiases[layerIndex] = NeuralMatrix.GetOrCreate(1, architecture[i]);
+            MatrixNeurons[i] = NeuralMatrix.GetOrCreate(1, architecture[i]);
             
-            MatrixMWeights[layerIndex] = new NeuralMatrix(
+            MatrixMWeights[layerIndex] = NeuralMatrix.GetOrCreate(
                 MatrixWeights[layerIndex].Rows,
                 MatrixWeights[layerIndex].UsedColumns
             );
-            MatrixVWeights[layerIndex] = new NeuralMatrix(
+            MatrixVWeights[layerIndex] = NeuralMatrix.GetOrCreate(
                 MatrixWeights[layerIndex].Rows,
                 MatrixWeights[layerIndex].UsedColumns
             );
-            MatrixMBiases[layerIndex] = new NeuralMatrix(
+            MatrixMBiases[layerIndex] = NeuralMatrix.GetOrCreate(
                 MatrixBiases[layerIndex].Rows,
                 MatrixBiases[layerIndex].UsedColumns
             );
-            MatrixVBiases[layerIndex] = new NeuralMatrix(
+            MatrixVBiases[layerIndex] = NeuralMatrix.GetOrCreate(
                 MatrixBiases[layerIndex].Rows,
                 MatrixBiases[layerIndex].UsedColumns
             );

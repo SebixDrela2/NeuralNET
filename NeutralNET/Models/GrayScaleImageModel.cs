@@ -1,4 +1,4 @@
-﻿using NeutralNET.Matrices;
+using NeutralNET.Matrices;
 using NeutralNET.Stuff;
 
 namespace NeutralNET.Models;
@@ -15,8 +15,8 @@ public class GrayScaleImageModel : IModel
 
     public GrayScaleImageModel()
     {
-        TrainingInput = new NeuralMatrix(PixelCount, InputSize);
-        TrainingOutput = new NeuralMatrix(PixelCount, OutputSize);
+        TrainingInput = NeuralMatrix.GetOrCreate(PixelCount, InputSize);
+        TrainingOutput = NeuralMatrix.GetOrCreate(PixelCount, OutputSize);
     }
 
     public void Prepare()

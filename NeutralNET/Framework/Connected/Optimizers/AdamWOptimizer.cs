@@ -56,7 +56,7 @@ internal class AdamWOptimizer<TArch>(
         float* mPtr = mMatrix.Pointer;
         float* vPtr = vMatrix.Pointer;
         float* gPtr = gradient.Pointer;
-        float* end = mPtr + mMatrix.AllocatedLength;
+        float* end = mPtr + mMatrix.UnsafeSize;
 
         var beta1Vec = Vector512.Create(beta1);
         var beta2Vec = Vector512.Create(beta2);
@@ -129,7 +129,7 @@ internal class AdamWOptimizer<TArch>(
         else
         {
             // Scalar fallback implementation
-            for (float* endScalar = mPtr + mMatrix.AllocatedLength; mPtr != endScalar; mPtr++, vPtr++, gPtr++)
+            for (float* endScalar = mPtr + mMatrix.UnsafeSize; mPtr != endScalar; mPtr++, vPtr++, gPtr++)
             {
                 *mPtr = beta1 * (*mPtr) + (1 - beta1) * (*gPtr);
                 *vPtr = beta2 * (*vPtr) + (1 - beta2) * (*gPtr) * (*gPtr);
@@ -145,7 +145,7 @@ internal class AdamWOptimizer<TArch>(
         float* p = param.Pointer;
         float* mPtr = m.Pointer;
         float* vPtr = v.Pointer;
-        float* end = p + param.AllocatedLength;
+        float* end = p + param.UnsafeSize;
 
         float beta1T = MathF.Pow(beta1, t);
         float beta2T = MathF.Pow(beta2, t);
@@ -242,7 +242,7 @@ internal class AdamWOptimizer<TArch>(
             float vCorr = 1 / (1 - beta2T);
             float lrWd = lr * wd;
 
-            for (float* endScalar = p + param.AllocatedLength; p != endScalar; p++, mPtr++, vPtr++)
+            for (float* endScalar = p + param.UnsafeSize; p != endScalar; p++, mPtr++, vPtr++)
             {
                 float mHat = (*mPtr) * mCorr;
                 float vHat = (*vPtr) * vCorr;

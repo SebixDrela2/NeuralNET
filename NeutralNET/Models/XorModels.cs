@@ -1,4 +1,4 @@
-﻿using NeutralNET.Activation;
+using NeutralNET.Activation;
 using NeutralNET.Matrices;
 using NeutralNET.Stuff;
 using System;
@@ -38,12 +38,12 @@ public unsafe class XorAdvanced
 
     public uint[] TrainingOutputStrideMask => throw new NotImplementedException();
 
-    public NeuralMatrix A0 = new NeuralMatrix(1, 2);
+    public NeuralMatrix A0 = NeuralMatrix.GetOrCreate(1, 2);
 
-    public NeuralMatrix W1 = new NeuralMatrix(2, 2);
-    public NeuralMatrix B1 = new NeuralMatrix(1, 2);
-    public NeuralMatrix W2 = new NeuralMatrix(2, 1);
-    public NeuralMatrix B2 = new NeuralMatrix(1, 1);
+    public NeuralMatrix W1 = NeuralMatrix.GetOrCreate(2, 2);
+    public NeuralMatrix B1 = NeuralMatrix.GetOrCreate(1, 2);
+    public NeuralMatrix W2 = NeuralMatrix.GetOrCreate(2, 1);
+    public NeuralMatrix B2 = NeuralMatrix.GetOrCreate(1, 1);
 
     [Obsolete]
     public float Forward()
@@ -61,14 +61,14 @@ public unsafe class XorAdvanced
 
     public void Prepare()
     {
-        TrainingInput = new NeuralMatrix(4, 2);
+        TrainingInput = NeuralMatrix.GetOrCreate(4, 2);
 
         TrainingData.AsSpan(0, 2).CopyTo(TrainingInput.GetRowSpan(0));
         TrainingData.AsSpan(3, 2).CopyTo(TrainingInput.GetRowSpan(1));
         TrainingData.AsSpan(6, 2).CopyTo(TrainingInput.GetRowSpan(2));
         TrainingData.AsSpan(9, 2).CopyTo(TrainingInput.GetRowSpan(3));
 
-        TrainingOutput = new NeuralMatrix(4, 1);
+        TrainingOutput = NeuralMatrix.GetOrCreate(4, 1);
 
         TrainingOutput.GetRowSpan(0)[0] = TrainingData[2];
         TrainingOutput.GetRowSpan(1)[0] = TrainingData[5];

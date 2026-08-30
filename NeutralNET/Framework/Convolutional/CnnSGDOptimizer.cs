@@ -31,13 +31,13 @@ public class CnnSGDOptimizer : ICnnOptimizer
         if (_convVelocityWeights == null || _convVelocityWeights.Rows != innerDim || _convVelocityWeights.UsedColumns != filters)
         {
             _convVelocityWeights?.Dispose();
-            _convVelocityWeights = new NeuralMatrix(innerDim, filters);
+            _convVelocityWeights = NeuralMatrix.GetOrCreate(innerDim, filters);
             _convVelocityWeights.Clear();
         }
         if (_convVelocityBiases == null || _convVelocityBiases.Rows != 1 || _convVelocityBiases.UsedColumns != filters)
         {
             _convVelocityBiases?.Dispose();
-            _convVelocityBiases = new NeuralMatrix(1, filters);
+            _convVelocityBiases = NeuralMatrix.GetOrCreate(1, filters);
             _convVelocityBiases.Clear();
         }
 
@@ -76,13 +76,13 @@ public class CnnSGDOptimizer : ICnnOptimizer
         if (_denseVelocityWeights == null || _denseVelocityWeights.Rows != inputSize || _denseVelocityWeights.UsedColumns != outputSize)
         {
             _denseVelocityWeights?.Dispose();
-            _denseVelocityWeights = new NeuralMatrix(inputSize, outputSize);
+            _denseVelocityWeights = NeuralMatrix.GetOrCreate(inputSize, outputSize);
             _denseVelocityWeights.Clear();
         }
         if (_denseVelocityBiases == null || _denseVelocityBiases.Rows != 1 || _denseVelocityBiases.UsedColumns != outputSize)
         {
             _denseVelocityBiases?.Dispose();
-            _denseVelocityBiases = new NeuralMatrix(1, outputSize);
+            _denseVelocityBiases = NeuralMatrix.GetOrCreate(1, outputSize);
             _denseVelocityBiases.Clear();
         }
 

@@ -1,11 +1,13 @@
-using NeutralNET.Stuff;
-using NeutralNET.Unmanaged;
-using NeutralNET.Utils;
+using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Drawing;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
+using NeutralNET.Stuff;
+using NeutralNET.Unmanaged;
+using NeutralNET.Utils;
 
 namespace NeutralNET.Matrices;
 
@@ -21,74 +23,76 @@ public unsafe class NeuralMatrix : IDisposable
     private const int ByteAlignmentMask = ByteAlignment - 1;
 
     // ---------- Buffer Pool ----------
-    private static readonly Dictionary<int, Stack<IntPtr>> _bufferPool = new();
+    private static readonly ConcurrentBag<NeuralMatrix> _pool = [];
 
-    /// <summary>
-    /// Returns a pooled aligned buffer of at least the requested size.
-    /// </summary>
-    private static float* RentBuffer(int allocatedLength)
+    private static readonly int CommonAllocatedLength = 0x280000;
+    private readonly int _allocatedLength;
+
+    public static NeuralMatrix GetOrCreate(int rows, int columns)
     {
-        int size = allocatedLength;
-        if (_bufferPool.TryGetValue(size, out var stack) && stack.Count > 0)
+        if (!_pool.TryTake(out var item))
         {
-            return (float*)stack.Pop();
+            item = new NeuralMatrix(rows, columns);
+            return item;
         }
 
-        nuint byteCount = ((nuint)(size * sizeof(float)) + ByteAlignmentMask) & ~(uint)ByteAlignmentMask;
-        return (float*)NativeMemory.AlignedAlloc(byteCount, ByteAlignment);
-    }
-
-    /// <summary>
-    /// Returns a buffer to the pool for reuse.
-    /// </summary>
-    private static void ReturnBuffer(float* ptr, int allocatedLength)
-    {
-        if (ptr == null) return;
-        int size = allocatedLength;
-        if (!_bufferPool.TryGetValue(size, out var stack))
-        {
-            stack = new Stack<IntPtr>();
-            _bufferPool[size] = stack;
-        }
-        stack.Push((IntPtr)ptr);
+        item.Resize(rows, columns);
+        return item;
     }
 
     // ---------- Instance ----------
     public float* Pointer;
 
-    public readonly int Rows;
-    public readonly int ColumnsStride;
-    public readonly int UsedColumns;
-    public readonly int LogicalLength;
-    public readonly int AllocatedLength;
-    public readonly uint[] StrideMasks;
+    public int Rows;
+    public int ColumnsStride;
+    public int UsedColumns;
+    public int LogicalLength;
+    public uint[] StrideMasks;
+    public int UnsafeSize;
 
     public bool HasStride => ColumnsStride != UsedColumns;
-    public Span<float> SpanWithGarbage => new(Pointer, AllocatedLength);
+    public Span<float> SpanWithGarbage => new(Pointer, UnsafeSize);
 
     // ---------- Constructors ----------
-    public NeuralMatrix(int rows, int columns)
+
+    private NeuralMatrix(int rows, int columns)
     {
         ColumnsStride = MatrixUtils.GetStride(columns);
         Rows = rows;
         UsedColumns = columns;
 
         LogicalLength = Rows * UsedColumns;
-        AllocatedLength = Rows * ColumnsStride;
+        _allocatedLength = CommonAllocatedLength;// ((nuint)(AllocatedLength * sizeof(float)) + ByteAlignmentMask) & ~(uint)ByteAlignmentMask;
+        UnsafeSize = Rows * ColumnsStride;
 
-        Pointer = RentBuffer(AllocatedLength);
+        Pointer = (float*)NativeMemory.AlignedAlloc((nuint)_allocatedLength * sizeof(float), ByteAlignment);
         StrideMasks = MatrixUtils.GetStrideMask(columns);
-        SpanWithGarbage.Clear(); // clears the buffer
+        SpanWithGarbage.Clear();
     }
 
     // ---------- Disposal ----------
     public void Dispose()
     {
-        if (Pointer != null)
+        _pool.Add(this);
+    }
+
+    public void Resize(int rows, int columns)
+    {
+        ColumnsStride = MatrixUtils.GetStride(columns);
+        Rows = rows;
+        UsedColumns = columns;
+
+        LogicalLength = Rows * UsedColumns;
+
+        if (_allocatedLength < CommonAllocatedLength)
         {
-            ReturnBuffer(Pointer, AllocatedLength);
-            Pointer = null;
+            //Pointer = RentBuffer(AllocatedLength);
+            throw new Exception();
         }
+
+        UnsafeSize = Rows * ColumnsStride;
+        StrideMasks = MatrixUtils.GetStrideMask(columns);
+        SpanWithGarbage.Clear(); // clears the buffer
     }
 
     // ---------- Existing methods (unchanged) ----------
@@ -154,7 +158,7 @@ public unsafe class NeuralMatrix : IDisposable
             throw new ArgumentException($"Rows of current: {Rows} do not match other Columns {other.UsedColumns}");
         }
         var innerColumnSize = UsedColumns;
-        var result = new NeuralMatrix(Rows, other.UsedColumns);
+        var result = GetOrCreate(Rows, other.UsedColumns);
 
         for (var row = 0; row < result.Rows; row++)
         {
@@ -196,12 +200,12 @@ public unsafe class NeuralMatrix : IDisposable
 
     public void CopyDataFrom(NeuralMatrix other)
     {
-        NativeMemory.Copy(other.Pointer, Pointer, (nuint)AllocatedLength * sizeof(float));
+        NativeMemory.Copy(other.Pointer, Pointer, (nuint)UnsafeSize * sizeof(float));
     }
 
     public NeuralMatrix Copy()
     {
-        var matrix = new NeuralMatrix(Rows, UsedColumns);
+        var matrix = GetOrCreate(Rows, UsedColumns);
         matrix.CopyDataFrom(this);
         return matrix;
     }
@@ -211,7 +215,7 @@ public unsafe class NeuralMatrix : IDisposable
         Debug.Assert(Rows == other.Rows);
         Debug.Assert(UsedColumns == other.UsedColumns);
 
-        var zipPointer = new Zip2Pointer(Pointer, other.Pointer, AllocatedLength);
+        var zipPointer = new Zip2Pointer(Pointer, other.Pointer, UnsafeSize);
 
         if (Avx2.IsSupported)
         {
@@ -260,7 +264,7 @@ public unsafe class NeuralMatrix : IDisposable
     public void RandomizeGaussian(float mean = 0f, float stddev = 1f, float multiplier = 1f, int? seed = null)
     {
         float* ptr = Pointer;
-        float* end = ptr + AllocatedLength;
+        float* end = ptr + UnsafeSize;
 
         if (Avx2.IsSupported)
         {
@@ -379,7 +383,7 @@ public unsafe class NeuralMatrix : IDisposable
     public void ClipVectorized(float min, float max)
     {
         float* ptr = Pointer;
-        float* end = ptr + AllocatedLength;
+        float* end = ptr + UnsafeSize;
 
         var minVec = Vector512.Create(min);
         var maxVec = Vector512.Create(max);
@@ -401,13 +405,13 @@ public unsafe class NeuralMatrix : IDisposable
 
     public void Clear()
     {
-        NativeMemory.Clear(Pointer, (nuint)AllocatedLength * sizeof(float));
+        NativeMemory.Clear(Pointer, (nuint)UnsafeSize * sizeof(float));
     }
 
     public void Fill(float value)
     {
         float* ptr = Pointer;
-        float* end = ptr + AllocatedLength;
+        float* end = ptr + UnsafeSize;
 
         var vec = Vector512.Create(value);
 

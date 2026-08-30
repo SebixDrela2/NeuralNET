@@ -46,58 +46,8 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
     private CnnMatrix _lastPooledOutput;
 
     private readonly Random _rng;
-
-    // ---------- Object Pools ----------
-    private static readonly Dictionary<(int rows, int cols), Stack<NeuralMatrix>> _neuralPool = new();
-    private static readonly Dictionary<(int batch, int channels, int h, int w), Stack<CnnMatrix>> _cnnPool = new();
-
-    private static NeuralMatrix RentNeural(int rows, int cols)
-    {
-        var key = (rows, cols);
-        if (_neuralPool.TryGetValue(key, out var stack) && stack.Count > 0)
-        {
-            var mat = stack.Pop();
-            mat.Clear();
-            return mat;
-        }
-        return new NeuralMatrix(rows, cols);
-    }
-
-    private static void ReturnNeural(NeuralMatrix mat)
-    {
-        if (mat == null) return;
-        var key = (mat.Rows, mat.UsedColumns);
-        if (!_neuralPool.TryGetValue(key, out var stack))
-        {
-            stack = new Stack<NeuralMatrix>();
-            _neuralPool[key] = stack;
-        }
-        stack.Push(mat);
-    }
-
-    private static CnnMatrix RentCnn(int batch, int channels, int h, int w)
-    {
-        var key = (batch, channels, h, w);
-        if (_cnnPool.TryGetValue(key, out var stack) && stack.Count > 0)
-        {
-            var mat = stack.Pop();
-            mat.Clear();
-            return mat;
-        }
-        return new CnnMatrix(batch, channels, h, w);
-    }
-
-    private static void ReturnCnn(CnnMatrix mat)
-    {
-        if (mat == null) return;
-        var key = (mat.Batch, mat.Channels, mat.Height, mat.Width);
-        if (!_cnnPool.TryGetValue(key, out var stack))
-        {
-            stack = new Stack<CnnMatrix>();
-            _cnnPool[key] = stack;
-        }
-        stack.Push(mat);
-    }
+    private static NeuralMatrix RentNeural(int rows, int cols) => NeuralMatrix.GetOrCreate(rows, cols);
+    private static CnnMatrix RentCnn(int batch, int channels, int h, int w) => CnnMatrix.GetOrCreate(batch, channels, h, w);
 
     // ---------- Constructor ----------
     public CnnNeuralFramework(NeuralNetworkConfig baseConfig, CnnArchitectureConfig cnnConfig,

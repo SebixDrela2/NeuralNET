@@ -44,8 +44,8 @@ public class CnnAdamOptimizer : ICnnOptimizer
         {
             _convMWeights?.Dispose();
             _convVWeights?.Dispose();
-            _convMWeights = new NeuralMatrix(innerDim, filters);
-            _convVWeights = new NeuralMatrix(innerDim, filters);
+            _convMWeights = NeuralMatrix.GetOrCreate(innerDim, filters);
+            _convVWeights = NeuralMatrix.GetOrCreate(innerDim, filters);
             _convMWeights.Clear();
             _convVWeights.Clear();
         }
@@ -53,8 +53,8 @@ public class CnnAdamOptimizer : ICnnOptimizer
         {
             _convMBiases?.Dispose();
             _convVBiases?.Dispose();
-            _convMBiases = new NeuralMatrix(1, filters);
-            _convVBiases = new NeuralMatrix(1, filters);
+            _convMBiases = NeuralMatrix.GetOrCreate(1, filters);
+            _convVBiases = NeuralMatrix.GetOrCreate(1, filters);
             _convMBiases.Clear();
             _convVBiases.Clear();
         }
@@ -110,8 +110,8 @@ public class CnnAdamOptimizer : ICnnOptimizer
         {
             _denseMWeights?.Dispose();
             _denseVWeights?.Dispose();
-            _denseMWeights = new NeuralMatrix(inputSize, outputSize);
-            _denseVWeights = new NeuralMatrix(inputSize, outputSize);
+            _denseMWeights = NeuralMatrix.GetOrCreate(inputSize, outputSize);
+            _denseVWeights = NeuralMatrix.GetOrCreate(inputSize, outputSize);
             _denseMWeights.Clear();
             _denseVWeights.Clear();
         }
@@ -119,8 +119,8 @@ public class CnnAdamOptimizer : ICnnOptimizer
         {
             _denseMBiases?.Dispose();
             _denseVBiases?.Dispose();
-            _denseMBiases = new NeuralMatrix(1, outputSize);
-            _denseVBiases = new NeuralMatrix(1, outputSize);
+            _denseMBiases = NeuralMatrix.GetOrCreate(1, outputSize);
+            _denseVBiases = NeuralMatrix.GetOrCreate(1, outputSize);
             _denseMBiases.Clear();
             _denseVBiases.Clear();
         }

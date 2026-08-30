@@ -27,7 +27,7 @@ internal class Program
         var (trainImages, trainLabels, actualLabels) = Cifar10DataLoader.LoadBatches(
             dataDir: dataDir,
             batchSize: 10,
-            maxSamples: 1000
+            maxSamples: 10
         );
 
         var cnnConfig = new CnnArchitectureConfig

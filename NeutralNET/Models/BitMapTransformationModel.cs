@@ -1,4 +1,4 @@
-﻿using NeutralNET.Matrices;
+using NeutralNET.Matrices;
 using NeutralNET.Stuff;
 
 namespace NeutralNET.Models;
@@ -16,8 +16,8 @@ public class BitMapTransformationModel : IModel
 
     public BitMapTransformationModel()
     {
-        TrainingInput = new NeuralMatrix(Paths.Length, RgbPixelCount);
-        TrainingOutput = new NeuralMatrix(Paths.Length, RgbPixelCount);
+        TrainingInput = NeuralMatrix.GetOrCreate(Paths.Length, RgbPixelCount);
+        TrainingOutput = NeuralMatrix.GetOrCreate(Paths.Length, RgbPixelCount);
     }
 
     public void Prepare()

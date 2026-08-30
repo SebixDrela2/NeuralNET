@@ -292,7 +292,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 
         float* aPtr = matrixes[index].Pointer;
         float* bPtr = gradientMatrixes[index].Pointer;
-        float* aEnd = aPtr + matrixes[index].AllocatedLength;
+        float* aEnd = aPtr + matrixes[index].UnsafeSize;
 
         if (Avx512F.IsSupported)
         {
@@ -311,7 +311,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         }
         else
         {
-            for (var i = 0; i < matrixes[index].AllocatedLength; i++)
+            for (var i = 0; i < matrixes[index].UnsafeSize; i++)
             {
                 aPtr[i] = aPtr[i] * factor - _config.LearningRate * bPtr[i];
             }
@@ -350,7 +350,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
     {
         var archOutputPtr = Architecture.MatrixNeurons[^1].Pointer;
         var gradOutputErrorPtr = _gradientArchitecture.MatrixNeurons[^1].Pointer;
-        float* aEnd = archOutputPtr + Architecture.MatrixNeurons[^1].AllocatedLength;
+        float* aEnd = archOutputPtr + Architecture.MatrixNeurons[^1].UnsafeSize;
 
         if (Avx512F.IsSupported)
         {
@@ -477,7 +477,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
     private static void NormalizeArray(NeuralMatrix matrix, Vector512<float> divisorVec, float divisorScalar)
     {
         var ptr = matrix.Pointer;
-        float* end = ptr + matrix.AllocatedLength;
+        float* end = ptr + matrix.UnsafeSize;
 
         if (Avx512F.IsSupported)
         {
