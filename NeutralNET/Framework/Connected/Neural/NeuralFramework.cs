@@ -1,17 +1,16 @@
 using NeutralNET.Activation;
-using NeutralNET.Framework.Optimizers;
+using NeutralNET.Framework.Connected.Optimizers;
 using NeutralNET.Matrices;
 using NeutralNET.Models;
 using NeutralNET.Utils;
 using System.Diagnostics;
 using System.Numerics;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 using static NeutralNET.Activation.ActivationSelector;
 
-namespace NeutralNET.Framework.Neural;
+namespace NeutralNET.Framework.Connected.Neural;
 
 public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
 {

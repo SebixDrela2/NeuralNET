@@ -1,4 +1,4 @@
-namespace NeutralNET.Framework.Optimizers;
+namespace NeutralNET.Framework.Connected.Optimizers;
 
 public enum OptimizerType
 {

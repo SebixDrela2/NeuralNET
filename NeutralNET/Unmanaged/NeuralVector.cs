@@ -1,6 +1,5 @@
-﻿using NeutralNET.Matrices;
+using NeutralNET.Matrices;
 using System.Diagnostics;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 

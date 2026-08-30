@@ -1,10 +1,11 @@
-using NeutralNET.Framework.Neural;
+using NeutralNET.Framework.Connected;
+using NeutralNET.Framework.Connected.Neural;
 using NeutralNET.Matrices;
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 
-namespace NeutralNET.Framework.Optimizers;
+namespace NeutralNET.Framework.Connected.Optimizers;
 
 internal class AdamWOptimizer<TArch>(
     NeuralNetworkConfig config,

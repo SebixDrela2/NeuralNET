@@ -1,8 +1,8 @@
-﻿using NeutralNET.Attributes;
+using NeutralNET.Attributes;
 using NeutralNET.Matrices;
 using NeutralNET.Models;
 
-namespace NeutralNET.Framework;
+namespace NeutralNET.Framework.Connected;
 
 [ArchitectureConfig(InputSize = DigitModel.PixelCount, HiddenLayers = [64, 64, 64], OutputSize = 1)]
 public partial class Architecture : IArchitecture<Architecture>

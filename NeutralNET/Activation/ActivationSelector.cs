@@ -1,6 +1,4 @@
-﻿using NeutralNET.Matrices;
-using System;
-using System.Runtime.CompilerServices;
+using NeutralNET.Matrices;
 
 namespace NeutralNET.Activation;
 
@@ -19,6 +17,7 @@ public class ActivationSelector
             ActivationType.Sigmoid => ActivationFunctions.ApplySigmoidVectorized,
             ActivationType.Tanh => ActivationFunctions.ApplyTanhVectorized,
             ActivationType.Identity => ActivationFunctions.ApplyLinearVectorized,
+            ActivationType.Softmax => ActivationFunctions.ApplySoftmaxVectorized,
             _ => throw new ArgumentOutOfRangeException(nameof(type), $"Unknown activation type: {type}")
         };
     }
@@ -30,9 +29,10 @@ public class ActivationSelector
         {
             ActivationType.ReLU => activation => activation > 0 ? 1f : 0f,
             ActivationType.LeakyReLU => activation => activation > 0 ? 1f : leakyAlpha,
-            ActivationType.Sigmoid => activation => Math.Max(activation * (1 - activation), 0.01f), // CLIP IT
+            ActivationType.Sigmoid => activation => Math.Max(activation * (1 - activation), 0.01f),
             ActivationType.Tanh => activation => Math.Max(1 - activation * activation, 0.01f),
             ActivationType.Identity => activation => 1,
+            ActivationType.Softmax => activation => 1f,
             _ => throw new ArgumentOutOfRangeException(nameof(type), $"Unknown activation type: {type}")
         };
     }

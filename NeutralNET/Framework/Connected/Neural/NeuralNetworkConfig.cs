@@ -1,8 +1,8 @@
 using NeutralNET.Activation;
-using NeutralNET.Framework.Optimizers;
+using NeutralNET.Framework.Connected.Optimizers;
 using NeutralNET.Models;
 
-namespace NeutralNET.Framework.Neural;
+namespace NeutralNET.Framework.Connected.Neural;
 
 public class NeuralNetworkConfig
 {

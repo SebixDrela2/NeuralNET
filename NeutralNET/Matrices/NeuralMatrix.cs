@@ -1,4 +1,4 @@
-﻿using NeutralNET.Stuff;
+using NeutralNET.Stuff;
 using NeutralNET.Unmanaged;
 using NeutralNET.Utils;
 using System.Diagnostics;
@@ -9,7 +9,7 @@ using System.Runtime.Intrinsics.X86;
 
 namespace NeutralNET.Matrices;
 
-public unsafe readonly struct NeuralMatrix
+public unsafe class NeuralMatrix : IDisposable
 {
     public const int Alignment = 16;
 
@@ -21,11 +21,11 @@ public unsafe readonly struct NeuralMatrix
     public static Dictionary<string, StackTrace> Traces = [];
     public static HashSet<(int Width, int Height)> Sizes = [];
 
-    public readonly float* Pointer;
+    public float* Pointer;
 
     public readonly int Rows;
 
-    public readonly bool HasStride => ColumnsStride != UsedColumns;
+    public bool HasStride => ColumnsStride != UsedColumns;
 
     public readonly int ColumnsStride;
     public readonly int UsedColumns;
@@ -59,7 +59,14 @@ public unsafe readonly struct NeuralMatrix
         return SpanWithGarbage.ToArray();
     }
 
-    public void Dispose() => NativeMemory.AlignedFree(Pointer);
+    public void Dispose()
+    {
+        if (Pointer != null)
+        {
+            NativeMemory.AlignedFree(Pointer);
+            Pointer = null;
+        }
+    }
 
     [Conditional("DEBUG")]
     public static void LogOrigin(int rows, int columns)
@@ -183,6 +190,14 @@ public unsafe readonly struct NeuralMatrix
     public void CopyDataFrom(NeuralMatrix other)
     {
         NativeMemory.Copy(other.Pointer, Pointer, (nuint)AllocatedLength * sizeof(float));
+    }
+
+    public NeuralMatrix Copy()
+    {
+        var matrix = new NeuralMatrix(Rows, UsedColumns);
+        matrix.CopyDataFrom(this);
+
+        return matrix;
     }
 
     public void SumVectorized(NeuralMatrix other)

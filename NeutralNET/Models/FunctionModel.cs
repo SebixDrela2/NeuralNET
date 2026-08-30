@@ -1,5 +1,5 @@
-﻿using NeutralNET.Framework;
-using NeutralNET.Framework.Neural;
+using NeutralNET.Framework.Connected;
+using NeutralNET.Framework.Connected.Neural;
 using NeutralNET.Validators;
 
 namespace NeutralNET.Models;

@@ -1,9 +1,10 @@
-﻿using NeutralNET.Framework.Neural;
+using NeutralNET.Framework.Connected;
+using NeutralNET.Framework.Connected.Neural;
 using NeutralNET.Matrices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 
-namespace NeutralNET.Framework.Optimizers;
+namespace NeutralNET.Framework.Connected.Optimizers;
 
 internal unsafe class SGDOptimizer<TArch>(
     NeuralNetworkConfig config,

@@ -1,4 +1,4 @@
-﻿using System.Runtime.CompilerServices;
+using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics.X86;
 using System.Runtime.Intrinsics;
 using NeutralNET.Matrices;
@@ -102,5 +102,36 @@ public static unsafe class ActivationFunctions
     {
         // Identity, do nothing
         // no op
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void ApplySoftmaxVectorized(NeuralMatrix matrix)
+    => ApplySoftmaxVectorized(matrix.Pointer, matrix.Rows, matrix.UsedColumns);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void ApplySoftmaxVectorized(float* ptr, int rows, int cols)
+    {
+        for (int r = 0; r < rows; r++)
+        {
+            float* row = ptr + r * cols;
+
+            // Find max for numerical stability
+            float max = row[0];
+            for (int c = 1; c < cols; c++)
+                if (row[c] > max) max = row[c];
+
+            // Compute exp(x - max) and sum
+            float sum = 0f;
+            for (int c = 0; c < cols; c++)
+            {
+                row[c] = MathF.Exp(row[c] - max);
+                sum += row[c];
+            }
+
+            // Normalize
+            float invSum = 1.0f / sum;
+            for (int c = 0; c < cols; c++)
+                row[c] *= invSum;
+        }
     }
 }

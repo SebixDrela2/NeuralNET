@@ -1,8 +1,8 @@
-﻿using NeutralNET.Framework.Neural;
+using NeutralNET.Framework.Neural;
 using NeutralNET.Matrices;
 using NeutralNET.Models;
 
-namespace NeutralNET.Framework;
+namespace NeutralNET.Framework.Connected;
 
 public interface IArchitecture<TSelf> where TSelf : IArchitecture<TSelf>
 {

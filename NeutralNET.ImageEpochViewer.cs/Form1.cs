@@ -1,7 +1,8 @@
 using NeutralNET.Activation;
-using NeutralNET.Framework;
+using NeutralNET.Framework.Connected;
+using NeutralNET.Framework.Connected.Neural;
+using NeutralNET.Framework.Connected.Optimizers;
 using NeutralNET.Framework.Neural;
-using NeutralNET.Framework.Optimizers;
 using NeutralNET.Matrices;
 using NeutralNET.Models;
 using NeutralNET.Stuff;

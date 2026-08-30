@@ -1,4 +1,4 @@
-﻿namespace NeutralNET.Activation;
+namespace NeutralNET.Activation;
 
 public enum ActivationType
 {
@@ -6,5 +6,6 @@ public enum ActivationType
     LeakyReLU,
     Sigmoid,
     Tanh,
-    Identity
+    Identity,
+    Softmax
 }

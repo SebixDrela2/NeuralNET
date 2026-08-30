@@ -1,7 +1,11 @@
 using NeutralNET.Activation;
-using NeutralNET.Framework;
+using NeutralNET.Framework.Connected;
+using NeutralNET.Framework.Connected.Neural;
+using NeutralNET.Framework.Connected.Optimizers;
+using NeutralNET.Framework.Convolutional;
 using NeutralNET.Framework.Neural;
-using NeutralNET.Framework.Optimizers;
+using NeutralNET.Framework.Neural.CNN;
+using NeutralNET.Matrices;
 using NeutralNET.Models;
 
 namespace NeutralTest;
@@ -12,7 +16,122 @@ internal class Program
 
     static void Main()
     {
-        RunNetworkDigit();
+        RunCnnCifar10SingleImage();
+    }
+
+
+    public static void RunCnnCifar10SingleImage()
+    {
+        string dataDir = @"D:\Cifar\datasets\cifar-10-batches-bin";
+
+        var (trainImages, trainLabels, testImages, testLabels) = Cifar10Loader.Load(
+            dataDir: dataDir,
+            batchSize: 1,
+            maxTrainSamples: 1,   // Only 1 image
+            maxTestSamples: 0     // Skip test
+        );
+        var singleImage = trainImages[0];
+        var singleLabel = trainLabels[0];
+
+        int actualLabel = GetLabelIndex(singleLabel);
+        Console.WriteLine($"Loaded 1 image with label: {actualLabel}");
+
+        var cnnConfig = new CnnArchitectureConfig
+        {
+            ConvLayers = new List<CnnLayerConfig>
+        {
+            new()
+            {
+                KernelHeight = 3,
+                KernelWidth = 3,
+                Filters = 8,
+                Stride = 1,
+                Padding = 1,
+                Activation = ActivationType.ReLU,
+                UseMaxPool = true,
+                PoolSize = 2
+            },
+            new()
+            {
+                KernelHeight = 3,
+                KernelWidth = 3,
+                Filters = 16,
+                Stride = 1,
+                Padding = 1,
+                Activation = ActivationType.ReLU,
+                UseMaxPool = true,
+                PoolSize = 2
+            }
+        },
+            DenseArchitecture = new[] { 64, 10 },
+            DenseHiddenActivation = ActivationType.ReLU,
+            OutputActivation = ActivationType.Softmax
+        };
+
+        var denseConfig = new NeuralNetworkConfig
+        {
+            LearningRate = 0.01f,
+            WeightDecay = 0.0001f,
+            BatchSize = 1,
+            Epochs = 1,
+            DropoutRate = 0.0f,
+            WithShuffle = false,
+            Model = null
+        };
+
+        using var framework = new CnnNeuralFramework<Architecture>(denseConfig, cnnConfig, 32, 32, 3);
+
+        float learningRate = 0.01f;
+        int epochs = 50;
+
+        Console.WriteLine("\nTraining on a single image...");
+        Console.WriteLine("Epoch\tLoss\tPrediction (should match label)");
+
+        for (int epoch = 0; epoch < epochs; epoch++)
+        {
+            float loss = framework.Train(singleImage, singleLabel, learningRate);
+
+            if (epoch % 10 == 0 || epoch == epochs - 1)
+            {
+                using var output = framework.Forward(singleImage);
+                int predicted = ArgMax(output.GetRowSpan(0));
+                Console.WriteLine($"{epoch + 1,4}\t{loss:F6}\t{predicted} (actual: {actualLabel})");
+            }
+
+            if (epoch > 10 && loss < 0.01f)
+            {
+                Console.WriteLine($"\n✓ Network learned the image! Stopping early at epoch {epoch + 1}");
+                break;
+            }
+        }
+
+        using var finalOutput = framework.Forward(singleImage);
+        int finalPrediction = ArgMax(finalOutput.GetRowSpan(0));
+        Console.WriteLine($"\nFinal prediction: {finalPrediction}, Actual: {actualLabel}");
+        Console.WriteLine(finalPrediction == actualLabel ? "✓ SUCCESS" : "✗ FAILED");
+    }
+
+    private static int GetLabelIndex(NeuralMatrix labelMatrix)
+    {
+        var row = labelMatrix.GetRowSpan(0);
+        for (int i = 0; i < row.Length; i++)
+            if (row[i] > 0.5f) return i;
+        return -1;
+    }
+
+    private static int ArgMax(Span<float> row)
+    {
+        int maxIdx = 0;
+        float maxVal = row[0];
+        for (int i = 1; i < row.Length; i++)
+        {
+            if (row[i] > maxVal)
+            {
+                maxVal = row[i];
+                maxIdx = i;
+            }
+        }
+        return maxIdx;
     }
 
     public static void RunNetwork()
@@ -41,7 +160,7 @@ internal class Program
         model.Prepare();
 
         var network = new NeuralNetworkBuilder<Architecture>(model)
-            .WithArchitecture([128, 64, 32]) 
+            .WithArchitecture([128, 64, 32])
             .WithEpochs(5000)
             .WithBatchSize(64)
             .WithHiddenLayerActivation(ActivationType.ReLU)
@@ -77,7 +196,7 @@ internal class Program
             .WithEpsilon(1e-8f)
             .WithShuffle(true)
             .Build();
-        
+
         var forward = network.RunModel();
         model.Validate(forward);
     }
@@ -116,7 +235,7 @@ internal class Program
             .WithLearningRate(1e-5f)
             .WithOptimizer(OptimizerType.Adam)
             .WithEpsilon(1e-8f)
-            .WithShuffle(true)           
+            .WithShuffle(true)
             .Build();
 
         var forward = network.RunDynamicModel();

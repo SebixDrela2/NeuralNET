@@ -1,6 +1,7 @@
-using NeutralNET.Framework.Neural;
+using NeutralNET.Framework.Connected;
+using NeutralNET.Framework.Connected.Neural;
 
-namespace NeutralNET.Framework.Optimizers;
+namespace NeutralNET.Framework.Connected.Optimizers;
 
 internal class OptimizerFactory<TArch>(
     NeuralNetworkConfig config, 

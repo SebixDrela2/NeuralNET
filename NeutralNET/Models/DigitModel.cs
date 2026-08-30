@@ -1,4 +1,4 @@
-using NeutralNET.Framework.Neural;
+using NeutralNET.Framework.Connected.Neural;
 using NeutralNET.Matrices;
 using NeutralNET.Models;
 using NeutralNET.Stuff;
