@@ -1,5 +1,6 @@
 using NeutralNET.Matrices;
 using NeutralNET.Framework.Convolutional;
+using NeutralNET.Stuff;
 
 public static class Cifar10Loader
 {
@@ -64,6 +65,51 @@ public static class Cifar10Loader
         return (trainImages, trainLabels, testImages, testLabels);
     }
 
+    public static (List<CnnMatrix> trainImages, List<NeuralMatrix> trainLabels, List<CnnMatrix> testImages, List<NeuralMatrix> testLabels) GenerateDigiDigi(
+        int batchSize = 64,
+        int maxTrainSamples = int.MaxValue,
+        int maxTestSamples = int.MaxValue)
+    {
+        var trainImages = new List<CnnMatrix>();
+        var trainLabels = new List<NeuralMatrix>();
+        var testImages = new List<CnnMatrix>();
+        var testLabels = new List<NeuralMatrix>();
+
+        int trainSamplesLoaded = 0;
+        int testSamplesLoaded = 0;
+
+        // Load training batches
+        for (int i = 1; i <= 5; i++)
+        {
+            if (trainSamplesLoaded >= maxTrainSamples) break;
+
+            var data = GraphicsUtils.GetDigitsDataSetRGB("Arial").Take(maxTrainSamples - trainSamplesLoaded);
+            var (labels, images) = (
+                data.Select(x => x.Label).ToArray(),
+                data.Select(x => x.Flat.ToArray()).ToArray()
+            );
+
+            AddToBatches(images, labels, batchSize, trainImages, trainLabels);
+            trainSamplesLoaded += images.Length;
+        }
+
+        {
+            var data = GraphicsUtils.GetDigitsDataSetRGB("Arial").Take(maxTestSamples);
+            var (testLbls, testImgs) = (
+                data.Select(x => x.Label).ToArray(),
+                data.Select(x => x.Flat.ToArray()).ToArray()
+            );
+
+            AddToBatches(testImgs, testLbls, batchSize, testImages, testLabels);
+            testSamplesLoaded += testImgs.Length;
+        }
+
+        Console.WriteLine($"Loaded {trainSamplesLoaded} training samples in {trainImages.Count} batches");
+        Console.WriteLine($"Loaded {testSamplesLoaded} test samples in {testImages.Count} batches");
+
+        return (trainImages, trainLabels, testImages, testLabels);
+    }
+
     private static (float[][] images, int[] labels) ReadBatch(string path)
     {
         byte[] data = File.ReadAllBytes(path);
@@ -95,7 +141,7 @@ public static class Cifar10Loader
             int end = Math.Min(start + batchSize, numSamples);
             int currentBatchSize = end - start;
 
-            var imgMat = CnnMatrix.GetOrCreate(currentBatchSize, 3, 32, 32, readOnly:true);
+            var imgMat = CnnMatrix.GetOrCreate(currentBatchSize, 3, 32, 32, readOnly: true);
             var lblMat = NeuralMatrix.GetOrCreate(currentBatchSize, 10);
 
             for (int i = 0; i < currentBatchSize; i++)

@@ -10,7 +10,7 @@ namespace NeutralNET.Stuff;
 
 public static partial class GraphicsUtils
 {
-    private const int FontSize = Height/2;
+    private const int FontSize = Height / 2;
     private const int UpScale = 4;
 
     private const int ScaleWidth = Width * UpScale;
@@ -29,6 +29,40 @@ public static partial class GraphicsUtils
 
     [SupportedOSPlatformGuard("windows6.1")]
     public static bool IsSupported => OperatingSystem.IsWindowsVersionAtLeast(6, 1);
+
+    public static PixelStructRGB[] GetDigitsDataSetRGB(string fontName, bool applyTransformation = true)
+    {
+        if (!IsSupported)
+        {
+            throw new NotSupportedException();
+        }
+
+        var result = new PixelStructRGB[DigitLimit];
+        var c = '0';
+
+        var font = new Font(fontName, FontSize * UpScale, FontStyle.Regular);
+
+        for (var i = 0; i < DigitLimit; ++i, ++c)
+        {
+            Matrix? transformation;
+
+            if (applyTransformation)
+            {
+                var angle = float.Lerp(-5, 5, _rng.NextSingle());
+                var scaleX = float.Lerp(0.95f, 1.05f, _rng.NextSingle());
+                var scaleY = float.Lerp(0.95f, 1.05f, _rng.NextSingle());
+
+                transformation = CreateTranformationMatrix(angle, 1, 1);
+            }
+            else
+            {
+                transformation = CreateTranformationMatrix(0, 1, 1);
+            }
+
+            result[i] = GenerateCharPixelStructRGB(c, font, transformation);
+        }
+        return result;
+    }
 
     public static PixelStruct[] GetDigitsDataSet(string fontName, bool applyTransformation = true)
     {
@@ -74,6 +108,70 @@ public static partial class GraphicsUtils
         return GenerateCharPixelStruct(@char, new Font(fontName, FontSize * UpScale, FontStyle.Regular));
     }
 
+    public static PixelStructRGB GenerateCharPixelStructRGB(char @char, Font font, Matrix? transformation = null)
+    {
+        if (!IsSupported)
+        {
+            throw new NotSupportedException();
+        }
+
+        transformation ??= new Matrix();
+
+        using var bitMap = new Bitmap(ScaleWidth, ScaleHeight, PixelFormat.Format32bppArgb);
+        using var trueBitMap = new Bitmap(Width, Height, PixelFormat.Format32bppArgb);
+
+        using (var g = Graphics.FromImage(bitMap))
+        {
+
+            var str = @char.ToString();
+            var fontDim = g.MeasureString(str, font);
+
+            var pos = new PointF(
+                (ScaleWidth / 2) - fontDim.Width / 2,
+                (ScaleHeight / 2) - fontDim.Height / 2
+            );
+
+            var oldTransform = g.Transform;
+
+            g.Clear(Color.Black);
+            g.TextRenderingHint = TextRenderingHint.AntiAlias;
+            g.Transform = transformation;
+            g.DrawString(str, font, Brushes.White, pos);
+            g.Flush();
+        }
+
+        using (var g = Graphics.FromImage(trueBitMap))
+        {
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.SmoothingMode = SmoothingMode.HighQuality;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+
+            g.DrawImage(
+                bitMap,
+                new Rectangle(0, 0, Width, Height),
+                new Rectangle(0, 0, ScaleWidth, ScaleHeight),
+                GraphicsUnit.Pixel
+            );
+        }
+
+        //bitMap.Save($@"C:\Users\Sebastian\source\repos\NeutralNET\NeutralNET\bin\Debug\net9.0\Imuges\{@char}_{font.Name}_{DateTime.Now.Ticks}.png");
+
+        var result = new ColorRGB[Size];
+        var index = 0;
+        var pixels = new PixelStructRGB(@char - '0', Size);
+
+        for (int y = 0; y < Height; y++)
+        {
+            for (int x = 0; x < Width; x++, ++index)
+            {
+                var pixel = trueBitMap.GetPixel(x, y);
+                pixels.Values[index] = (pixel.R, pixel.G, pixel.B);
+            }
+        }
+
+        return pixels;
+    }
+
     public static PixelStruct GenerateCharPixelStruct(char @char, Font font, Matrix? transformation = null)
     {
         if (!IsSupported)
@@ -103,7 +201,7 @@ public static partial class GraphicsUtils
             g.TextRenderingHint = TextRenderingHint.AntiAlias;
             g.Transform = transformation;
             g.DrawString(str, font, Brushes.White, pos);
-            g.Flush();          
+            g.Flush();
         }
 
         using (var g = Graphics.FromImage(trueBitMap))
@@ -233,7 +331,7 @@ public static partial class GraphicsUtils
             throw new NotSupportedException();
         }
 
-        var (cx, cy) = (ScaleWidth/2f, ScaleHeight/2f);
+        var (cx, cy) = (ScaleWidth / 2f, ScaleHeight / 2f);
         var m = new Matrix();
 
         m.Translate(-cx, -cy);
