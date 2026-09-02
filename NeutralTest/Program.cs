@@ -24,7 +24,7 @@ internal class Program
         string dataDir = @"D:\Cifar\datasets\cifar-10-batches-bin";
 
         // 1. Load data
-        var (trainImages, trainLabels, actualLabels) = Cifar10DataLoader.LoadBatches(
+        var (trainImages, trainLabels, actualLabels, testImages, testLabels, actualTestLabels) = Cifar10DataLoader.LoadBatches(
             dataDir: dataDir,
             batchSize: 10,
             maxSamples: 10000
@@ -98,7 +98,7 @@ internal class Program
             // Evaluate every 10 epochs to save time
             if (true)
             {
-                var result = validator.Validate(network, trainImages, trainLabels);
+                var result = validator.Validate(network, testImages, testLabels);
                 float accuracy = result.Accuracy;
 
                 // Track best accuracy for early stopping
@@ -132,7 +132,7 @@ internal class Program
 
         // Final evaluation with detailed results
         Console.WriteLine("\n=== FINAL EVALUATION ===");
-        var finalResult = validator.Validate(network, trainImages, trainLabels);
+        var finalResult = validator.Validate(network, testImages, testLabels);
         validator.PrintResults(finalResult);
 
         // Cleanup

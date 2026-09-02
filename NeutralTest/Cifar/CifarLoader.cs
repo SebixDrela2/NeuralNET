@@ -66,6 +66,9 @@ public static class Cifar10Loader
         return (trainImages, trainLabels, testImages, testLabels);
     }
 
+    private static readonly string[] _fontNames =
+    ["Arial", "Times New Roman", "Georgia", "Verdana", "Tahoma"];
+
     public static (List<CnnMatrix> trainImages, List<NeuralMatrix> trainLabels, List<CnnMatrix> testImages, List<NeuralMatrix> testLabels) GenerateDigiDigi(
         int batchSize = 64,
         int maxTrainSamples = int.MaxValue,
@@ -79,12 +82,15 @@ public static class Cifar10Loader
         int trainSamplesLoaded = 0;
         int testSamplesLoaded = 0;
 
+        var fontNames = _fontNames.ToArray();
+
         // Load training batches
         for (int i = 1; i <= 5; i++)
         {
+            Random.Shared.Shuffle(fontNames);
             if (trainSamplesLoaded >= maxTrainSamples) break;
 
-            var data = GraphicsUtils.GetDigitsDataSetRGB("Arial").Take(maxTrainSamples - trainSamplesLoaded);
+            var data = fontNames.SelectMany(font => GraphicsUtils.GetDigitsDataSetRGB(font).Take(maxTrainSamples - trainSamplesLoaded));
             var (labels, images) = (
                 data.Select(x => x.Label).ToArray(),
                 data.Select(x => x.Flat.ToArray()).ToArray()
@@ -95,7 +101,8 @@ public static class Cifar10Loader
         }
 
         {
-            var data = GraphicsUtils.GetDigitsDataSetRGB("Arial").Take(maxTestSamples);
+            Random.Shared.Shuffle(fontNames);
+            var data = fontNames.SelectMany(font => GraphicsUtils.GetDigitsDataSetRGB(font).Take(maxTestSamples));
             var (testLbls, testImgs) = (
                 data.Select(x => x.Label).ToArray(),
                 data.Select(x => x.Flat.ToArray()).ToArray()

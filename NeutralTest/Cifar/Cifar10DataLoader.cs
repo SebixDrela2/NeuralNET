@@ -3,16 +3,24 @@ using NeutralNET.Matrices;
 
 public static class Cifar10DataLoader
 {
-    public static (List<CnnMatrix> images, List<NeuralMatrix> labels, int[] actualLabels)
+    public static (List<CnnMatrix> images, List<NeuralMatrix> labels, int[] actualLabels, List<CnnMatrix> testImages, List<NeuralMatrix> testLabels, int[] actualTestLabels)
         LoadBatches(string dataDir, int batchSize = 10, int maxSamples = 100)
     {
-        var (trainImages, trainLabels, _, _) = Cifar10Loader.GenerateDigiDigi(
+        var (trainImages, trainLabels, testImages, testLabels) = Cifar10Loader.GenerateDigiDigi(
             batchSize: batchSize,
             maxTrainSamples: maxSamples,
-            maxTestSamples: 0
+            maxTestSamples: maxSamples
         );
 
         // Read actual labels
+        int[] actualLabels = LabelCalc(trainLabels);
+        int[] actualTestLabels = LabelCalc(testLabels);
+
+        return (trainImages, trainLabels, actualLabels, testImages, testLabels, actualTestLabels);
+    }
+
+    private static int[] LabelCalc(List<NeuralMatrix> trainLabels)
+    {
         int totalSamples = trainLabels.Sum(l => l.Rows);
         int[] actualLabels = new int[totalSamples];
         int offset = 0;
@@ -23,7 +31,7 @@ public static class Cifar10DataLoader
             offset += lbl.Rows;
         }
 
-        return (trainImages, trainLabels, actualLabels);
+        return actualLabels;
     }
 
     private static int ArgMax(Span<float> row)
