@@ -4,7 +4,7 @@ using NeutralNET.Stuff;
 
 public static class Cifar10Loader
 {
-    private const int Scale = 32;
+    private const int Scale = 16;
     private const int ImageSize = Scale * Scale * 3; // 3072
     private const int NumClasses = 10;
 
@@ -143,10 +143,10 @@ public static class Cifar10Loader
         {
             for (int i = 0; i < batch.Batch; i++)
             {
-                var single = CnnMatrix.GetOrCreate(1, 3, 32, 32);
+                var single = CnnMatrix.GetOrCreate(1, 3, Scale, Scale);
                 for (int c = 0; c < 3; c++)
-                    for (int y = 0; y < 32; y++)
-                        for (int x = 0; x < 32; x++)
+                    for (int y = 0; y < Scale; y++)
+                        for (int x = 0; x < Scale; x++)
                             single[0, c, y, x] = batch[i, c, y, x];
                 images.Add(single);
             }

@@ -22,8 +22,8 @@ public static partial class GraphicsUtils
 
     private static readonly Random _rng = new(RandomSeed);
 
-    public const int Width = 32;
-    public const int Height = 32;
+    public const int Width = 16;
+    public const int Height = 16;
 
     public const int PixelCount = Width * Height;
 

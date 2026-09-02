@@ -7,6 +7,7 @@ using NeutralNET.Framework.Neural;
 using NeutralNET.Framework.Neural.CNN;
 using NeutralNET.Matrices;
 using NeutralNET.Models;
+using NeutralNET.Stuff;
 
 namespace NeutralTest;
 
@@ -39,8 +40,8 @@ internal class Program
         new() { KernelHeight = 3, KernelWidth = 3, Filters = 32, Stride = 1, Padding = 1,
                 Activation = ActivationType.LeakyReLU, UseMaxPool = true, PoolSize = 2 }
     },
-            DenseArchitecture = [512, 256, 256, 128],
-            DenseHiddenActivation = ActivationType.LeakyReLU,
+            DenseArchitecture = [512, 256, 256, 128, 128, 64, 64, 32, 32],
+            DenseHiddenActivation = ActivationType.ReLU,
             OutputActivation = ActivationType.Softmax,
             OptimizerConfig = new CnnOptimizerConfig
             {
@@ -68,14 +69,14 @@ internal class Program
         using var network = new CnnBuilder<Architecture>()
             .WithCnnConfig(cnnConfig)
             .WithDenseConfig(denseConfig)
-            .WithInputSize(32, 32, 3)
+            .WithInputSize(GraphicsUtils.Width, GraphicsUtils.Height, 3)
             .Build();
 
         var validator = new CnnValidator();
 
         float learningRate = 0.001f;
         int maxEpochs = 2000;
-        int earlyStopPatience = 1000;
+        int earlyStopPatience = 3000;
         float targetAccuracy = 0.99f;
 
         Console.WriteLine($"Training on {trainImages.Count} batches...");
@@ -168,8 +169,6 @@ internal class Program
                     Console.WriteLine($"Best accuracy: {bestAccuracy:P2}");
                     break;
                 }
-
-                Thread.Sleep(200);
             }
         }
 
