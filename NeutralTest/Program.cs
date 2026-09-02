@@ -103,9 +103,9 @@ internal class Program
                 Console.Clear();
 
                 // Header
-                Console.WriteLine($"╔═════════════╤══════════════════╤════════════════════╤═════════════════════════╗");
-                Console.WriteLine($"║  Epoch {epoch + 1,3}  |  Loss: {avgLoss:F6}  |  Accuracy: {accuracy,6:P2}  |  Best: {bestAccuracy,6:P2}              ║");
-                Console.WriteLine($"╠═══════╤═════════════════════════════════════════════════════════════╤══════════════╣");
+                Console.WriteLine($"╔═════════════╤══════════════════╤════════════════════╤══════════════════════════════╗");
+                Console.WriteLine($"║  Epoch {epoch + 1,3}  |  Loss: {avgLoss,8:F6}  |  Accuracy: {accuracy,6:P2}  |  Best: {bestAccuracy,6:P2}                ║");
+                Console.WriteLine($"╠═══════╤═════╧══════════════════╧════════════════════╧═══════════════╤══════════════╣");
                 Console.WriteLine($"║       │     0     1     2     3     4     5     6     7     8     9 │ Pred  Actual ║");
                 Console.WriteLine($"╠═══════╪═════════════════════════════════════════════════════════════╪══════════════╣");
 
@@ -138,7 +138,7 @@ internal class Program
                     pred.Dispose();
                 }
 
-                Console.WriteLine($"╚═══════════════════════════════════════════════════════════════════════════════╝");
+                Console.WriteLine($"╚════════════════════════════════════════════════════════════════════════════════════╝");
                 Console.WriteLine();
                 Console.WriteLine($"Best accuracy: {bestAccuracy:P2}  |  Epochs since best: {epochsSinceBest}");
 
