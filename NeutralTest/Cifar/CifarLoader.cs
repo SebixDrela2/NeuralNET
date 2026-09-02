@@ -4,7 +4,7 @@ using NeutralNET.Stuff;
 
 public static class Cifar10Loader
 {
-    private const int Scale = 64;
+    private const int Scale = 32;
     private const int ImageSize = Scale * Scale * 3; // 3072
     private const int NumClasses = 10;
 
@@ -69,7 +69,9 @@ public static class Cifar10Loader
     private static readonly string[] _fontNames =
     ["Arial", "Times New Roman", "Georgia", "Verdana", "Tahoma"];
 
-    public static (List<CnnMatrix> trainImages, List<NeuralMatrix> trainLabels, List<CnnMatrix> testImages, List<NeuralMatrix> testLabels) GenerateDigiDigi(
+    public static (List<CnnMatrix> trainImages, List<NeuralMatrix> trainLabels,
+                   List<CnnMatrix> testImages, List<NeuralMatrix> testLabels)
+        GenerateDigiDigi(
         int batchSize = 64,
         int maxTrainSamples = int.MaxValue,
         int maxTestSamples = int.MaxValue)
@@ -115,7 +117,60 @@ public static class Cifar10Loader
         Console.WriteLine($"Loaded {trainSamplesLoaded} training samples in {trainImages.Count} batches");
         Console.WriteLine($"Loaded {testSamplesLoaded} test samples in {testImages.Count} batches");
 
-        return (trainImages, trainLabels, testImages, testLabels);
+        // ✅ FLATTEN: Convert batches to individual images and labels
+        var flatTrainImages = FlattenBatchesToImages(trainImages);
+        var flatTrainLabels = FlattenBatchesToLabels(trainLabels);
+        var flatTestImages = FlattenBatchesToImages(testImages);
+        var flatTestLabels = FlattenBatchesToLabels(testLabels);
+
+        // ✅ Cleanup original batches
+        foreach (var img in trainImages) img.Dispose();
+        foreach (var lbl in trainLabels) lbl.Dispose();
+        foreach (var img in testImages) img.Dispose();
+        foreach (var lbl in testLabels) lbl.Dispose();
+
+        Console.WriteLine($"Flattened to {flatTrainImages.Count} individual training images");
+        Console.WriteLine($"Flattened to {flatTestImages.Count} individual test images");
+
+        return (flatTrainImages, flatTrainLabels, flatTestImages, flatTestLabels);
+    }
+
+    // ✅ NEW: Flatten batches to individual images
+    public static List<CnnMatrix> FlattenBatchesToImages(List<CnnMatrix> batches)
+    {
+        var images = new List<CnnMatrix>();
+        foreach (var batch in batches)
+        {
+            for (int i = 0; i < batch.Batch; i++)
+            {
+                var single = CnnMatrix.GetOrCreate(1, 3, 32, 32);
+                for (int c = 0; c < 3; c++)
+                    for (int y = 0; y < 32; y++)
+                        for (int x = 0; x < 32; x++)
+                            single[0, c, y, x] = batch[i, c, y, x];
+                images.Add(single);
+            }
+        }
+        return images;
+    }
+
+    // ✅ NEW: Flatten batches to individual labels
+    public static List<NeuralMatrix> FlattenBatchesToLabels(List<NeuralMatrix> batches)
+    {
+        var labels = new List<NeuralMatrix>();
+        foreach (var batch in batches)
+        {
+            for (int i = 0; i < batch.Rows; i++)
+            {
+                var single = NeuralMatrix.GetOrCreate(1, 10);
+                for (int j = 0; j < 10; j++)
+                {
+                    single.At(0, j) = batch.At(i, j);
+                }
+                labels.Add(single);
+            }
+        }
+        return labels;
     }
 
     private static (float[][] images, int[] labels) ReadBatch(string path)

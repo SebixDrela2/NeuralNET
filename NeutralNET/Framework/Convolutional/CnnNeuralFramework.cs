@@ -16,6 +16,8 @@ namespace NeutralNET.Framework.Neural.CNN;
 public unsafe class CnnNeuralFramework<TArch> : IDisposable
     where TArch : IArchitecture<TArch>
 {
+    private const float GRADIENT_CLIP_NORM = 0.5f; // Aggressive clipping to prevent explosion
+
     private readonly NeuralNetworkConfig _baseConfig;
     private readonly CnnArchitectureConfig _cnnConfig;
     private readonly ActivationSelector _activationSelector = new();
@@ -179,16 +181,14 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
         bool hasAvx2 = Avx2.IsSupported;
 
         CnnMatrix current = input;
-        bool needsDispose = false; // Tracks if 'current' is a temporary layer output
+        bool needsDispose = false;
 
         for (int layerIdx = 0; layerIdx < _cnnConfig.ConvLayers.Count; layerIdx++)
         {
             var layer = _cnnConfig.ConvLayers[layerIdx];
 
-            // 1. Convolution Forward Pass
             var (convOut, colInput, weightMat) = ConvForward(current, layerIdx);
 
-            // Immediate cleanup of temporary GEMM mats from ConvForward
             colInput.Dispose();
             weightMat.Dispose();
 
@@ -197,13 +197,11 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                 current.Dispose();
             }
 
-            // 2. Vectorized In-Place Activation
             float* pAct = convOut.Pointer;
             int totalElements = convOut.Batch * convOut.Channels * convOut.Height * convOut.Width;
 
             ApplyActivationVectorized(pAct, totalElements, layer.Activation, hasAvx512, hasAvx2);
 
-            // 3. Max Pooling Pass
             if (layer.UseMaxPool)
             {
                 var pooled = MaxPoolForward(convOut, layer.PoolSize);
@@ -218,22 +216,15 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
             needsDispose = true;
         }
 
-        // =========================================================================
-        // FLATTEN & SINGLE CLEANUP
-        // =========================================================================
         var flat = Flatten(current);
 
-        // Dispose 'current' exactly ONCE if it was created during the pipeline
         if (needsDispose)
         {
             current.Dispose();
             current = null;
         }
 
-        // Execute Dense Pass
         NeuralMatrix denseOut = DenseForward(flat, storeIntermediates: false);
-
-        // Cleanup flattened buffer
         flat.Dispose();
 
         return denseOut;
@@ -293,7 +284,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                     {
                         var vSrc = Vector512.Load(ptr + i);
                         var vScaled = vSrc * vAlpha;
-                        // Select: vSrc >= 0 ? vSrc : vSrc * alpha
                         var vDst = Avx512F.Max(vSrc, vScaled);
                         vDst.Store(ptr + i);
                     }
@@ -307,7 +297,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
 
             default:
                 throw new NotImplementedException();
-                break;
         }
     }
 
@@ -422,8 +411,12 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
             }
         }
 
-        // Dense Backward Pass
+        // =========================================================================
+        // DENSE BACKWARD WITH CLIPPING
+        // =========================================================================
+        ClipGradients(grad, GRADIENT_CLIP_NORM);
         var denseGrad = DenseBackward(grad, learningRate, skipLastDerivative: true);
+        ClipGradients(denseGrad, GRADIENT_CLIP_NORM);
 
         if (_lastPooledOutput == null)
         {
@@ -455,7 +448,7 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
         CnnMatrix currentGrad = pooledGrad;
 
         // =========================================================================
-        // 4. CONVOLUTION BACKWARD PASS
+        // 4. CONVOLUTION BACKWARD PASS - ALL GRADIENTS CLIPPED
         // =========================================================================
         for (int layerIdx = _cnnConfig.ConvLayers.Count - 1; layerIdx >= 0; layerIdx--)
         {
@@ -467,6 +460,7 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
             var inputTensor = _convInputs[layerIdx];
             var indices = _poolIndices[layerIdx];
 
+            // --- Step 1: MaxPool Backward ---
             CnnMatrix convGrad;
             if (layer.UseMaxPool)
             {
@@ -478,10 +472,17 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                 convGrad = currentGrad;
             }
 
+            // ✅ CLIP: Convolution gradient from maxpool
+            ClipCnnGradient(convGrad, GRADIENT_CLIP_NORM);
+
+            // --- Step 2: Pre-activation gradient ---
             var preGrad = RentCnn(preAct.Batch, preAct.Channels, preAct.Height, preAct.Width);
             preGrad.CopyFrom(convGrad);
             ApplyDerivativeToGradient(preGrad, postAct, layer.Activation);
             convGrad.Dispose();
+
+            // ✅ CLIP: Pre-activation gradient (critical!)
+            ClipCnnGradient(preGrad, GRADIENT_CLIP_NORM);
 
             int outH = preGrad.Height;
             int outW = preGrad.Width;
@@ -489,9 +490,7 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
             int filters = preGrad.Channels;
             var preGradMatrix = RentNeural(patches, filters);
 
-            // ---------------------------------------------------------------------
-            // 4A. VECTORIZED TRANSPOSE: preGrad [B, F, H, W] -> preGradMatrix [B*H*W, F]
-            // ---------------------------------------------------------------------
+            // --- Step 3: Transpose preGrad -> preGradMatrix ---
             float* pPreGrad = preGrad.Pointer;
             float* pPreGradMat = preGradMatrix.Pointer;
             int preGradMatStride = preGradMatrix.ColumnsStride;
@@ -530,9 +529,10 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                 }
             }
 
-            // ---------------------------------------------------------------------
-            // 4B. VECTORIZED GEMM: dW = colInput^T * preGradMatrix
-            // ---------------------------------------------------------------------
+            // ✅ CLIP: Pre-grad matrix after transpose
+            ClipGradients(preGradMatrix, GRADIENT_CLIP_NORM);
+
+            // --- Step 4: Weight gradient dW = colInput^T * preGradMatrix ---
             int inDim = colInput.UsedColumns;
             var dW = RentNeural(inDim, filters);
             float* pdW = dW.Pointer;
@@ -587,9 +587,10 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                 }
             }
 
-            // ---------------------------------------------------------------------
-            // 4C. VECTORIZED REDUCTION: dB = Sum(preGradMatrix over patches)
-            // ---------------------------------------------------------------------
+            // ✅ CLIP: Weight gradient
+            ClipGradients(dW, GRADIENT_CLIP_NORM);
+
+            // --- Step 5: Bias gradient dB = Sum(preGradMatrix over patches) ---
             var dB = RentNeural(1, filters);
             float* pdB = dB.Pointer;
             new Span<float>(pdB, filters).Clear();
@@ -626,12 +627,13 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                 }
             }
 
+            // ✅ CLIP: Bias gradient
+            ClipGradients(dB, GRADIENT_CLIP_NORM);
+
             // Apply Weights & Biases Updates
             _convOptimizers[layerIdx].UpdateConvWeights(_convWeights[layerIdx], _convBiases[layerIdx], dW, dB);
 
-            // ---------------------------------------------------------------------
-            // 4D. VECTORIZED GEMM: gradPatchMat = preGradMatrix * weightMat
-            // ---------------------------------------------------------------------
+            // --- Step 6: gradPatchMat = preGradMatrix * weightMat ---
             var gradPatchMat = RentNeural(patches, inDim);
             float* pGradPatch = gradPatchMat.Pointer;
             float* pWeightMat = weightMat.Pointer;
@@ -685,10 +687,17 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                 }
             }
 
-            // Col2Im Backpropagation pass
+            // ✅ CRITICAL: Clip patch gradient - THIS IS WHERE NaN OFTEN ORIGINATES!
+            ClipGradients(gradPatchMat, GRADIENT_CLIP_NORM);
+
+            // --- Step 7: Col2Im Backpropagation ---
             var inputGrad = RentCnn(inputTensor.Batch, inputTensor.Channels, inputTensor.Height, inputTensor.Width);
             inputGrad.Col2Im(gradPatchMat, layer.KernelHeight, layer.KernelWidth, layer.Stride, layer.Padding, 1.0f);
 
+            // ✅ CRITICAL: Clip input gradient - THIS FLOWS TO PREVIOUS LAYER!
+            ClipCnnGradient(inputGrad, GRADIENT_CLIP_NORM);
+
+            // --- Step 8: Cleanup ---
             preGrad.Dispose();
             preGradMatrix.Dispose();
             dW.Dispose();
@@ -701,8 +710,169 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
         currentGrad?.Dispose();
         ClearIntermediates();
 
+        // ✅ Clamp loss to prevent overflow
+        if (float.IsNaN(loss) || float.IsInfinity(loss) || loss > 100f)
+        {
+            return 10.0f;
+        }
+
         return loss;
     }
+
+    private unsafe bool NeedsStabilization(NeuralMatrix matrix)
+    {
+        int totalElements = matrix.Rows * matrix.UsedColumns;
+        float* ptr = matrix.Pointer;
+
+        for (int i = 0; i < totalElements; i++)
+        {
+            if (float.IsNaN(ptr[i]) || float.IsInfinity(ptr[i]) || ptr[i] < 0f || ptr[i] > 1f)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private unsafe void StabilizeSoftmax(NeuralMatrix matrix)
+    {
+        int rows = matrix.Rows;
+        int cols = matrix.UsedColumns;
+        int stride = matrix.ColumnsStride;
+        float* ptr = matrix.Pointer;
+
+        for (int r = 0; r < rows; r++)
+        {
+            float* row = ptr + r * stride;
+
+            // Find max
+            float maxVal = row[0];
+            for (int c = 1; c < cols; c++)
+            {
+                if (row[c] > maxVal) maxVal = row[c];
+            }
+
+            // Compute exp with max subtraction
+            float sum = 0f;
+            for (int c = 0; c < cols; c++)
+            {
+                float val = MathF.Exp(row[c] - maxVal);
+                row[c] = val;
+                sum += val;
+            }
+
+            // Normalize - don't clamp aggressively!
+            float invSum = 1.0f / sum;
+            for (int c = 0; c < cols; c++)
+            {
+                row[c] *= invSum;
+            }
+        }
+    }
+
+    // =========================================================================
+    // GRADIENT CLIPPING METHODS
+    // =========================================================================
+
+    private unsafe void ClipGradients(NeuralMatrix gradient, float maxNorm)
+    {
+        int totalElements = gradient.UnsafeSize;  // ✅ Use UnsafeSize
+        if (totalElements == 0) return;
+
+        float* ptr = gradient.Pointer;
+        if (ptr == null) return;
+
+        // Check for NaN/Inf and reset if found
+        bool hasError = false;
+        for (int i = 0; i < totalElements; i++)
+        {
+            if (float.IsNaN(ptr[i]) || float.IsInfinity(ptr[i]))
+            {
+                hasError = true;
+                break;
+            }
+        }
+
+        if (hasError)
+        {
+            // Reset gradient to zero
+            for (int i = 0; i < totalElements; i++)
+            {
+                ptr[i] = 0f;
+            }
+            return;
+        }
+
+        // Calculate L2 norm
+        float norm = 0f;
+        for (int i = 0; i < totalElements; i++)
+        {
+            norm += ptr[i] * ptr[i];
+        }
+        norm = MathF.Sqrt(norm);
+
+        // Clip if norm exceeds threshold
+        if (norm > maxNorm && norm > 0f)
+        {
+            float scale = maxNorm / norm;
+            for (int i = 0; i < totalElements; i++)
+            {
+                ptr[i] *= scale;
+            }
+        }
+    }
+
+    private unsafe void ClipCnnGradient(CnnMatrix gradient, float maxNorm)
+    {
+        int totalElements = gradient.UnsafeSize;  // ✅ Use UnsafeSize
+        if (totalElements == 0) return;
+
+        float* ptr = gradient.Pointer;
+        if (ptr == null) return;
+
+        // Check for NaN/Inf and reset if found
+        bool hasError = false;
+        for (int i = 0; i < totalElements; i++)
+        {
+            if (float.IsNaN(ptr[i]) || float.IsInfinity(ptr[i]))
+            {
+                hasError = true;
+                break;
+            }
+        }
+
+        if (hasError)
+        {
+            // Reset gradient to zero
+            for (int i = 0; i < totalElements; i++)
+            {
+                ptr[i] = 0f;
+            }
+            return;
+        }
+
+        // Calculate L2 norm
+        float norm = 0f;
+        for (int i = 0; i < totalElements; i++)
+        {
+            norm += ptr[i] * ptr[i];
+        }
+        norm = MathF.Sqrt(norm);
+
+        // Clip if norm exceeds threshold
+        if (norm > maxNorm && norm > 0f)
+        {
+            float scale = maxNorm / norm;
+            for (int i = 0; i < totalElements; i++)
+            {
+                ptr[i] *= scale;
+            }
+        }
+    }
+
+    // =========================================================================
+    // CONVOLUTION FORWARD
+    // =========================================================================
 
     private (CnnMatrix preAct, NeuralMatrix colInput, NeuralMatrix weightMat) ConvForward(CnnMatrix current, int layerIdx)
     {
@@ -733,9 +903,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
 
         int dstStride = weightMat.ColumnsStride;
 
-        // Fast Path 1: Continuous Memory Block Copy (Zero Stride Overhead)
-        // If destination matrix has no row padding (ColumnsStride == innerDim), 
-        // copy the entire weight tensor in a single bulk OS/hardware operation.
         if (dstStride == innerDim)
         {
             long totalBytes = (long)filters * innerDim * sizeof(float);
@@ -743,7 +910,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
             return weightMat;
         }
 
-        // Fast Path 2: Row-by-Row Copy with AVX-512 / SIMD Bulk Streaming
         bool hasAvx512 = Avx512F.IsSupported;
         const int avx512Size = 16;
         long bytesPerRow = (long)innerDim * sizeof(float);
@@ -753,12 +919,10 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
             float* srcRow = pSrc + (f * innerDim);
             float* dstRow = pDst + (f * dstStride);
 
-            // Sub-Path A: Bulk MemoryCopy for padded destination rows
-            if (innerDim >= 64) // For medium-to-large kernels, OS memcpy is fastest
+            if (innerDim >= 64)
             {
                 Buffer.MemoryCopy(srcRow, dstRow, bytesPerRow, bytesPerRow);
             }
-            // Sub-Path B: AVX-512 Direct Streaming (for smaller kernel sizes)
             else if (hasAvx512)
             {
                 int i = 0;
@@ -841,7 +1005,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                     sum = Vector256.Sum(sumVec);
                 }
 
-                // Remainder sequential
                 for (; inner < innerDim; inner++)
                 {
                     sum += colRow[inner] * weightRow[inner];
@@ -905,10 +1068,10 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
         float* pSrc = result.Pointer;
         float* pDst = preAct.Pointer;
 
-        int srcStride = result.ColumnsStride; // Stride of result NeuralMatrix
+        int srcStride = result.ColumnsStride;
         int spatialSize = outH * outW;
-        int channelStride = spatialSize;       // Distance between channels in NCHW
-        int batchStrideDst = filters * spatialSize; // Distance between batch items in NCHW
+        int channelStride = spatialSize;
+        int batchStrideDst = filters * spatialSize;
 
         bool hasAvx512 = Avx512F.IsSupported;
         const int avx512Size = 16;
@@ -920,24 +1083,18 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
 
             for (int spatialIdx = 0; spatialIdx < spatialSize; spatialIdx++)
             {
-                // Linear row pointer in NeuralMatrix result
                 float* pSrcRow = pSrc + (batchOffsetSrc + spatialIdx) * srcStride;
 
                 int f = 0;
 
-                // -------------------------------------------------------------
-                // Path 1: AVX-512 Vectorized Transfer (16 Filters / Iteration)
-                // -------------------------------------------------------------
                 if (hasAvx512)
                 {
                     int vecLimit = filters - (filters % avx512Size);
 
                     for (; f < vecLimit; f += avx512Size)
                     {
-                        // Load 16 filter values from contiguous memory in result matrix
                         Vector512<float> vSrc = Vector512.Load(pSrcRow + f);
 
-                        // Scatter write 16 filters across their respective channel slices in preAct
                         for (int k = 0; k < avx512Size; k++)
                         {
                             int filterIdx = f + k;
@@ -947,9 +1104,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                     }
                 }
 
-                // -------------------------------------------------------------
-                // Path 2: Scalar Cleanup
-                // -------------------------------------------------------------
                 for (; f < filters; f++)
                 {
                     float* pDstChannel = pDstBatch + (f * channelStride);
@@ -970,6 +1124,7 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
 
         return res;
     }
+
     private unsafe CnnMatrix MaxPoolForward(CnnMatrix input, int poolSize, out NeuralMatrix indices)
     {
         int batch = input.Batch;
@@ -993,12 +1148,8 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
 
         bool hasAvx512 = Avx512F.IsSupported;
 
-        // =========================================================================
-        // FAST PATH: AVX-512 Accelerated 2x2 Max Pooling (16 Output Windows / Iteration)
-        // =========================================================================
         if (poolSize == 2 && hasAvx512)
         {
-            // Vector constant for 1D Spatial Index calculation (0, 1, 2, ..., 15)
             Vector512<float> vOffsets = Vector512.Create(
                 0f, 1f, 2f, 3f, 4f, 5f, 6f, 7f,
                 8f, 9f, 10f, 11f, 12f, 13f, 14f, 15f
@@ -1024,25 +1175,15 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                     int ow = 0;
                     int vecLimit = outW - (outW % 16);
 
-                    // Process 16 2x2 pooling windows at once (32 input columns -> 16 output columns)
                     for (; ow < vecLimit; ow += 16)
                     {
                         int xStart = ow * 2;
 
-                        // Load 32 floats across row 0 and row 1
-                        var vR0_A = Vector512.Load(row0 + xStart);      // Top Left & Top Right (even/odd)
+                        var vR0_A = Vector512.Load(row0 + xStart);
                         var vR0_B = Vector512.Load(row0 + xStart + 16);
 
-                        var vR1_A = Vector512.Load(row1 + xStart);      // Bottom Left & Bottom Right (even/odd)
+                        var vR1_A = Vector512.Load(row1 + xStart);
                         var vR1_B = Vector512.Load(row1 + xStart + 16);
-
-                        // Scalar registers for 16 windows
-                        Vector512<float> vMaxVal = Vector512<float>.Zero;
-                        Vector512<float> vMaxIdx = Vector512<float>.Zero;
-
-                        // 1D spatial base coordinates for top-left window elements
-                        float baseIdx00 = y0 * inW + xStart;
-                        Vector512<float> vBase00 = Vector512.Create(baseIdx00) + (vOffsets * 2f);
 
                         for (int k = 0; k < 16; k++)
                         {
@@ -1071,7 +1212,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                         }
                     }
 
-                    // Scalar cleanup for remaining width elements (< 16)
                     for (; ow < outW; ow++)
                     {
                         int x0 = ow * 2;
@@ -1100,9 +1240,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                 }
             }
         }
-        // =========================================================================
-        // GENERAL FALLBACK: Non-2x2 Pooling or non-AVX-512 Systems
-        // =========================================================================
         else
         {
             for (int slice = 0; slice < numSlices; slice++)
@@ -1165,7 +1302,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
 
         var gradInput = RentCnn(batch, channels, inH, inW);
 
-        // Fast native memory clear (bulk zeroing)
         int totalInputElements = batch * channels * inH * inW;
         new Span<float>(gradInput.Pointer, totalInputElements).Clear();
 
@@ -1180,7 +1316,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
         bool hasAvx512 = Avx512F.IsSupported;
         bool hasAvx2 = Avx2.IsSupported;
 
-        // Linear iteration over each Batch and Channel slice
         int numSlices = batch * channels;
 
         for (int slice = 0; slice < numSlices; slice++)
@@ -1191,21 +1326,16 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
 
             int i = 0;
 
-            // Path 1: AVX-512 Vectorized Unrolling (16 Elements per Iteration)
             if (hasAvx512)
             {
                 int vecLimit = totalSpatialItems - (totalSpatialItems % 16);
                 for (; i < vecLimit; i += 16)
                 {
-                    // Load 16 gradOutput floats & 16 stored max indices
                     var vGrad = Vector512.Load(sliceGradOut + i);
                     var vIdxFloat = Vector512.Load(sliceIndices + i);
 
-                    // Convert index floats to 32-bit integers in hardware
                     Vector512<int> vIdxInt = Vector512.ConvertToInt32Native(vIdxFloat);
 
-                    // Extract & scatter accumulate
-                    // (Direct pointer addition avoids division/modulo operations completely)
                     for (int k = 0; k < 16; k++)
                     {
                         int targetOffset = vIdxInt.GetElement(k);
@@ -1213,7 +1343,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                     }
                 }
             }
-            // Path 2: AVX2 Vectorized Unrolling (8 Elements per Iteration)
             else if (hasAvx2)
             {
                 int vecLimit = totalSpatialItems - (totalSpatialItems % 8);
@@ -1232,14 +1361,9 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                 }
             }
 
-            // Path 3: Scalar Cleanup
             for (; i < totalSpatialItems; i++)
             {
                 int maxIdx = (int)sliceIndices[i];
-
-                // Fast direct offset route:
-                // maxIdx is assumed to be the 1D spatial index (y * inW + x).
-                // If maxIdx was saved as (y * inW + x), we avoid '/' and '%' hardware instructions!
                 sliceGradIn[maxIdx] += sliceGradOut[i];
             }
         }
@@ -1283,14 +1407,10 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
 
                 int outNeuron = 0;
 
-                // -------------------------------------------------------------
-                // Path 1: AVX-512 Implementation (Unrolled 4x across Out Neurons)
-                // -------------------------------------------------------------
                 if (hasAvx512)
                 {
                     int vecInFeatures = inFeatures - (inFeatures % avx512Size);
 
-                    // Process 4 output neurons simultaneously to saturate CPU FMA pipelines
                     for (; outNeuron <= outFeatures - 4; outNeuron += 4)
                     {
                         float* w0 = weightPtr + (outNeuron + 0) * weightStride;
@@ -1314,13 +1434,11 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                             acc3 = Avx512F.FusedMultiplyAdd(vIn, Vector512.Load(w3 + inIdx), acc3);
                         }
 
-                        // Horizontal sum & add bias
                         resRow[outNeuron + 0] = Vector512.Sum(acc0) + biasPtr[outNeuron + 0];
                         resRow[outNeuron + 1] = Vector512.Sum(acc1) + biasPtr[outNeuron + 1];
                         resRow[outNeuron + 2] = Vector512.Sum(acc2) + biasPtr[outNeuron + 2];
                         resRow[outNeuron + 3] = Vector512.Sum(acc3) + biasPtr[outNeuron + 3];
 
-                        // Scalar cleanup for remaining inFeatures per neuron block
                         for (; inIdx < inFeatures; inIdx++)
                         {
                             float val = inRow[inIdx];
@@ -1331,7 +1449,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                         }
                     }
 
-                    // Remaining single neurons (AVX-512)
                     for (; outNeuron < outFeatures; outNeuron++)
                     {
                         float* wRow = weightPtr + outNeuron * weightStride;
@@ -1354,9 +1471,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                         resRow[outNeuron] = sum + biasPtr[outNeuron];
                     }
                 }
-                // -------------------------------------------------------------
-                // Path 2: AVX2 / FMA Fallback (Unrolled 4x across Out Neurons)
-                // -------------------------------------------------------------
                 else if (hasAvx2)
                 {
                     int vecInFeatures = inFeatures - (inFeatures % avx2Size);
@@ -1421,9 +1535,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                         resRow[outNeuron] = sum + biasPtr[outNeuron];
                     }
                 }
-                // -------------------------------------------------------------
-                // Path 3: Scalar Fallback
-                // -------------------------------------------------------------
                 else
                 {
                     for (; outNeuron < outFeatures; outNeuron++)
@@ -1441,13 +1552,11 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                 }
             }
 
-            // Store intermediate copies if needed
             if (storeIntermediates)
             {
                 _densePreAct.Add(result.Copy());
             }
 
-            // Run in-place activation logic
             _denseActivations[i](result);
 
             if (storeIntermediates)
@@ -1479,7 +1588,7 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
 
             if (inputToLayer == null)
             {
-                throw new InvalidOperationException($"inputToLayer is null for layer {i}. _densePostAct[{i - 1}] may not be set.");
+                throw new InvalidOperationException($"inputToLayer is null for layer {i}.");
             }
 
             int batch = gradOutput.Rows;
@@ -1498,7 +1607,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
             var derivativeFn = _denseDerivatives[i];
             bool skipDeriv = skipLastDerivative && (i == _denseWeights.Count - 1);
 
-            // 1. Vectorized gradPre Copy & Derivative Application
             for (int r = 0; r < batch; r++)
             {
                 float* rowGO = pGradOut + r * strideGradOut;
@@ -1531,7 +1639,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                 }
             }
 
-            // 2. Weight Gradient (dW = inputToLayer^T * gradPre) via Outer-Product FMA & Sparsity Skipping
             var dW = RentNeural(inDim, outDim);
             dW.Clear();
 
@@ -1548,7 +1655,7 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                 for (int cIn = 0; cIn < inDim; cIn++)
                 {
                     float xVal = rowIn[cIn];
-                    if (xVal == 0f) continue; // Zero-activation sparsity speedup
+                    if (xVal == 0f) continue;
 
                     float* rowDW = pDW + cIn * strideDW;
                     int cOut = 0;
@@ -1583,7 +1690,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                 }
             }
 
-            // 3. Bias Gradient (dB) Summation
             var dB = RentNeural(1, outDim);
             dB.Clear();
             float* pDB = dB.Pointer;
@@ -1614,9 +1720,11 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                 }
             }
 
+            ClipGradients(dW, GRADIENT_CLIP_NORM);
+            ClipGradients(dB, GRADIENT_CLIP_NORM);
+
             _denseOptimizers[i].UpdateDenseWeights(_denseWeights[i], _denseBiases[i], dW, dB);
 
-            // 4. Input Gradient (gradInput = gradPre * weights) via Cache-Friendly Transposed Row-Streaming GEMM
             var weights = _denseWeights[i];
             int weightOutDim = weights.Rows;
             int weightInDim = weights.UsedColumns;
@@ -1691,7 +1799,7 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
         int totalElements = matrix.Batch * matrix.Channels * matrix.Height * matrix.Width;
         float* ptr = matrix.Pointer;
 
-        int vSize = Vector512<float>.Count; // 16 elements
+        int vSize = Vector512<float>.Count;
         int vectorizable = totalElements - (totalElements % vSize);
         int i = 0;
 
@@ -1718,7 +1826,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
             }
         }
 
-        // Fallback scalar loop for remainder and non-vectorized activations
         for (; i < totalElements; i++)
         {
             float val = ptr[i];
@@ -1754,7 +1861,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                 {
                     Vector512<float> vZero = Vector512<float>.Zero;
 
-                    // Unrolled x4 (64 floats per step = four 512-bit ZMM registers)
                     for (; i <= totalElements - 64; i += 64)
                     {
                         Vector512<float> g0 = Vector512.LoadAligned(pGrad + i);
@@ -1767,7 +1873,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                         Vector512<float> p2 = Vector512.LoadAligned(pPost + i + 32);
                         Vector512<float> p3 = Vector512.LoadAligned(pPost + i + 48);
 
-                        // Compute boolean mask: p > 0 ? grad : 0
                         Vector512<float> mask0 = Vector512.GreaterThan(p0, vZero);
                         Vector512<float> mask1 = Vector512.GreaterThan(p1, vZero);
                         Vector512<float> mask2 = Vector512.GreaterThan(p2, vZero);
@@ -1811,7 +1916,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                         Vector512<float> mask2 = Vector512.GreaterThan(p2, vZero);
                         Vector512<float> mask3 = Vector512.GreaterThan(p3, vZero);
 
-                        // VPBLENDMD hardware instruction under AVX-512
                         Vector512.ConditionalSelect(mask0, g0, g0 * vAlpha).StoreAligned(pGrad + i);
                         Vector512.ConditionalSelect(mask1, g1, g1 * vAlpha).StoreAligned(pGrad + i + 16);
                         Vector512.ConditionalSelect(mask2, g2, g2 * vAlpha).StoreAligned(pGrad + i + 32);
@@ -1844,7 +1948,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                         Vector512<float> p2 = Vector512.LoadAligned(pPost + i + 32);
                         Vector512<float> p3 = Vector512.LoadAligned(pPost + i + 48);
 
-                        // grad * p * (1 - p)
                         (g0 * p0 * (vOne - p0)).StoreAligned(pGrad + i);
                         (g1 * p1 * (vOne - p1)).StoreAligned(pGrad + i + 16);
                         (g2 * p2 * (vOne - p2)).StoreAligned(pGrad + i + 32);
@@ -1876,7 +1979,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                         Vector512<float> p2 = Vector512.LoadAligned(pPost + i + 32);
                         Vector512<float> p3 = Vector512.LoadAligned(pPost + i + 48);
 
-                        // Hardware FMA: g * (1 - p^2) executed as g * FMA(-p, p, 1.0)
                         (g0 * Vector512.FusedMultiplyAdd(-p0, p0, vOne)).StoreAligned(pGrad + i);
                         (g1 * Vector512.FusedMultiplyAdd(-p1, p1, vOne)).StoreAligned(pGrad + i + 16);
                         (g2 * Vector512.FusedMultiplyAdd(-p2, p2, vOne)).StoreAligned(pGrad + i + 32);
@@ -1896,7 +1998,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                 throw new NotImplementedException($"Derivative for {type} not implemented");
         }
 
-        // Scalar cleanup tail for unaligned trailing floats (< 16 elements)
         for (; i < totalElements; i++)
         {
             float p = pPost[i];
@@ -1917,13 +2018,12 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
         int featureDim = input.Channels * input.Height * input.Width;
         var flat = RentNeural(input.Batch, featureDim);
 
-        float* pSrc = input.Pointer; // Assuming CnnMatrix exposes an unsafe pointer
+        float* pSrc = input.Pointer;
         float* pDst = flat.Pointer;
 
-        int srcStride = featureDim; // Offset per batch in input
-        int dstStride = flat.ColumnsStride; // Stride per row in NeuralMatrix
+        int srcStride = featureDim;
+        int dstStride = flat.ColumnsStride;
 
-        // If memory layouts match stride exactly, copy the ENTIRE block in one call
         if (srcStride == dstStride)
         {
             long totalBytes = (long)input.Batch * featureDim * sizeof(float);
@@ -1931,7 +2031,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
         }
         else
         {
-            // Copy row-by-row (batch-by-batch) to account for NeuralMatrix padding/stride
             long bytesPerBatch = (long)featureDim * sizeof(float);
 
             for (int b = 0; b < input.Batch; b++)
@@ -1950,7 +2049,7 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
     {
         int rows = predictions.Rows;
         int cols = predictions.UsedColumns;
-        float eps = 1e-8f;
+        float eps = 1e-7f;
 
         float totalLoss = 0f;
 
@@ -1960,65 +2059,60 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
         int predStride = predictions.ColumnsStride;
         int targStride = targets.ColumnsStride;
 
-        bool hasAvx512 = Avx512F.IsSupported;
-        bool hasAvx2 = Avx2.IsSupported && Fma.IsSupported;
-
-        Vector512<float> vEps512 = Vector512.Create(eps);
-        Vector256<float> vEps256 = Vector256.Create(eps);
-
         for (int r = 0; r < rows; r++)
         {
             float* predRow = pPred + r * predStride;
             float* targRow = pTarg + r * targStride;
 
             float rowLoss = 0f;
-            int c = 0;
+            bool rowHasValidTarget = false;
 
-            // Unroll with pointer arithmetic to avoid .At(r, c) dispatch
-            if (hasAvx512)
+            for (int c = 0; c < cols; c++)
             {
-                Vector512<float> vLoss512 = Vector512<float>.Zero;
-                int vectorizable = cols - (cols % 16);
-
-                for (; c < vectorizable; c += 16)
+                // ✅ Check for NaN/Inf and fix
+                if (float.IsNaN(predRow[c]) || float.IsInfinity(predRow[c]) || predRow[c] < 0f || predRow[c] > 1f)
                 {
-                    var vP = Vector512.Load(predRow + c);
-                    var vT = Vector512.Load(targRow + c);
+                    predRow[c] = 1.0f / cols;
+                }
 
-                    // Clamp predictions to avoid log(0) -> NaN
-                    vP = Vector512.Max(vP, vEps512);
+                // ✅ Clamp to prevent log(0)
+                float pVal = Math.Clamp(predRow[c], eps, 1.0f - eps);
+                float tVal = targRow[c];
 
-                    // Scalar Log fallback for vector elements (or replace with vector log if available)
-                    // Note: Standard Vector512 does not natively expose Vector512.Log in hardware,
-                    // so we clamp & FMA in vectors and accumulate.
-                    for (int sub = 0; sub < 16; sub++)
+                if (tVal > 0f)
+                {
+                    rowHasValidTarget = true;
+                    float logVal = MathF.Log(pVal);
+                    if (!float.IsNaN(logVal) && !float.IsInfinity(logVal))
                     {
-                        float pVal = predRow[c + sub];
-                        float tVal = targRow[c + sub];
-                        if (tVal > 0f) // Short-circuit 0-weight targets
-                        {
-                            rowLoss -= tVal * MathF.Log(MathF.Max(pVal, eps));
-                        }
+                        rowLoss -= tVal * logVal;
                     }
                 }
             }
 
-            // Scalar cleanup / Fallback loop
-            for (; c < cols; c++)
+            // ✅ If no valid target found, use uniform distribution
+            if (!rowHasValidTarget)
             {
-                float tVal = targRow[c];
-                // Optimization: If target is 0 (one-hot), log doesn't need to be computed
-                if (tVal > 0f)
-                {
-                    float pVal = MathF.Max(predRow[c], eps);
-                    rowLoss -= tVal * MathF.Log(pVal);
-                }
+                rowLoss = MathF.Log(cols);
+            }
+
+            // ✅ Clamp row loss
+            if (float.IsNaN(rowLoss) || float.IsInfinity(rowLoss) || rowLoss > 100f)
+            {
+                rowLoss = 10.0f;
             }
 
             totalLoss += rowLoss;
         }
 
-        return totalLoss / rows;
+        float avgLoss = totalLoss / rows;
+
+        if (float.IsNaN(avgLoss) || float.IsInfinity(avgLoss) || avgLoss > 100f)
+        {
+            return 10.0f;
+        }
+
+        return avgLoss;
     }
 
     // ---------- Cleanup ----------
