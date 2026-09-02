@@ -104,10 +104,10 @@ internal class Program
 
                 // Header
                 Console.WriteLine($"╔═════════════╤══════════════════╤════════════════════╤═════════════════════════╗");
-                Console.WriteLine($"║  Epoch {epoch + 1,3}  |  Loss: {avgLoss:F6}  |  Accuracy: {accuracy,6:P2}  |  Best: {bestAccuracy,6:P2}  ║");
-                Console.WriteLine($"╠═══════╤═══════════════════════════════════════════════════╤════════════════════════╣");
-                Console.WriteLine($"║       │     0     1     2     3     4     5     6     7   │ 8     9 │ Pred  Actual ║");
-                Console.WriteLine($"╠═══════╪═══════════════════════════════════════════════════╪════════════════════════╣");
+                Console.WriteLine($"║  Epoch {epoch + 1,3}  |  Loss: {avgLoss:F6}  |  Accuracy: {accuracy,6:P2}  |  Best: {bestAccuracy,6:P2}              ║");
+                Console.WriteLine($"╠═══════╤═════════════════════════════════════════════════════════════╤══════════════╣");
+                Console.WriteLine($"║       │     0     1     2     3     4     5     6     7     8     9 │ Pred  Actual ║");
+                Console.WriteLine($"╠═══════╪═════════════════════════════════════════════════════════════╪══════════════╣");
 
                 // Get predictions for first 9 test images
                 int numSamples = Math.Min(10, testImages.Count);
@@ -132,7 +132,8 @@ internal class Program
                         var v = probs[j];
                         Console.Write($" {v,5:F3}");
                     }
-                    Console.WriteLine($" │  {(predicted == actual ? AsGreen(predicted.ToString()) : AsRed(actual.ToString())),2}      {actual,2}    ║");
+
+                    Console.WriteLine($" │  {(predicted == actual ? AsGreen(predicted.ToString()) : AsRed(predicted.ToString())),2}      {actual,2}   ║");
 
                     pred.Dispose();
                 }
