@@ -4,7 +4,8 @@ using NeutralNET.Stuff;
 
 public static class Cifar10Loader
 {
-    private const int ImageSize = 32 * 32 * 3; // 3072
+    private const int Scale = 64;
+    private const int ImageSize = Scale * Scale * 3; // 3072
     private const int NumClasses = 10;
 
     public static (List<CnnMatrix> trainImages, List<NeuralMatrix> trainLabels,
@@ -141,7 +142,7 @@ public static class Cifar10Loader
             int end = Math.Min(start + batchSize, numSamples);
             int currentBatchSize = end - start;
 
-            var imgMat = CnnMatrix.GetOrCreate(currentBatchSize, 3, 32, 32, readOnly: true);
+            var imgMat = CnnMatrix.GetOrCreate(currentBatchSize, 3, Scale, Scale, readOnly: true);
             var lblMat = NeuralMatrix.GetOrCreate(currentBatchSize, 10);
 
             for (int i = 0; i < currentBatchSize; i++)
@@ -152,12 +153,12 @@ public static class Cifar10Loader
                 // Copy pixels using the indexer
                 for (int c = 0; c < 3; c++)
                 {
-                    int offset = c * 1024; // 32*32
-                    for (int y = 0; y < 32; y++)
+                    int offset = c * Scale * Scale;
+                    for (int y = 0; y < Scale; y++)
                     {
-                        for (int x = 0; x < 32; x++)
+                        for (int x = 0; x < Scale; x++)
                         {
-                            imgMat[i, c, y, x] = pixels[offset + y * 32 + x];
+                            imgMat[i, c, y, x] = pixels[offset + y * Scale + x];
                         }
                     }
                 }

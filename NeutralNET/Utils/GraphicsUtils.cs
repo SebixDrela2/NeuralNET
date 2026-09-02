@@ -48,11 +48,11 @@ public static partial class GraphicsUtils
 
             if (applyTransformation)
             {
-                var angle = float.Lerp(-5, 5, _rng.NextSingle());
-                var scaleX = float.Lerp(0.95f, 1.05f, _rng.NextSingle());
-                var scaleY = float.Lerp(0.95f, 1.05f, _rng.NextSingle());
+                var angle = float.Lerp(-10, 10, _rng.NextSingle());
+                var scaleX = float.Lerp(0.90f, 1.1f, _rng.NextSingle());
+                var scaleY = float.Lerp(0.90f, 1.1f, _rng.NextSingle());
 
-                transformation = CreateTranformationMatrix(angle, 1, 1);
+                transformation = CreateTranformationMatrix(angle, scaleX, scaleY);
             }
             else
             {

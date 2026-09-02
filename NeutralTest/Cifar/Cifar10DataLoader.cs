@@ -6,8 +6,7 @@ public static class Cifar10DataLoader
     public static (List<CnnMatrix> images, List<NeuralMatrix> labels, int[] actualLabels)
         LoadBatches(string dataDir, int batchSize = 10, int maxSamples = 100)
     {
-        var (trainImages, trainLabels, _, _) = Cifar10Loader.Load(
-            dataDir: dataDir,
+        var (trainImages, trainLabels, _, _) = Cifar10Loader.GenerateDigiDigi(
             batchSize: batchSize,
             maxTrainSamples: maxSamples,
             maxTestSamples: 0

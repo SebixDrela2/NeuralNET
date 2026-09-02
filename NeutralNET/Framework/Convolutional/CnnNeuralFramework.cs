@@ -355,6 +355,7 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
             current = pooled;
         }
 
+        _convInputs.Add(current);
         _lastPooledOutput = current;
 
         var flat = Flatten(current);

@@ -26,7 +26,7 @@ public unsafe class NeuralMatrix : IDisposable
     // ---------- Buffer Pool ----------
     private static readonly Stack<NeuralMatrix> _pool = [];
 
-    private static readonly int CommonAllocatedLength = 0x280000;
+    private static readonly int CommonAllocatedLength = 0x400000;
     private readonly int _allocatedLength;
 
     public float* Pointer;
@@ -64,6 +64,11 @@ public unsafe class NeuralMatrix : IDisposable
         _allocatedLength = CommonAllocatedLength;
         UnsafeSize = Rows * ColumnsStride;
 
+        if (UnsafeSize > CommonAllocatedLength)
+        {
+            throw new Exception();
+        }
+
         Pointer = (float*)NativeMemory.AlignedAlloc((nuint)_allocatedLength * sizeof(float), ByteAlignment);
         StrideMasks = MatrixUtils.GetStrideMask(columns);
         SpanWithGarbage.Clear();
@@ -84,8 +89,9 @@ public unsafe class NeuralMatrix : IDisposable
         UsedColumns = columns;
 
         LogicalLength = Rows * UsedColumns;
+        UnsafeSize = Rows * ColumnsStride;
 
-        if (_allocatedLength < CommonAllocatedLength)
+        if (UnsafeSize > CommonAllocatedLength)
         {
             //Pointer = RentBuffer(AllocatedLength);
             throw new Exception();
@@ -97,8 +103,6 @@ public unsafe class NeuralMatrix : IDisposable
         }
 
         _inUse = true;
-        UnsafeSize = Rows * ColumnsStride;
-
 
         StrideMasks = MatrixUtils.GetStrideMask(columns);
         SpanWithGarbage.Clear();

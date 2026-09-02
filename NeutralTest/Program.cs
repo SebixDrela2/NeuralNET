@@ -39,7 +39,7 @@ internal class Program
             new() { KernelHeight = 3, KernelWidth = 3, Filters = 32, Stride = 1, Padding = 1,
                     Activation = ActivationType.LeakyReLU, UseMaxPool = true, PoolSize = 2 }
         },
-            DenseArchitecture = new[] { 128, 10 },
+            DenseArchitecture = [512, 256, 10],
             DenseHiddenActivation = ActivationType.LeakyReLU,
             OutputActivation = ActivationType.Softmax,
             // Use Adam optimizer with proper hyperparameters
@@ -77,7 +77,7 @@ internal class Program
         float learningRate = 0.001f;    // Lower LR for Adam
         int maxEpochs = 2000;
         int earlyStopPatience = 100;    // Stop if no improvement for 100 epochs
-        float targetAccuracy = 0.95f;   // Stop when accuracy reaches 95%
+        float targetAccuracy = 0.99f;   // Stop when accuracy reaches 95%
 
         Console.WriteLine($"Training on {trainImages.Count} batches...");
         Console.WriteLine("Epoch\tLoss\tAccuracy\tBest");

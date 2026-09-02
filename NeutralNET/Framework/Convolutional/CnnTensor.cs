@@ -19,7 +19,7 @@ public unsafe class CnnMatrix : IDisposable
     private static readonly Stack<CnnMatrix> _pool = [];
 
     // Fixed buffer size - match NeuralMatrix
-    private const int CommonAllocatedLength = 0x280000; // 2,621,440 floats = ~10MB
+    private static readonly int CommonAllocatedLength = 0x400000; // 2,621,440 floats = ~10MB
 
     public float* Pointer;
     public int Batch;
