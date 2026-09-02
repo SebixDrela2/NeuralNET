@@ -95,17 +95,17 @@ internal class Program
             float avgLoss = totalLoss / trainImages.Count;
 
             // Evaluate every epoch
-            if (true)
+            if ((epoch & ((1 << 3) - 1)) == 0)
             {
                 var result = validator.Validate(network, testImages, testLabels);
                 float accuracy = result.Accuracy;
 
                 // --- PREDICTION TABLE ---
-                Console.Clear();
+                Console.Write("\e[H");
 
                 // Header
                 Console.WriteLine($"╔═════════════╤══════════════════╤════════════════════╤══════════════════════════════╗");
-                Console.WriteLine($"║  Epoch {epoch + 1,3}  |  Loss: {avgLoss,9:F6}  |  Accuracy: {accuracy,6:P2}  |  Best: {bestAccuracy,6:P2}                ║");
+                Console.WriteLine($"║  Epoch {epoch + 1,3}  │  Loss: {avgLoss,9:F6} │  Accuracy: {accuracy,6:P2}  │  Best: {bestAccuracy,6:P2}                ║");
                 Console.WriteLine($"╠═══════╤═════╧══════════════════╧════════════════════╧═══════════════╤══════════════╣");
                 Console.WriteLine($"║       │     0     1     2     3     4     5     6     7     8     9 │ Pred  Actual ║");
                 Console.WriteLine($"╠═══════╪═════════════════════════════════════════════════════════════╪══════════════╣");
