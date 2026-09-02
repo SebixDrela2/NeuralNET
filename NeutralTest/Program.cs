@@ -103,11 +103,11 @@ internal class Program
                 Console.Clear();
 
                 // Header
-                Console.WriteLine($"╔═══════════════════════════════════════════════════════════════════════════════╗");
-                Console.WriteLine($"║  Epoch {epoch + 1,3}  |  Loss: {avgLoss:F6}  |  Accuracy: {accuracy:P2}  |  Best: {bestAccuracy:P2}  ║");
-                Console.WriteLine($"╠═══════════════════════════════════════════════════════════════════════════════╣");
-                Console.WriteLine($"║       │ 0    1    2    3    4    5    6    7    8    9    │ Pred  Actual ║");
-                Console.WriteLine($"╠═══════╪════════════════════════════════════════════════════╪═════════════════╣");
+                Console.WriteLine($"╔═════════════╤══════════════════╤════════════════════╤═════════════════════════╗");
+                Console.WriteLine($"║  Epoch {epoch + 1,3}  |  Loss: {avgLoss:F6}  |  Accuracy: {accuracy,6:P2}  |  Best: {bestAccuracy,6:P2}  ║");
+                Console.WriteLine($"╠═══════╤═══════════════════════════════════════════════════╤════════════════════════╣");
+                Console.WriteLine($"║       │     0     1     2     3     4     5     6     7   │ 8     9 │ Pred  Actual ║");
+                Console.WriteLine($"╠═══════╪═══════════════════════════════════════════════════╪════════════════════════╣");
 
                 // Get predictions for first 9 test images
                 int numSamples = Math.Min(10, testImages.Count);
@@ -129,9 +129,10 @@ internal class Program
                     Console.Write($"║ {i,2}    │");
                     for (int j = 0; j < 10; j++)
                     {
-                        Console.Write($" {probs[j],5:F3}");
+                        var v = probs[j];
+                        Console.Write($" {v,5:F3}");
                     }
-                    Console.WriteLine($"│  {predicted,2}      {actual,2}    ║");
+                    Console.WriteLine($" │  {(predicted == actual ? AsGreen(predicted.ToString()) : AsRed(actual.ToString())),2}      {actual,2}    ║");
 
                     pred.Dispose();
                 }
@@ -308,5 +309,7 @@ internal class Program
         var forward = network.RunDynamicModel();
         model.Validate(forward, network.Architecture);
     }
-}
 
+    private static string AsGreen(string x) => $"\e[38;2;124;179;66m{x}\e[39m";
+    private static string AsRed(string x) => $"\e[38;2;230;74;25m{x}\e[39m";
+}
