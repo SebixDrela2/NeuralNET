@@ -5,7 +5,6 @@ using NeutralNET.Framework.Connected.Optimizers;
 using NeutralNET.Framework.Convolutional;
 using NeutralNET.Framework.Neural.CNN;
 using NeutralNET.Matrices;
-using NeutralNET.Stuff;
 using NeutralNET.Test.Data;
 
 namespace NeutralTest;
