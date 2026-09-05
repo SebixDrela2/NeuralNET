@@ -114,11 +114,10 @@ internal class Program
             {
                 var result = validator.Validate(network, testImages, testLabels);
                 float accuracy = result.Accuracy;
-                
-                Console.Write("\e[H");       
-                Console.WriteLine($"╔═════════════╤══════════════════╤════════════════════╤══════════════════════════════╗");
-                Console.WriteLine($"║  Epoch {epoch + 1,3}  │  Loss: {avgLoss,9:F6} │  Accuracy: {accuracy,6:P2}  │  Best: {bestAccuracy,6:P2}                ║");
-                Console.WriteLine($"╠═══════╤═════╧══════════════════╧════════════════════╧═══════════════╤══════════════╣");
+                Console.Write("\e[H");
+                Console.WriteLine($"╔══════════════╤══════════════════╤════════════════════╤═════════════════════════════╗");
+                Console.WriteLine($"║  Epoch {epoch + 1,6} │ Loss: {avgLoss,9:F6}  │  Accuracy: {accuracy,7:P2} │  Best: {bestAccuracy,7:P2}              ║");
+                Console.WriteLine($"╠═══════╤══════╧══════════════════╧════════════════════╧══════════════╤══════════════╣");
                 Console.WriteLine($"║       │     0     1     2     3     4     5     6     7     8     9 │ Pred  Actual ║");
                 Console.WriteLine($"╠═══════╪═════════════════════════════════════════════════════════════╪══════════════╣");
 
@@ -140,8 +139,9 @@ internal class Program
                     for (int j = 0; j < 10; j++)
                     {
                         var v = probs[j];
-                        if (v < 0.1f) Console.Write($" \e[2m{v,5:F3}\e[22m");
-                        else Console.Write($" {v,5:F3}");
+                        var s = FmtPogression(v);
+                        if (v < 0.1f) Console.Write($" \e[2m{s}\e[22m");
+                        else Console.Write($" {s}");
                     }
 
                     Console.WriteLine($" │  {(predicted == actual ? AsGreen(predicted.ToString()) : AsRed(predicted.ToString())),2}      {actual,2}   ║");
@@ -178,6 +178,35 @@ internal class Program
                 }
             }
         }
+    }
+
+    private static string FmtPogression(float x)
+    {
+        const int ColWidth = 5;
+        const char ChZero = ' ';
+        const char ChMax = '\u2588';
+
+        switch (x)
+        {
+            case 0: return $"\e[48;2;74;74;76m{x,5:f3}\e[49m";
+            case 1: return $"\e[7;48;2;74;74;76m{x,5:f3}\e[49;27m";
+            case <= 0: return $"\e[48;2;110;74;76m{x,5:f2}\e[49m";
+            case >= 1: return $"\e[7;48;2;74;74;76m{x,5:f3}\e[49;27m";
+        }
+        Span<char> xs = stackalloc char[ColWidth];
+        xs.Fill(ChZero);
+
+        var scaled = x * ColWidth;
+        var maxEnd = int.Clamp((int)scaled, 0, ColWidth);
+        xs[..maxEnd].Fill(ChMax);
+
+        if (maxEnd != ColWidth)
+        {
+            int frame = int.Clamp((int)((8 * (scaled - maxEnd)) + 0.5f), 0, 7);
+            xs[maxEnd] = (char)(ChMax + (7 - frame));
+        }
+
+        return $"\e[48;2;74;74;76m{xs}\e[49m";
     }
 
     private static int ArgMax(float[] array)
