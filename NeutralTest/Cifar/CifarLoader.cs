@@ -69,73 +69,86 @@ public static class Cifar10Loader
     private static readonly string[] _fontNames =
     ["Arial", "Times New Roman", "Georgia", "Verdana", "Tahoma"];
 
-    public static (List<CnnMatrix> trainImages, List<NeuralMatrix> trainLabels,
-                   List<CnnMatrix> testImages, List<NeuralMatrix> testLabels)
-        GenerateDigiDigi(
+
+    private static (List<CnnMatrix> images, List<NeuralMatrix> labels) LoadAndFlattenDataSet(
+        DataSetType dataSetType,
+        int batchSize,
+        int maxSamples)
+    {
+        var batchImages = new List<CnnMatrix>();
+        var batchLabels = new List<NeuralMatrix>();
+        int samplesLoaded = 0;
+        var fontNames = _fontNames.ToArray();
+        int batchCount = dataSetType == DataSetType.Train ? 5 : 1;
+
+        for (int i = 1; i <= batchCount; i++)
+        {
+            if (samplesLoaded >= maxSamples)
+            {
+                break;
+            }
+
+            Random.Shared.Shuffle(fontNames);
+
+            var data = fontNames
+                .SelectMany(font => GraphicsUtils.GetDigitsDataSetRGB(font))
+                .Skip(samplesLoaded)
+                .Take(maxSamples - samplesLoaded);
+
+            var (labelArray, imageArray) = (
+                data.Select(x => x.Label).ToArray(),
+                data.Select(x => x.Flat.ToArray()).ToArray()
+            );
+
+            AddToBatches(imageArray, labelArray, batchSize, batchImages, batchLabels);
+            samplesLoaded += imageArray.Length;
+        }
+
+        Console.WriteLine($"Loaded {samplesLoaded} {dataSetType} samples in {batchImages.Count} batches");
+
+        var flatImages = FlattenBatchesToImages(batchImages);
+        var flatLabels = FlattenBatchesToLabels(batchLabels);
+
+        foreach (var img in batchImages) img.Dispose();
+        foreach (var lbl in batchLabels) lbl.Dispose();
+
+        Console.WriteLine($"Flattened to {flatImages.Count} individual {dataSetType} images");
+
+        return (flatImages, flatLabels);
+    }
+
+    public static (
+        List<CnnMatrix> trainImages,
+        List<NeuralMatrix> trainLabels,
+        List<CnnMatrix> testImages,
+        List<NeuralMatrix> testLabels) GenerateDigiDigi(
         int batchSize = 64,
         int maxTrainSamples = int.MaxValue,
         int maxTestSamples = int.MaxValue)
     {
-        var trainImages = new List<CnnMatrix>();
-        var trainLabels = new List<NeuralMatrix>();
-        var testImages = new List<CnnMatrix>();
-        var testLabels = new List<NeuralMatrix>();
+        var (trainImages, trainLabels) = LoadAndFlattenDataSet(
+            DataSetType.Train,
+            batchSize,
+            maxTrainSamples);
 
-        int trainSamplesLoaded = 0;
-        int testSamplesLoaded = 0;
+        var (testImages, testLabels) = LoadAndFlattenDataSet(
+            DataSetType.Test,
+            batchSize,
+            maxTestSamples);
 
-        var fontNames = _fontNames.ToArray();
-
-        // Load training batches
-        for (int i = 1; i <= 5; i++)
-        {
-            Random.Shared.Shuffle(fontNames);
-            if (trainSamplesLoaded >= maxTrainSamples) break;
-
-            var data = fontNames.SelectMany(font => GraphicsUtils.GetDigitsDataSetRGB(font).Take(maxTrainSamples - trainSamplesLoaded));
-            var (labels, images) = (
-                data.Select(x => x.Label).ToArray(),
-                data.Select(x => x.Flat.ToArray()).ToArray()
-            );
-
-            AddToBatches(images, labels, batchSize, trainImages, trainLabels);
-            trainSamplesLoaded += images.Length;
-        }
-
-        {
-            Random.Shared.Shuffle(fontNames);
-            var data = fontNames.SelectMany(font => GraphicsUtils.GetDigitsDataSetRGB(font).Take(maxTestSamples));
-            var (testLbls, testImgs) = (
-                data.Select(x => x.Label).ToArray(),
-                data.Select(x => x.Flat.ToArray()).ToArray()
-            );
-
-            AddToBatches(testImgs, testLbls, batchSize, testImages, testLabels);
-            testSamplesLoaded += testImgs.Length;
-        }
-
-        Console.WriteLine($"Loaded {trainSamplesLoaded} training samples in {trainImages.Count} batches");
-        Console.WriteLine($"Loaded {testSamplesLoaded} test samples in {testImages.Count} batches");
-
-        // ✅ FLATTEN: Convert batches to individual images and labels
-        var flatTrainImages = FlattenBatchesToImages(trainImages);
-        var flatTrainLabels = FlattenBatchesToLabels(trainLabels);
-        var flatTestImages = FlattenBatchesToImages(testImages);
-        var flatTestLabels = FlattenBatchesToLabels(testLabels);
-
-        // ✅ Cleanup original batches
-        foreach (var img in trainImages) img.Dispose();
-        foreach (var lbl in trainLabels) lbl.Dispose();
-        foreach (var img in testImages) img.Dispose();
-        foreach (var lbl in testLabels) lbl.Dispose();
-
-        Console.WriteLine($"Flattened to {flatTrainImages.Count} individual training images");
-        Console.WriteLine($"Flattened to {flatTestImages.Count} individual test images");
-
-        return (flatTrainImages, flatTrainLabels, flatTestImages, flatTestLabels);
+        return (trainImages, trainLabels, testImages, testLabels);
     }
 
-    // ✅ NEW: Flatten batches to individual images
+    public static (List<CnnMatrix> trainImages, List<NeuralMatrix> trainLabels) GetNewTrainData(int batchSize, int maxTrainSamples)
+    {
+        var (trainImages, trainLabels) = LoadAndFlattenDataSet(
+            DataSetType.Train,
+            batchSize,
+            maxTrainSamples);
+
+        return (trainImages, trainLabels);
+    }
+
     public static List<CnnMatrix> FlattenBatchesToImages(List<CnnMatrix> batches)
     {
         var images = new List<CnnMatrix>();
@@ -233,5 +246,11 @@ public static class Cifar10Loader
             outImages.Add(imgMat);
             outLabels.Add(lblMat);
         }
+    }
+
+    private enum DataSetType
+    {
+        Train,
+        Test
     }
 }

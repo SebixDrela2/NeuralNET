@@ -1,4 +1,4 @@
-using System.Diagnostics.CodeAnalysis;
+using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 using NeutralNET.Activation;
@@ -13,10 +13,10 @@ namespace NeutralNET.Framework.Neural.CNN;
 /// <summary>
 /// Zero‑GC CNN framework with full object and buffer pooling, and pluggable optimizers.
 /// </summary>
-public unsafe class CnnNeuralFramework<TArch> : IDisposable
+public unsafe sealed class CnnNeuralFramework<TArch> : IDisposable
     where TArch : IArchitecture<TArch>
 {
-    private const float GRADIENT_CLIP_NORM = 0.5f; // Aggressive clipping to prevent explosion
+    private const float GradientClipNorm = 0.5f;
 
     private readonly NeuralNetworkConfig _baseConfig;
     private readonly CnnArchitectureConfig _cnnConfig;
@@ -33,8 +33,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
     private readonly List<NeuralMatrix> _denseBiases = [];
     private readonly List<ActivationFunction> _denseActivations = [];
     private readonly List<DerivativeFunction> _denseDerivatives = [];
-
-    // Optimizers per layer
     private readonly List<ICnnOptimizer> _convOptimizers = [];
     private readonly List<ICnnOptimizer> _denseOptimizers = [];
 
@@ -48,14 +46,12 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
     private readonly List<NeuralMatrix> _densePostAct = [];
 
     private NeuralMatrix? _flattenedInput;
-    private CnnMatrix _lastPooledOutput;
+    private CnnMatrix? _lastPooledOutput;
 
     private readonly Random _rng;
-    private static NeuralMatrix RentNeural(int rows, int cols) => NeuralMatrix.GetOrCreate(rows, cols);
-    private static CnnMatrix RentCnn(int batch, int channels, int h, int w) => CnnMatrix.GetOrCreate(batch, channels, h, w);
 
     public CnnNeuralFramework(NeuralNetworkConfig baseConfig, CnnArchitectureConfig cnnConfig,
-        int inputHeight = 32, int inputWidth = 32, int inputChannels = 3)
+        int inputHeight, int inputWidth, int inputChannels)
     {
         _baseConfig = baseConfig;
         _cnnConfig = cnnConfig;
@@ -64,7 +60,13 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
         _inputWidth = inputWidth;
         _inputChannels = inputChannels;
 
-        int inChannels = inputChannels;
+        SetupCnnWeightsBiases(cnnConfig);
+        SetupDenseArchitecture(cnnConfig);
+    }
+
+    private void SetupCnnWeightsBiases(CnnArchitectureConfig cnnConfig)
+    {
+        int inChannels = _inputChannels;
 
         foreach (var layer in cnnConfig.ConvLayers)
         {
@@ -87,6 +89,7 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
             }
 
             var biases = RentCnn(1, layer.Filters, 1, 1);
+
             for (int f = 0; f < layer.Filters; f++)
             {
                 biases[0, f, 0, 0] = NextGaussianFloat(0, 0.1f);
@@ -96,14 +99,17 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
             _convBiases.Add(biases);
             _convActivationTypes.Add(layer.Activation);
 
-            var opt = CnnOptimizerFactory.Create(cnnConfig.OptimizerConfig);
+            var opt = CnnOptimizerFactory.Create(_cnnConfig.OptimizerConfig);
             _convOptimizers.Add(opt);
 
             inChannels = layer.Filters;
         }
+    }
 
-        var flattenedSize = ComputeFlattenedSize(cnnConfig);
-        var denseArch = new int[] { flattenedSize }.Concat(cnnConfig.DenseArchitecture).ToArray();
+    private void SetupDenseArchitecture(CnnArchitectureConfig cnnConfig)
+    {
+        var flattenedSize = ComputeFlattenedSize(_cnnConfig);
+        int[] denseArch = [flattenedSize, .. _cnnConfig.DenseArchitecture];
 
         for (int i = 0; i < denseArch.Length - 1; i++)
         {
@@ -144,6 +150,18 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
         }
     }
 
+    public void Dispose()
+    {
+        ClearIntermediates();
+
+        foreach (var w in _convWeights) w.Dispose();
+        foreach (var b in _convBiases) b.Dispose();
+        foreach (var w in _denseWeights) w.Dispose();
+        foreach (var b in _denseBiases) b.Dispose();
+        foreach (var opt in _convOptimizers) opt.Dispose();
+        foreach (var opt in _denseOptimizers) opt.Dispose();
+    }
+
     private float NextGaussianFloat(float mean, float stddev)
     {
         double u1 = 1.0 - _rng.NextDouble();
@@ -154,7 +172,10 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
 
     private int ComputeFlattenedSize(CnnArchitectureConfig config)
     {
-        int h = _inputHeight, w = _inputWidth, channels = _inputChannels;
+        var h = _inputHeight;
+        var w = _inputWidth;
+        var channels = _inputChannels;
+
         foreach (var layer in config.ConvLayers)
         {
             int paddedH = h + 2 * layer.Padding;
@@ -171,22 +192,21 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                 w /= layer.PoolSize;
             }
         }
+
         return channels * h * w;
     }
 
-    // ---------- Forward (Inference) ----------
-    public unsafe NeuralMatrix Forward(CnnMatrix input)
+    public NeuralMatrix Forward(CnnMatrix input)
     {
-        bool hasAvx512 = Avx512F.IsSupported;
-        bool hasAvx2 = Avx2.IsSupported;
+        var hasAvx512 = Avx512F.IsSupported;
+        var hasAvx2 = Avx2.IsSupported;
 
-        CnnMatrix current = input;
-        bool needsDispose = false;
+        CnnMatrix? current = input;
+        var needsDispose = false;
 
         for (int layerIdx = 0; layerIdx < _cnnConfig.ConvLayers.Count; layerIdx++)
         {
             var layer = _cnnConfig.ConvLayers[layerIdx];
-
             var (convOut, colInput, weightMat) = ConvForward(current, layerIdx);
 
             colInput.Dispose();
@@ -197,8 +217,8 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                 current.Dispose();
             }
 
-            float* pAct = convOut.Pointer;
-            int totalElements = convOut.Batch * convOut.Channels * convOut.Height * convOut.Width;
+            var pAct = convOut.Pointer;
+            var totalElements = convOut.Batch * convOut.Channels * convOut.Height * convOut.Width;
 
             ApplyActivationVectorized(pAct, totalElements, layer.Activation, hasAvx512, hasAvx2);
 
@@ -216,13 +236,11 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
             needsDispose = true;
         }
 
-        var flat = Flatten(current);
+        var flat = CnnNeuralFramework<TArch>.Flatten(current);
 
         if (needsDispose)
         {
-            current.Dispose();
-            current = null;
-        }
+            current.Dispose();        }
 
         NeuralMatrix denseOut = DenseForward(flat, storeIntermediates: false);
         flat.Dispose();
@@ -347,7 +365,7 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
         _convInputs.Add(current);
         _lastPooledOutput = current;
 
-        var flat = Flatten(current);
+        var flat = CnnNeuralFramework<TArch>.Flatten(current);
         _flattenedInput = flat;
 
         // Execute Dense Layers Forward Pass
@@ -414,9 +432,9 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
         // =========================================================================
         // DENSE BACKWARD WITH CLIPPING
         // =========================================================================
-        ClipGradients(grad, GRADIENT_CLIP_NORM);
+        ClipGradients(grad, GradientClipNorm);
         var denseGrad = DenseBackward(grad, learningRate, skipLastDerivative: true);
-        ClipGradients(denseGrad, GRADIENT_CLIP_NORM);
+        ClipGradients(denseGrad, GradientClipNorm);
 
         if (_lastPooledOutput == null)
         {
@@ -473,7 +491,7 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
             }
 
             // ✅ CLIP: Convolution gradient from maxpool
-            ClipCnnGradient(convGrad, GRADIENT_CLIP_NORM);
+            ClipCnnGradient(convGrad, GradientClipNorm);
 
             // --- Step 2: Pre-activation gradient ---
             var preGrad = RentCnn(preAct.Batch, preAct.Channels, preAct.Height, preAct.Width);
@@ -482,7 +500,7 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
             convGrad.Dispose();
 
             // ✅ CLIP: Pre-activation gradient (critical!)
-            ClipCnnGradient(preGrad, GRADIENT_CLIP_NORM);
+            ClipCnnGradient(preGrad, GradientClipNorm);
 
             int outH = preGrad.Height;
             int outW = preGrad.Width;
@@ -530,7 +548,7 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
             }
 
             // ✅ CLIP: Pre-grad matrix after transpose
-            ClipGradients(preGradMatrix, GRADIENT_CLIP_NORM);
+            ClipGradients(preGradMatrix, GradientClipNorm);
 
             // --- Step 4: Weight gradient dW = colInput^T * preGradMatrix ---
             int inDim = colInput.UsedColumns;
@@ -588,7 +606,7 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
             }
 
             // ✅ CLIP: Weight gradient
-            ClipGradients(dW, GRADIENT_CLIP_NORM);
+            ClipGradients(dW, GradientClipNorm);
 
             // --- Step 5: Bias gradient dB = Sum(preGradMatrix over patches) ---
             var dB = RentNeural(1, filters);
@@ -628,7 +646,7 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
             }
 
             // ✅ CLIP: Bias gradient
-            ClipGradients(dB, GRADIENT_CLIP_NORM);
+            ClipGradients(dB, GradientClipNorm);
 
             // Apply Weights & Biases Updates
             _convOptimizers[layerIdx].UpdateConvWeights(_convWeights[layerIdx], _convBiases[layerIdx], dW, dB);
@@ -688,14 +706,14 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
             }
 
             // ✅ CRITICAL: Clip patch gradient - THIS IS WHERE NaN OFTEN ORIGINATES!
-            ClipGradients(gradPatchMat, GRADIENT_CLIP_NORM);
+            ClipGradients(gradPatchMat, GradientClipNorm);
 
             // --- Step 7: Col2Im Backpropagation ---
             var inputGrad = RentCnn(inputTensor.Batch, inputTensor.Channels, inputTensor.Height, inputTensor.Width);
             inputGrad.Col2Im(gradPatchMat, layer.KernelHeight, layer.KernelWidth, layer.Stride, layer.Padding, 1.0f);
 
             // ✅ CRITICAL: Clip input gradient - THIS FLOWS TO PREVIOUS LAYER!
-            ClipCnnGradient(inputGrad, GRADIENT_CLIP_NORM);
+            ClipCnnGradient(inputGrad, GradientClipNorm);
 
             // --- Step 8: Cleanup ---
             preGrad.Dispose();
@@ -1720,8 +1738,8 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                 }
             }
 
-            ClipGradients(dW, GRADIENT_CLIP_NORM);
-            ClipGradients(dB, GRADIENT_CLIP_NORM);
+            ClipGradients(dW, GradientClipNorm);
+            ClipGradients(dB, GradientClipNorm);
 
             _denseOptimizers[i].UpdateDenseWeights(_denseWeights[i], _denseBiases[i], dW, dB);
 
@@ -2013,7 +2031,7 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
         }
     }
 
-    private unsafe NeuralMatrix Flatten(CnnMatrix input)
+    private static NeuralMatrix Flatten(CnnMatrix input)
     {
         int featureDim = input.Channels * input.Height * input.Width;
         var flat = RentNeural(input.Batch, featureDim);
@@ -2026,63 +2044,61 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
 
         if (srcStride == dstStride)
         {
-            long totalBytes = (long)input.Batch * featureDim * sizeof(float);
-            Buffer.MemoryCopy(pSrc, pDst, totalBytes, totalBytes);
+            var totalBytes = (nuint)(input.Batch * featureDim * sizeof(float));
+            NativeMemory.Copy(pSrc, pDst, totalBytes);
         }
         else
         {
-            long bytesPerBatch = (long)featureDim * sizeof(float);
+            var bytesPerBatch = (nuint)featureDim * sizeof(float);
 
             for (int b = 0; b < input.Batch; b++)
             {
-                float* srcBatch = pSrc + (b * srcStride);
-                float* dstBatch = pDst + (b * dstStride);
+                var srcBatch = pSrc + (b * srcStride);
+                var dstBatch = pDst + (b * dstStride);
 
-                Buffer.MemoryCopy(srcBatch, dstBatch, bytesPerBatch, bytesPerBatch);
+                NativeMemory.Copy(srcBatch, dstBatch, bytesPerBatch);
             }
         }
 
         return flat;
     }
 
-    private unsafe float ComputeCrossEntropyLoss(NeuralMatrix predictions, NeuralMatrix targets)
+    private float ComputeCrossEntropyLoss(NeuralMatrix predictions, NeuralMatrix targets)
     {
-        int rows = predictions.Rows;
-        int cols = predictions.UsedColumns;
-        float eps = 1e-7f;
+        var rows = predictions.Rows;
+        var cols = predictions.UsedColumns;
+        var eps = 1e-7f;
+        var totalLoss = 0f;
 
-        float totalLoss = 0f;
+        var pPred = predictions.Pointer;
+        var pTarg = targets.Pointer;
 
-        float* pPred = predictions.Pointer;
-        float* pTarg = targets.Pointer;
+        var predStride = predictions.ColumnsStride;
+        var targStride = targets.ColumnsStride;
 
-        int predStride = predictions.ColumnsStride;
-        int targStride = targets.ColumnsStride;
-
-        for (int r = 0; r < rows; r++)
+        for (var r = 0; r < rows; r++)
         {
-            float* predRow = pPred + r * predStride;
-            float* targRow = pTarg + r * targStride;
+            var predRow = pPred + r * predStride;
+            var targRow = pTarg + r * targStride;
 
-            float rowLoss = 0f;
-            bool rowHasValidTarget = false;
+            var rowLoss = 0f;
+            var rowHasValidTarget = false;
 
             for (int c = 0; c < cols; c++)
             {
-                // ✅ Check for NaN/Inf and fix
                 if (float.IsNaN(predRow[c]) || float.IsInfinity(predRow[c]) || predRow[c] < 0f || predRow[c] > 1f)
                 {
                     predRow[c] = 1.0f / cols;
                 }
 
-                // ✅ Clamp to prevent log(0)
-                float pVal = Math.Clamp(predRow[c], eps, 1.0f - eps);
-                float tVal = targRow[c];
+                var pVal = Math.Clamp(predRow[c], eps, 1.0f - eps);
+                var tVal = targRow[c];
 
                 if (tVal > 0f)
                 {
                     rowHasValidTarget = true;
-                    float logVal = MathF.Log(pVal);
+                    var logVal = MathF.Log(pVal);
+
                     if (!float.IsNaN(logVal) && !float.IsInfinity(logVal))
                     {
                         rowLoss -= tVal * logVal;
@@ -2090,13 +2106,11 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
                 }
             }
 
-            // ✅ If no valid target found, use uniform distribution
             if (!rowHasValidTarget)
             {
                 rowLoss = MathF.Log(cols);
             }
 
-            // ✅ Clamp row loss
             if (float.IsNaN(rowLoss) || float.IsInfinity(rowLoss) || rowLoss > 100f)
             {
                 rowLoss = 10.0f;
@@ -2105,14 +2119,11 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
             totalLoss += rowLoss;
         }
 
-        float avgLoss = totalLoss / rows;
+        var avgLoss = totalLoss / rows;
 
-        if (float.IsNaN(avgLoss) || float.IsInfinity(avgLoss) || avgLoss > 100f)
-        {
-            return 10.0f;
-        }
-
-        return avgLoss;
+        return float.IsNaN(avgLoss)
+            || float.IsInfinity(avgLoss)
+            || avgLoss > 100f ? 10.0f : avgLoss;
     }
 
     // ---------- Cleanup ----------
@@ -2147,15 +2158,6 @@ public unsafe class CnnNeuralFramework<TArch> : IDisposable
         list.Clear();
     }
 
-    public void Dispose()
-    {
-        ClearIntermediates();
-
-        foreach (var w in _convWeights) w.Dispose();
-        foreach (var b in _convBiases) b.Dispose();
-        foreach (var w in _denseWeights) w.Dispose();
-        foreach (var b in _denseBiases) b.Dispose();
-        foreach (var opt in _convOptimizers) opt.Dispose();
-        foreach (var opt in _denseOptimizers) opt.Dispose();
-    }
+    private static NeuralMatrix RentNeural(int rows, int cols) => NeuralMatrix.GetOrCreate(rows, cols);
+    private static CnnMatrix RentCnn(int batch, int channels, int h, int w) => CnnMatrix.GetOrCreate(batch, channels, h, w);
 }

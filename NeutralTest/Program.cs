@@ -23,8 +23,6 @@ internal class Program
     public static void RunCnnCifar10HundredImagesFast()
     {
         string dataDir = @"D:\Cifar\datasets\cifar-10-batches-bin";
-
-        // 1. Load data
         var (trainImages, trainLabels, actualLabels, testImages, testLabels, actualTestLabels) = Cifar10DataLoader.LoadBatches(
             dataDir: dataDir,
             batchSize: 10,
@@ -40,7 +38,7 @@ internal class Program
         new() { KernelHeight = 3, KernelWidth = 3, Filters = 32, Stride = 1, Padding = 1,
                 Activation = ActivationType.LeakyReLU, UseMaxPool = true, PoolSize = 2 }
     },
-            DenseArchitecture = [512, 256, 256, 128, 128, 64, 64, 32, 32],
+            DenseArchitecture = [128, 64],
             DenseHiddenActivation = ActivationType.ReLU,
             OutputActivation = ActivationType.Softmax,
             OptimizerConfig = new CnnOptimizerConfig
@@ -71,62 +69,74 @@ internal class Program
             .WithDenseConfig(denseConfig)
             .WithInputSize(GraphicsUtils.Width, GraphicsUtils.Height, 3)
             .Build();
-
         var validator = new CnnValidator();
 
-        float learningRate = 0.001f;
-        int maxEpochs = 2000;
-        int earlyStopPatience = 3000;
-        float targetAccuracy = 0.99f;
+        RenderTable(network, validator);
 
-        Console.WriteLine($"Training on {trainImages.Count} batches...");
+        Console.WriteLine("\n=== FINAL EVALUATION ===");
+        var finalResult = validator.Validate(network, testImages, testLabels);
+        validator.PrintResults(finalResult);
 
-        float bestAccuracy = 0f;
-        int epochsSinceBest = 0;
+        foreach (var img in trainImages) img.Dispose();
+        foreach (var lbl in trainLabels) lbl.Dispose();
+        foreach (var img in testImages) img.Dispose();
+        foreach (var lbl in testLabels) lbl.Dispose();
+    }
+
+    private static void RenderTable(CnnNetwork<Architecture> network, CnnValidator validator)
+    {
+        string dataDir = @"D:\Cifar\datasets\cifar-10-batches-bin";
+        var (trainImages, trainLabels, actualLabels, testImages, testLabels, actualTestLabels) = Cifar10DataLoader.LoadBatches(
+            dataDir: dataDir,
+            batchSize: 10,
+            maxSamples: 50
+        );
+
+        var learningRate = 0.001f;
+        var maxEpochs = 2000;
+        var earlyStopPatience = 3000;
+        var targetAccuracy = 0.99f;
+        var bestAccuracy = 0f;
+        var epochsSinceBest = 0;
 
         for (int epoch = 0; epoch < maxEpochs; epoch++)
         {
-            float totalLoss = 0;
+            var totalLoss = 0f;
+
             for (int batchIdx = 0; batchIdx < trainImages.Count; batchIdx++)
             {
                 float loss = network.TrainBatch(trainImages[batchIdx], trainLabels[batchIdx], learningRate);
                 totalLoss += loss;
             }
-            float avgLoss = totalLoss / trainImages.Count;
 
-            // Evaluate every epoch
+            var avgLoss = totalLoss / trainImages.Count;
+            
             if ((epoch & ((1 << 3) - 1)) == 0)
             {
                 var result = validator.Validate(network, testImages, testLabels);
                 float accuracy = result.Accuracy;
-
-                // --- PREDICTION TABLE ---
-                Console.Write("\e[H");
-
-                // Header
+                
+                Console.Write("\e[H");       
                 Console.WriteLine($"╔═════════════╤══════════════════╤════════════════════╤══════════════════════════════╗");
                 Console.WriteLine($"║  Epoch {epoch + 1,3}  │  Loss: {avgLoss,9:F6} │  Accuracy: {accuracy,6:P2}  │  Best: {bestAccuracy,6:P2}                ║");
                 Console.WriteLine($"╠═══════╤═════╧══════════════════╧════════════════════╧═══════════════╤══════════════╣");
                 Console.WriteLine($"║       │     0     1     2     3     4     5     6     7     8     9 │ Pred  Actual ║");
                 Console.WriteLine($"╠═══════╪═════════════════════════════════════════════════════════════╪══════════════╣");
 
-                // Get predictions for first 9 test images
-                int numSamples = Math.Min(10, testImages.Count);
+                var numSamples = Math.Min(10, testImages.Count);
                 for (int i = 0; i < numSamples; i++)
                 {
                     var pred = network.Forward(testImages[i]);
-                    float[] probs = new float[10];
-                    for (int j = 0; j < 10; j++)
+                    var probs = new float[10];
+
+                    for (var j = 0; j < 10; j++)
                     {
                         probs[j] = pred.At(0, j);
                     }
 
-                    int predicted = ArgMax(probs);
+                    var predicted = ArgMax(probs);
+                    var actual = GetActualLabel(testLabels[i]);
 
-                    // ✅ FIX: Get actual label from the correct batch and row
-                    int actual = GetActualLabel(testLabels[i]);
-
-                    // Each row
                     Console.Write($"║ {i,2}    │");
                     for (int j = 0; j < 10; j++)
                     {
@@ -143,8 +153,7 @@ internal class Program
                 Console.WriteLine($"╚═══════╧═════════════════════════════════════════════════════════════╧══════════════╝");
                 Console.WriteLine();
                 Console.WriteLine($"Best accuracy: {bestAccuracy:P2}  |  Epochs since best: {epochsSinceBest}");
-
-                // Track best accuracy for early stopping
+                
                 if (accuracy > bestAccuracy)
                 {
                     bestAccuracy = accuracy;
@@ -156,7 +165,6 @@ internal class Program
                     epochsSinceBest++;
                 }
 
-                // Early stopping conditions
                 if (accuracy >= targetAccuracy)
                 {
                     Console.WriteLine($"\n🎯 Target accuracy {targetAccuracy:P2} reached! Stopping early at epoch {epoch + 1}");
@@ -171,17 +179,6 @@ internal class Program
                 }
             }
         }
-
-        // Final evaluation with detailed results
-        Console.WriteLine("\n=== FINAL EVALUATION ===");
-        var finalResult = validator.Validate(network, testImages, testLabels);
-        validator.PrintResults(finalResult);
-
-        // Cleanup
-        foreach (var img in trainImages) img.Dispose();
-        foreach (var lbl in trainLabels) lbl.Dispose();
-        foreach (var img in testImages) img.Dispose();
-        foreach (var lbl in testLabels) lbl.Dispose();
     }
 
     private static int ArgMax(float[] array)
