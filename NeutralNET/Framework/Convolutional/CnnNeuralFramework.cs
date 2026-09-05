@@ -1026,12 +1026,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         int weightStride = weightMat.ColumnsStride;
         int resStride = result.ColumnsStride;
 
-        bool hasAvx512 = Avx512F.IsSupported;
-        bool hasAvx2 = Avx2.IsSupported;
-
-        const int Avx512Size = 16;
-        const int Avx2S56Size= 8;
-
         for (int patch = 0; patch < patches; patch++)
         {
             float* colRow = colPtr + patch * colStride;
@@ -1043,7 +1037,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
                 float sum = 0;
                 int inner = 0;
 
-                if (hasAvx512)
+                if (Avx512F.IsSupported)
                 {
                     Vector512<float> sumVec = Vector512<float>.Zero;
                     int vectorizable = innerDim - (innerDim % Avx512Size);
@@ -1055,7 +1049,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
                     }
                     sum = Vector512.Sum(sumVec);
                 }
-                else if (hasAvx2)
+                else if (Avx2.IsSupported)
                 {
                     Vector256<float> sumVec = Vector256<float>.Zero;
                     int vectorizable = innerDim - (innerDim % Avx256Size);
@@ -2182,7 +2176,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         _lastPooledOutput = null!;
     }
 
-    private void DisposeList<T>(List<T> list, bool skipFirst = false) where T : IDisposable
+    private static void DisposeList<T>(List<T> list, bool skipFirst = false) where T : IDisposable
     {
         int startIndex = skipFirst ? 1 : 0;
         for (int i = startIndex; i < list.Count; i++)

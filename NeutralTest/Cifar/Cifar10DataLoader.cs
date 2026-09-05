@@ -12,7 +12,6 @@ public static class Cifar10DataLoader
             maxTestSamples: maxSamples
         );
 
-        // Read actual labels
         int[] actualLabels = LabelCalc(trainLabels);
         int[] actualTestLabels = LabelCalc(testLabels);
 

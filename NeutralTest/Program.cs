@@ -8,6 +8,7 @@ using NeutralNET.Framework.Neural.CNN;
 using NeutralNET.Matrices;
 using NeutralNET.Models;
 using NeutralNET.Stuff;
+using NeutralNET.Test.Data;
 
 namespace NeutralTest;
 
@@ -23,21 +24,19 @@ internal class Program
     public static void RunCnnCifar10HundredImagesFast()
     {
         string dataDir = @"D:\Cifar\datasets\cifar-10-batches-bin";
-        var (trainImages, trainLabels, actualLabels, testImages, testLabels, actualTestLabels) = Cifar10DataLoader.LoadBatches(
-            dataDir: dataDir,
-            batchSize: 10,
-            maxSamples: 50
-        );
+
+        var loader = DataLoaderFactory.Create(DataSourceType.DigiDigi);
+        var dataSet = loader.LoadCompleteDataset(batchSize: 10, maxTrainSamples: 50000, maxTestSamples: 10000);
 
         var cnnConfig = new CnnArchitectureConfig
         {
-            ConvLayers = new List<CnnLayerConfig>
-    {
-        new() { KernelHeight = 3, KernelWidth = 3, Filters = 16, Stride = 1, Padding = 1,
-                Activation = ActivationType.LeakyReLU, UseMaxPool = true, PoolSize = 2 },
-        new() { KernelHeight = 3, KernelWidth = 3, Filters = 32, Stride = 1, Padding = 1,
-                Activation = ActivationType.LeakyReLU, UseMaxPool = true, PoolSize = 2 }
-    },
+            ConvLayers =
+            [
+                new() { KernelHeight = 3, KernelWidth = 3, Filters = 16, Stride = 1, Padding = 1,
+                        Activation = ActivationType.LeakyReLU, UseMaxPool = true, PoolSize = 2 },
+                new() { KernelHeight = 3, KernelWidth = 3, Filters = 32, Stride = 1, Padding = 1,
+                        Activation = ActivationType.LeakyReLU, UseMaxPool = true, PoolSize = 2 }
+            ],
             DenseArchitecture = [128, 64],
             DenseHiddenActivation = ActivationType.ReLU,
             OutputActivation = ActivationType.Softmax,
@@ -74,13 +73,13 @@ internal class Program
         RenderTable(network, validator);
 
         Console.WriteLine("\n=== FINAL EVALUATION ===");
-        var finalResult = validator.Validate(network, testImages, testLabels);
+        var finalResult = validator.Validate(network, dataSet.TestImages, dataSet.TestLabels);
         validator.PrintResults(finalResult);
 
-        foreach (var img in trainImages) img.Dispose();
-        foreach (var lbl in trainLabels) lbl.Dispose();
-        foreach (var img in testImages) img.Dispose();
-        foreach (var lbl in testLabels) lbl.Dispose();
+        foreach (var img in dataSet.TrainImages) img.Dispose();
+        foreach (var lbl in dataSet.TrainLabels) lbl.Dispose();
+        foreach (var img in dataSet.TestImages) img.Dispose();
+        foreach (var lbl in dataSet.TestLabels) lbl.Dispose();
     }
 
     private static void RenderTable(CnnNetwork<Architecture> network, CnnValidator validator)
