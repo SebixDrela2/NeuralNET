@@ -47,7 +47,7 @@ internal class Program
             PoolSize = 2 // 14x14 -> 7x7
         }
     ],
-            DenseArchitecture = [128, 10],          
+            DenseArchitecture = [128, 10],
             DenseHiddenActivation = ActivationType.LeakyReLU,
             OutputActivation = ActivationType.Softmax,
             OptimizerConfig = new CnnOptimizerConfig
@@ -64,10 +64,10 @@ internal class Program
         var denseConfig = new NeuralNetworkConfig
         {
             LearningRate = 0.001f,
-            WeightDecay = 0.0001f,                  
-            BatchSize = 64,                         
+            WeightDecay = 0.0001f,
+            BatchSize = 64,
             Epochs = 15,
-            DropoutRate = 0.25f,                    
+            DropoutRate = 0.25f,
             WithShuffle = true,
             OptimizerType = OptimizerType.Adam,
             Model = null
@@ -210,10 +210,7 @@ internal class Program
                     Console.Write($"║ {i,2}    │");
                     for (int j = 0; j < 10; j++)
                     {
-                        var v = probs[j];
-                        var s = FmtPogression(v);
-                        if (v is > 0 and < 0.1f) Console.Write($" \e[38;2;142;142;142m{s}\e[39m");
-                        else Console.Write($" {s}");
+                        Console.Write($" {FmtPogression(probs[j], j == actual)}");
                     }
 
                     Console.WriteLine($" │  {(predicted == actual ? AsGreen(predicted.ToString()) : AsRed(predicted.ToString())),2}      {actual,2}   ║\e[K");
@@ -252,7 +249,7 @@ internal class Program
         }
     }
 
-    private static string FmtPogression(float x)
+    private static string FmtPogression(float x, bool hl)
     {
         const int ColWidth = 5;
         const char ChZero = ' ';
@@ -263,12 +260,17 @@ internal class Program
         const string errBg = "227;61;48";
         const string errFg = "151;41;32";
 
+        const string hlBg = "10;12;13";
+        const string hlFg = "78;91;106";
+        const string hlErrBg = "98;67;75";
+        const string hlErrFg = "227;61;48";
+
         switch (x)
         {
-            case 0: return $"\e[48;2;{bg}m{new string(ChZero, ColWidth)}\e[49m";
-            case 1: return $"\e[38;2;{fg}m{new string(ChMax, ColWidth)}\e[39m";
-            case <= 0: return $"\e[38;2;{errBg}m{x,5:f2}\e[39m";
-            case >= 1: return $"\e[38;2;{errFg};48;2;{errBg}m{x,5:f3}\e[39;49m";
+            case 0: return $"\e[48;2;{(hl ? hlBg : bg)}m{new string(ChZero, ColWidth)}\e[49m";
+            case 1: return $"\e[38;2;{(hl ? hlFg : fg)}m{new string(ChMax, ColWidth)}\e[39m";
+            case <= 0: return $"\e[38;2;{(hl ? hlErrBg : errBg)}m{x,5:f2}\e[39m";
+            case >= 1: return $"\e[38;2;{(hl ? hlErrFg : errFg)};48;2;{(hl ? hlErrBg : errBg)}m{x,5:f3}\e[39;49m";
         }
         Span<char> xs = stackalloc char[ColWidth];
         xs.Fill(ChZero);
