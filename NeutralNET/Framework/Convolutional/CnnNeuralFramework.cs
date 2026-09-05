@@ -6,6 +6,7 @@ using NeutralNET.Framework.Connected;
 using NeutralNET.Framework.Connected.Neural;
 using NeutralNET.Framework.Convolutional;
 using NeutralNET.Matrices;
+using NeutralNET.GPU;                     // <-- Added for GPU acceleration
 using static NeutralNET.Activation.ActivationSelector;
 
 namespace NeutralNET.Framework.Neural.CNN;
@@ -352,7 +353,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
             currentGrad = ProcessSingleConvLayerBackward(
                 currentGrad,
-                layerIdx,layer,
+                layerIdx, layer,
                 preAct, postAct, colInput, weightMat, inputTensor, indices);
         }
 
@@ -383,6 +384,8 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         var inDim = colInput.UsedColumns;
 
         ClipGradients(preGradMatrix, GradientClipNorm);
+
+        // ---- Weight gradient dW = colInput^T * preGradMatrix ----
         var dW = ComputeWeightGradient(colInput, preGradMatrix, patches, filters, inDim);
         ClipGradients(dW, GradientClipNorm);
 
@@ -391,6 +394,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
         _convOptimizers[layerIdx].UpdateConvWeights(_convWeights[layerIdx], _convBiases[layerIdx], dW, dB);
 
+        // ---- gradPatchMat = preGradMatrix * weightMat ----
         var gradPatchMat = ComputeGradientWithRespectToInput(weightMat, preGradMatrix, patches, filters, inDim);
         ClipGradients(gradPatchMat, GradientClipNorm);
 
@@ -965,6 +969,9 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         return weightMat;
     }
 
+    // --------------------------------------------------------------
+    // ComputeConvolution - GPU accelerated version
+    // --------------------------------------------------------------
     private NeuralMatrix ComputeConvolution(NeuralMatrix colInput, NeuralMatrix weightMat)
     {
         int patches = colInput.Rows;
@@ -973,6 +980,25 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
         var result = RentNeural(patches, filters);
 
+        // Use GPU acceleration for large convolutions
+        long estimatedOps = (long)patches * filters * innerDim;
+        if (NeuralMatrix.IsGpuAvailable && estimatedOps > 100000)
+        {
+            try
+            {
+                colInput.GpuDot(weightMat, result);
+                return result;
+            }
+            catch (Exception ex)
+            {
+                // Fall through to CPU
+                Console.WriteLine($"⚠️ GPU convolution failed: {ex.Message}. Falling back to CPU.");
+            }
+        }
+
+        // ========================================================================
+        // CPU IMPLEMENTATION (AVX-512 / AVX2)
+        // ========================================================================
         float* colPtr = colInput.Pointer;
         float* weightPtr = weightMat.Pointer;
         float* resPtr = result.Pointer;
@@ -1381,6 +1407,9 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         return gradInput;
     }
 
+    // --------------------------------------------------------------
+    // DenseForward - GPU accelerated version
+    // --------------------------------------------------------------
     private NeuralMatrix DenseForward(NeuralMatrix input, bool storeIntermediates)
     {
         var current = input;
@@ -1396,6 +1425,48 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
             var result = RentNeural(batchSize, outFeatures);
 
+            // Use GPU for large matrix multiplications
+            long estimatedOps = (long)batchSize * inFeatures * outFeatures;
+            if (NeuralMatrix.IsGpuAvailable && estimatedOps > 100000)
+            {
+                try
+                {
+                    current.GpuDot(weights, result);
+
+                    // Add bias
+                    for (int r = 0; r < batchSize; r++)
+                    {
+                        var row = result.GetRowSpan(r);
+                        for (int c = 0; c < outFeatures; c++)
+                            row[c] += biases.At(0, c);
+                    }
+
+                    // Apply activation
+                    _denseActivations[i](result);
+
+                    if (storeIntermediates)
+                    {
+                        _densePreAct.Add(result.Copy());
+                        _densePostAct.Add(result.Copy());
+                    }
+
+                    if (!ReferenceEquals(current, input))
+                        current.Dispose();
+
+                    current = result;
+                    continue;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"⚠️ GPU dense forward failed: {ex.Message}. Falling back to CPU.");
+                    result.Dispose();
+                    result = RentNeural(batchSize, outFeatures);
+                }
+            }
+
+            // ========================================================================
+            // CPU IMPLEMENTATION (AVX-512 / AVX2)
+            // ========================================================================
             float* inPtr = current.Pointer;
             float* weightPtr = weights.Pointer;
             float* biasPtr = biases.Pointer;
@@ -1644,50 +1715,75 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
             var dW = RentNeural(inDim, outDim);
             dW.Clear();
 
-            float* pIn = inputToLayer.Pointer;
-            float* pDW = dW.Pointer;
-            int strideIn = inputToLayer.ColumnsStride;
-            int strideDW = dW.ColumnsStride;
-
-            for (int r = 0; r < batch; r++)
+            // Use GPU for gradient computation if large
+            long estimatedOps = (long)batch * inDim * outDim;
+            if (NeuralMatrix.IsGpuAvailable && estimatedOps > 100000)
             {
-                float* rowIn = pIn + r * strideIn;
-                float* rowGP = pGradPre + r * strideGradPre;
-
-                for (int cIn = 0; cIn < inDim; cIn++)
+                try
                 {
-                    float xVal = rowIn[cIn];
-                    if (xVal == 0f) continue;
+                    // dW = inputToLayer^T * gradPre
+                    using var inputTransposed = inputToLayer.GpuTranspose();
+                    inputTransposed.GpuDot(gradPre, dW);
+                    // bias gradient still CPU (small)
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"⚠️ GPU backward dW failed: {ex.Message}. Falling back to CPU.");
+                    // fall through
+                    dW.Clear();
+                    // re-run CPU computation (below)
+                }
+            }
 
-                    float* rowDW = pDW + cIn * strideDW;
-                    int cOut = 0;
+            // If GPU failed or not used, compute on CPU
+            if (dW.UnsafeSize > 0 && !GpuBackendFactory.IsGpuAvailable)
+            {
+                // CPU fallback for dW
+                float* pIn = inputToLayer.Pointer;
+                float* pDW = dW.Pointer;
+                int strideIn = inputToLayer.ColumnsStride;
+                int strideDW = dW.ColumnsStride;
 
-                    if (Avx512F.IsSupported)
+                for (int r = 0; r < batch; r++)
+                {
+                    float* rowIn = pIn + r * strideIn;
+                    float* rowGP = pGradPre + r * strideGradPre;
+
+                    for (int cIn = 0; cIn < inDim; cIn++)
                     {
-                        var vX = Vector512.Create(xVal);
-                        int limit = outDim - (outDim % 16);
-                        for (; cOut < limit; cOut += 16)
+                        float xVal = rowIn[cIn];
+                        if (xVal == 0f) continue;
+
+                        float* rowDW = pDW + cIn * strideDW;
+                        int cOut = 0;
+
+                        if (Avx512F.IsSupported)
                         {
-                            var vGP = Vector512.Load(rowGP + cOut);
-                            var vDW = Vector512.Load(rowDW + cOut);
-                            Avx512F.FusedMultiplyAdd(vX, vGP, vDW).Store(rowDW + cOut);
+                            var vX = Vector512.Create(xVal);
+                            int limit = outDim - (outDim % 16);
+                            for (; cOut < limit; cOut += 16)
+                            {
+                                var vGP = Vector512.Load(rowGP + cOut);
+                                var vDW = Vector512.Load(rowDW + cOut);
+                                Avx512F.FusedMultiplyAdd(vX, vGP, vDW).Store(rowDW + cOut);
+                            }
                         }
-                    }
-                    else if (Avx2.IsSupported)
-                    {
-                        var vX = Vector256.Create(xVal);
-                        int limit = outDim - (outDim % 8);
-                        for (; cOut < limit; cOut += 8)
+                        else if (Avx2.IsSupported)
                         {
-                            var vGP = Avx.LoadVector256(rowGP + cOut);
-                            var vDW = Avx.LoadVector256(rowDW + cOut);
-                            Fma.MultiplyAdd(vX, vGP, vDW).Store(rowDW + cOut);
+                            var vX = Vector256.Create(xVal);
+                            int limit = outDim - (outDim % 8);
+                            for (; cOut < limit; cOut += 8)
+                            {
+                                var vGP = Avx.LoadVector256(rowGP + cOut);
+                                var vDW = Avx.LoadVector256(rowDW + cOut);
+                                Fma.MultiplyAdd(vX, vGP, vDW).Store(rowDW + cOut);
+                            }
                         }
-                    }
 
-                    for (; cOut < outDim; cOut++)
-                    {
-                        rowDW[cOut] += xVal * rowGP[cOut];
+                        for (; cOut < outDim; cOut++)
+                        {
+                            rowDW[cOut] += xVal * rowGP[cOut];
+                        }
                     }
                 }
             }

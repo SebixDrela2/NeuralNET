@@ -9,6 +9,7 @@ using System.Runtime.Intrinsics.X86;
 using NeutralNET.Stuff;
 using NeutralNET.Unmanaged;
 using NeutralNET.Utils;
+using NeutralNET.GPU;   // <-- Added for GPU acceleration
 
 namespace NeutralNET.Matrices;
 
@@ -441,4 +442,156 @@ public unsafe class NeuralMatrix : IDisposable
     }
 
     public override string ToString() => $"{Rows}x{UsedColumns}";
+
+    // =========================================================================
+    // GPU ACCELERATION SUPPORT
+    // =========================================================================
+
+    private static bool _gpuChecked = false;
+    private static bool _gpuAvailable = false;
+    private static readonly object _gpuLock = new object();
+
+    /// <summary>
+    /// Checks if GPU acceleration is available (caches result).
+    /// </summary>
+    public static bool IsGpuAvailable
+    {
+        get
+        {
+            if (!_gpuChecked)
+            {
+                lock (_gpuLock)
+                {
+                    if (!_gpuChecked)
+                    {
+                        try
+                        {
+                            _gpuAvailable = GpuBackendFactory.IsGpuAvailable;
+                        }
+                        catch
+                        {
+                            _gpuAvailable = false;
+                        }
+                        _gpuChecked = true;
+                        if (_gpuAvailable)
+                            Console.WriteLine($"✅ GPU acceleration available: {GpuBackendFactory.Instance.DeviceName}");
+                        else
+                            Console.WriteLine("ℹ️ Using CPU for matrix operations");
+                    }
+                }
+            }
+            return _gpuAvailable;
+        }
+    }
+
+    /// <summary>
+    /// Multiplies two matrices using GPU acceleration if available and beneficial; falls back to CPU.
+    /// </summary>
+    public NeuralMatrix GpuDot(NeuralMatrix other)
+    {
+        // Use GPU for large matrices (threshold: > 10k elements)
+        if (IsGpuAvailable && UnsafeSize * other.UnsafeSize > 10000)
+        {
+            try
+            {
+                return GpuBackendFactory.Instance.Multiply(this, other);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"⚠️ GPU multiplication failed: {ex.Message}. Falling back to CPU.");
+            }
+        }
+        // CPU fallback (uses the existing DotVectorized internally)
+        var result = GetOrCreate(Rows, other.UsedColumns);
+        DotVectorized(other, result);
+        return result;
+    }
+
+    /// <summary>
+    /// Multiplies two matrices using GPU acceleration with a pre‑allocated result matrix.
+    /// </summary>
+    public void GpuDot(NeuralMatrix other, NeuralMatrix result)
+    {
+        if (IsGpuAvailable && UnsafeSize * other.UnsafeSize > 10000)
+        {
+            try
+            {
+                GpuBackendFactory.Instance.Multiply(this, other, result);
+                return;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"⚠️ GPU multiplication failed: {ex.Message}. Falling back to CPU.");
+            }
+        }
+        // CPU fallback
+        DotVectorized(other, result);
+    }
+
+    /// <summary>
+    /// Adds two matrices using GPU acceleration if beneficial; falls back to CPU.
+    /// </summary>
+    public NeuralMatrix GpuAdd(NeuralMatrix other)
+    {
+        if (IsGpuAvailable && UnsafeSize > 10000)
+        {
+            try
+            {
+                return GpuBackendFactory.Instance.Add(this, other);
+            }
+            catch
+            {
+                // fall through
+            }
+        }
+        var result = GetOrCreate(Rows, UsedColumns);
+        result.CopyDataFrom(this);
+        result.SumVectorized(other);
+        return result;
+    }
+
+    /// <summary>
+    /// Adds two matrices using GPU acceleration with a pre‑allocated result.
+    /// </summary>
+    public void GpuAdd(NeuralMatrix other, NeuralMatrix result)
+    {
+        if (IsGpuAvailable && UnsafeSize > 10000)
+        {
+            try
+            {
+                GpuBackendFactory.Instance.Add(this, other, result);
+                return;
+            }
+            catch
+            {
+                // fall through
+            }
+        }
+        result.CopyDataFrom(this);
+        result.SumVectorized(other);
+    }
+
+    /// <summary>
+    /// Transposes the matrix using GPU acceleration if beneficial; falls back to CPU.
+    /// </summary>
+    public NeuralMatrix GpuTranspose()
+    {
+        if (IsGpuAvailable && UnsafeSize > 10000)
+        {
+            try
+            {
+                return GpuBackendFactory.Instance.Transpose(this);
+            }
+            catch
+            {
+                // fall through
+            }
+        }
+        // CPU fallback
+        var result = GetOrCreate(UsedColumns, Rows);
+        for (int i = 0; i < Rows; i++)
+            for (int j = 0; j < UsedColumns; j++)
+                result.At(j, i) = At(i, j);
+        return result;
+    }
 }

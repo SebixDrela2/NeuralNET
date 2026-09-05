@@ -5,7 +5,7 @@
     <TargetPlatform>Windows</TargetPlatform>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
-
+  
   <ItemGroup>
     <ProjectReference Include="..\NeutralNET\NeutralNET.csproj" />
   </ItemGroup>

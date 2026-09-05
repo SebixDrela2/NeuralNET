@@ -9,6 +9,9 @@
   <ItemGroup>
     <PackageReference Include="System.Drawing.Common" Version="9.0.3" />
     <PackageReference Include="System.Drawing.Primitives" Version="4.3.0" />
+    <PackageReference Include="TensorFlow.NET" Version="0.150.0" />
+    <PackageReference Include="SciSharp.TensorFlow.Redist-Windows-GPU" Version="2.10.3" />
+    <PackageReference Include="TensorFlow.Keras" Version="0.15.0" />
   </ItemGroup>
 
 </Project>
