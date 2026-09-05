@@ -811,7 +811,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         return false;
     }
 
-    private unsafe void StabilizeSoftmax(NeuralMatrix matrix)
+    private void StabilizeSoftmax(NeuralMatrix matrix)
     {
         int rows = matrix.Rows;
         int cols = matrix.UsedColumns;
@@ -821,15 +821,12 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         for (int r = 0; r < rows; r++)
         {
             float* row = ptr + r * stride;
-
-            // Find max
             float maxVal = row[0];
             for (int c = 1; c < cols; c++)
             {
                 if (row[c] > maxVal) maxVal = row[c];
             }
 
-            // Compute exp with max subtraction
             float sum = 0f;
             for (int c = 0; c < cols; c++)
             {
@@ -838,7 +835,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
                 sum += val;
             }
 
-            // Normalize - don't clamp aggressively!
             float invSum = 1.0f / sum;
             for (int c = 0; c < cols; c++)
             {
@@ -851,15 +847,14 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
     // GRADIENT CLIPPING METHODS
     // =========================================================================
 
-    private unsafe void ClipGradients(NeuralMatrix gradient, float maxNorm)
+    private void ClipGradients(NeuralMatrix gradient, float maxNorm)
     {
-        int totalElements = gradient.UnsafeSize;  // ✅ Use UnsafeSize
+        int totalElements = gradient.UnsafeSize;
         if (totalElements == 0) return;
 
         float* ptr = gradient.Pointer;
         if (ptr == null) return;
 
-        // Check for NaN/Inf and reset if found
         bool hasError = false;
         for (int i = 0; i < totalElements; i++)
         {
@@ -872,7 +867,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
         if (hasError)
         {
-            // Reset gradient to zero
             for (int i = 0; i < totalElements; i++)
             {
                 ptr[i] = 0f;
@@ -880,7 +874,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
             return;
         }
 
-        // Calculate L2 norm
         float norm = 0f;
         for (int i = 0; i < totalElements; i++)
         {
@@ -888,7 +881,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         }
         norm = MathF.Sqrt(norm);
 
-        // Clip if norm exceeds threshold
         if (norm > maxNorm && norm > 0f)
         {
             float scale = maxNorm / norm;
@@ -901,13 +893,12 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
     private unsafe void ClipCnnGradient(CnnMatrix gradient, float maxNorm)
     {
-        int totalElements = gradient.UnsafeSize;  // ✅ Use UnsafeSize
+        int totalElements = gradient.UnsafeSize;
         if (totalElements == 0) return;
 
         float* ptr = gradient.Pointer;
         if (ptr == null) return;
 
-        // Check for NaN/Inf and reset if found
         bool hasError = false;
         for (int i = 0; i < totalElements; i++)
         {
@@ -920,7 +911,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
         if (hasError)
         {
-            // Reset gradient to zero
             for (int i = 0; i < totalElements; i++)
             {
                 ptr[i] = 0f;
@@ -928,7 +918,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
             return;
         }
 
-        // Calculate L2 norm
         float norm = 0f;
         for (int i = 0; i < totalElements; i++)
         {
@@ -936,7 +925,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         }
         norm = MathF.Sqrt(norm);
 
-        // Clip if norm exceeds threshold
         if (norm > maxNorm && norm > 0f)
         {
             float scale = maxNorm / norm;
@@ -969,16 +957,16 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         return (preAct, colInput, weightMat);
     }
 
-    private unsafe NeuralMatrix CreateWeightMatrix(CnnMatrix weights)
+    private NeuralMatrix CreateWeightMatrix(CnnMatrix weights)
     {
-        int innerDim = weights.Channels * weights.Height * weights.Width;
-        int filters = weights.Batch;
+        var innerDim = weights.Channels * weights.Height * weights.Width;
+        var filters = weights.Batch;
         var weightMat = RentNeural(filters, innerDim);
 
-        float* pSrc = weights.Pointer;
-        float* pDst = weightMat.Pointer;
+        var pSrc = weights.Pointer;
+        var pDst = weightMat.Pointer;
 
-        int dstStride = weightMat.ColumnsStride;
+        var dstStride = weightMat.ColumnsStride;
 
         if (dstStride == innerDim)
         {
@@ -987,8 +975,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
             return weightMat;
         }
 
-        bool hasAvx512 = Avx512F.IsSupported;
-        const int Avx512Size = 16;
         long bytesPerRow = (long)innerDim * sizeof(float);
 
         for (int f = 0; f < filters; f++)
@@ -1000,7 +986,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
             {
                 Buffer.MemoryCopy(srcRow, dstRow, bytesPerRow, bytesPerRow);
             }
-            else if (hasAvx512)
+            else if (Avx512F.IsSupported)
             {
                 int i = 0;
                 int vecLimit = innerDim - (innerDim % Avx512Size);
@@ -1025,7 +1011,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         return weightMat;
     }
 
-    private unsafe NeuralMatrix ComputeConvolution(NeuralMatrix colInput, NeuralMatrix weightMat)
+    private NeuralMatrix ComputeConvolution(NeuralMatrix colInput, NeuralMatrix weightMat)
     {
         int patches = colInput.Rows;
         int filters = weightMat.Rows;
@@ -1094,7 +1080,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         return result;
     }
 
-    private unsafe void AddBias(NeuralMatrix result, CnnMatrix biases)
+    private void AddBias(NeuralMatrix result, CnnMatrix biases)
     {
         int patches = result.Rows;
         int filters = biases.Channels;
@@ -1124,7 +1110,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         }
     }
 
-    private unsafe CnnMatrix ReshapeToCnnMatrix(NeuralMatrix result, int batchSize, int filters, int height, int width, CnnLayerConfig layer)
+    private CnnMatrix ReshapeToCnnMatrix(NeuralMatrix result, int batchSize, int filters, int height, int width, CnnLayerConfig layer)
     {
         int outH = (height + 2 * layer.Padding - layer.KernelHeight) / layer.Stride + 1;
         int outW = (width + 2 * layer.Padding - layer.KernelWidth) / layer.Stride + 1;
@@ -1192,7 +1178,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         return preAct;
     }
 
-    // ---------- MaxPool ----------
     private CnnMatrix MaxPoolForward(CnnMatrix input, int poolSize)
     {
         var res = MaxPoolForward(input, poolSize, out NeuralMatrix indices);
@@ -1202,7 +1187,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         return res;
     }
 
-    private unsafe CnnMatrix MaxPoolForward(CnnMatrix input, int poolSize, out NeuralMatrix indices)
+    private CnnMatrix MaxPoolForward(CnnMatrix input, int poolSize, out NeuralMatrix indices)
     {
         int batch = input.Batch;
         int channels = input.Channels;
@@ -1368,7 +1353,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         return pooled;
     }
 
-    private unsafe CnnMatrix MaxPoolBackward(CnnMatrix gradOutput, CnnMatrix input, NeuralMatrix indices, int poolSize)
+    private CnnMatrix MaxPoolBackward(CnnMatrix gradOutput, CnnMatrix input, NeuralMatrix indices, int poolSize)
     {
         int batch = input.Batch;
         int channels = input.Channels;
@@ -1448,14 +1433,9 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         return gradInput;
     }
 
-    private unsafe NeuralMatrix DenseForward(NeuralMatrix input, bool storeIntermediates)
+    private NeuralMatrix DenseForward(NeuralMatrix input, bool storeIntermediates)
     {
         var current = input;
-        bool hasAvx512 = Avx512F.IsSupported;
-        bool hasAvx2 = Avx2.IsSupported && Fma.IsSupported;
-
-        const int Avx512Size = 16;
-        const int Avx2S56Size= 8;
 
         for (int i = 0; i < _denseWeights.Count; i++)
         {
@@ -1484,7 +1464,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
                 int outNeuron = 0;
 
-                if (hasAvx512)
+                if (Avx512F.IsSupported)
                 {
                     int vecInFeatures = inFeatures - (inFeatures % Avx512Size);
 
@@ -1548,7 +1528,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
                         resRow[outNeuron] = sum + biasPtr[outNeuron];
                     }
                 }
-                else if (hasAvx2)
+                else if (Avx2.IsSupported)
                 {
                     int vecInFeatures = inFeatures - (inFeatures % Avx256Size);
 
@@ -1653,11 +1633,8 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
     }
 
     // ---------- Dense Backward ----------
-    private unsafe NeuralMatrix DenseBackward(NeuralMatrix gradOutput, float learningRate, bool skipLastDerivative = false)
+    private NeuralMatrix DenseBackward(NeuralMatrix gradOutput, float learningRate, bool skipLastDerivative = false)
     {
-        bool hasAvx512 = Avx512F.IsSupported;
-        bool hasAvx2 = Avx2.IsSupported && Fma.IsSupported;
-
         for (int i = _denseWeights.Count - 1; i >= 0; i--)
         {
             var preAct = _densePreAct[i];
@@ -1693,17 +1670,17 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
                 if (skipDeriv)
                 {
                     int c = 0;
-                    if (hasAvx512)
+                    if (Avx512F.IsSupported)
                     {
                         int limit = outDim - (outDim % 16);
                         for (; c < limit; c += 16)
                             Vector512.Store(Vector512.Load(rowGO + c), rowGP + c);
                     }
-                    else if (hasAvx2)
+                    else if (Avx2.IsSupported)
                     {
                         int limit = outDim - (outDim % 8);
                         for (; c < limit; c += 8)
-                            Avx2.Store(rowGP + c, Avx2.LoadVector256(rowGO + c));
+                            Avx.Store(rowGP + c, Avx2.LoadVector256(rowGO + c));
                     }
                     for (; c < outDim; c++) rowGP[c] = rowGO[c];
                 }
@@ -1737,7 +1714,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
                     float* rowDW = pDW + cIn * strideDW;
                     int cOut = 0;
 
-                    if (hasAvx512)
+                    if (Avx512F.IsSupported)
                     {
                         var vX = Vector512.Create(xVal);
                         int limit = outDim - (outDim % 16);
@@ -1748,14 +1725,14 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
                             Avx512F.FusedMultiplyAdd(vX, vGP, vDW).Store(rowDW + cOut);
                         }
                     }
-                    else if (hasAvx2)
+                    else if (Avx2.IsSupported)
                     {
                         var vX = Vector256.Create(xVal);
                         int limit = outDim - (outDim % 8);
                         for (; cOut < limit; cOut += 8)
                         {
-                            var vGP = Avx2.LoadVector256(rowGP + cOut);
-                            var vDW = Avx2.LoadVector256(rowDW + cOut);
+                            var vGP = Avx.LoadVector256(rowGP + cOut);
+                            var vDW = Avx.LoadVector256(rowDW + cOut);
                             Fma.MultiplyAdd(vX, vGP, vDW).Store(rowDW + cOut);
                         }
                     }
@@ -1775,7 +1752,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
             {
                 float* rowGP = pGradPre + r * strideGradPre;
                 int cOut = 0;
-                if (hasAvx512)
+                if (Avx512F.IsSupported)
                 {
                     int limit = outDim - (outDim % 16);
                     for (; cOut < limit; cOut += 16)
@@ -1783,12 +1760,12 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
                         (Vector512.Load(pDB + cOut) + Vector512.Load(rowGP + cOut)).Store(pDB + cOut);
                     }
                 }
-                else if (hasAvx2)
+                else if (Avx2.IsSupported)
                 {
                     int limit = outDim - (outDim % 8);
                     for (; cOut < limit; cOut += 8)
                     {
-                        (Avx2.LoadVector256(pDB + cOut) + Avx2.LoadVector256(rowGP + cOut)).Store(pDB + cOut);
+                        (Avx.LoadVector256(pDB + cOut) + Avx.LoadVector256(rowGP + cOut)).Store(pDB + cOut);
                     }
                 }
                 for (; cOut < outDim; cOut++)
@@ -1827,7 +1804,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
                     float* rowW = pWeights + cOut * strideWeights;
                     int cIn = 0;
 
-                    if (hasAvx512)
+                    if (Avx512F.IsSupported)
                     {
                         var vG = Vector512.Create(gVal);
                         int limit = weightInDim - (weightInDim % 16);
@@ -1838,7 +1815,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
                             Avx512F.FusedMultiplyAdd(vG, vW, vGI).Store(rowGI + cIn);
                         }
                     }
-                    else if (hasAvx2)
+                    else if (Avx2.IsSupported)
                     {
                         var vG = Vector256.Create(gVal);
                         int limit = weightInDim - (weightInDim % 8);
@@ -1868,8 +1845,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         return gradOutput;
     }
 
-    // ---------- Utilities ----------
-    private unsafe void ApplyActivation(CnnMatrix matrix, ActivationType type)
+    private void ApplyActivation(CnnMatrix matrix, ActivationType type)
     {
         if (type == ActivationType.Identity) return;
 
@@ -1917,7 +1893,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         }
     }
 
-    private static unsafe void ApplyDerivativeToGradient(CnnMatrix gradient, CnnMatrix postAct, ActivationType type)
+    private static void ApplyDerivativeToGradient(CnnMatrix gradient, CnnMatrix postAct, ActivationType type)
     {
         if (type == ActivationType.Identity) return;
 
