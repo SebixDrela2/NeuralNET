@@ -53,8 +53,8 @@ internal class Program
             OptimizerConfig = new CnnOptimizerConfig
             {
                 OptimizerType = CnnOptimizerType.Adam,
-                LearningRate = 0.001f,               
-                WeightDecay = 0.0001f,               
+                LearningRate = 0.001f,
+                WeightDecay = 0.0001f,
                 Beta1 = 0.9f,
                 Beta2 = 0.999f,
                 Epsilon = 1e-8f
@@ -169,6 +169,7 @@ internal class Program
         var testImages = dataSet.TestImages;
         var testLabels = dataSet.TestLabels;
 
+        Console.Write("\e[2J\e[3J\e[H");
         for (int epoch = 0; epoch < maxEpochs; epoch++)
         {
             var totalLoss = 0f;
@@ -186,11 +187,11 @@ internal class Program
                 var result = validator.Validate(network, testImages, testLabels);
                 float accuracy = result.Accuracy;
                 Console.Write("\e[H");
-                Console.WriteLine($"╔══════════════╤══════════════════╤════════════════════╤═════════════════════════════╗");
-                Console.WriteLine($"║  Epoch {epoch + 1,5} │ Loss: {avgLoss,9:F6}  │  Accuracy: {accuracy,7:P2} │  Best: {bestAccuracy,7:P2}              ║");
-                Console.WriteLine($"╠═══════╤══════╧══════════════════╧════════════════════╧══════════════╤══════════════╣");
-                Console.WriteLine($"║       │     0     1     2     3     4     5     6     7     8     9 │ Pred  Actual ║");
-                Console.WriteLine($"╠═══════╪═════════════════════════════════════════════════════════════╪══════════════╣");
+                Console.WriteLine($"╔══════════════╤══════════════════╤════════════════════╤═════════════════════════════╗\e[K");
+                Console.WriteLine($"║  Epoch {epoch + 1,5} │ Loss: {avgLoss,9:F6}  │  Accuracy: {accuracy,7:P2} │  Best: {bestAccuracy,7:P2}              ║\e[K");
+                Console.WriteLine($"╠═══════╤══════╧══════════════════╧════════════════════╧══════════════╤══════════════╣\e[K");
+                Console.WriteLine($"║       │     0     1     2     3     4     5     6     7     8     9 │ Pred  Actual ║\e[K");
+                Console.WriteLine($"╠═══════╪═════════════════════════════════════════════════════════════╪══════════════╣\e[K");
 
                 var numSamples = Math.Min(10, testImages.Count);
                 for (int i = 0; i < numSamples; i++)
@@ -211,23 +212,24 @@ internal class Program
                     {
                         var v = probs[j];
                         var s = FmtPogression(v);
-                        Console.Write($" {s}");
+                        if (v is > 0 and < 0.1f) Console.Write($" \e[38;2;142;142;142m{s}\e[39m");
+                        else Console.Write($" {s}");
                     }
 
-                    Console.WriteLine($" │  {(predicted == actual ? AsGreen(predicted.ToString()) : AsRed(predicted.ToString())),2}      {actual,2}   ║");
+                    Console.WriteLine($" │  {(predicted == actual ? AsGreen(predicted.ToString()) : AsRed(predicted.ToString())),2}      {actual,2}   ║\e[K");
 
                     pred.Dispose();
                 }
 
-                Console.WriteLine($"╚═══════╧═════════════════════════════════════════════════════════════╧══════════════╝");
+                Console.WriteLine($"╚═══════╧═════════════════════════════════════════════════════════════╧══════════════╝\e[K");
                 Console.WriteLine();
-                Console.WriteLine($"Best accuracy: {bestAccuracy:P2}  |  Epochs since best: {epochsSinceBest}");
+                Console.WriteLine($"Best accuracy: {bestAccuracy:P2}  |  Epochs since best: {epochsSinceBest}\e[K");
 
                 if (accuracy > bestAccuracy)
                 {
                     bestAccuracy = accuracy;
                     epochsSinceBest = 0;
-                    Console.WriteLine($"*** NEW BEST! ***");
+                    // Console.WriteLine($"*** NEW BEST! ***");
                 }
                 else
                 {
@@ -256,12 +258,17 @@ internal class Program
         const char ChZero = ' ';
         const char ChMax = '\u2588';
 
+        const string bg = "12;12;12";
+        const string fg = "163;163;163";
+        const string errBg = "227;61;48";
+        const string errFg = "151;41;32";
+
         switch (x)
         {
-            //case 0: return $"\e[48;2;74;74;76m{x,5:f3}\e[49m";
-            //case 1: return $"\e[7;48;2;74;74;76m{x,5:f3}\e[49;27m";
-            case <= 0: return $"\e[48;2;110;74;76m{x,5:f2}\e[49m";
-            case >= 1: return $"\e[7;48;2;74;74;76m{x,5:f3}\e[49;27m";
+            case 0: return $"\e[48;2;{bg}m{new string(ChZero, ColWidth)}\e[49m";
+            case 1: return $"\e[38;2;{fg}m{new string(ChMax, ColWidth)}\e[39m";
+            case <= 0: return $"\e[38;2;{errBg}m{x,5:f2}\e[39m";
+            case >= 1: return $"\e[38;2;{errFg};48;2;{errBg}m{x,5:f3}\e[39;49m";
         }
         Span<char> xs = stackalloc char[ColWidth];
         xs.Fill(ChZero);
@@ -276,7 +283,7 @@ internal class Program
             xs[maxEnd] = (char)(ChMax + (7 - frame));
         }
 
-        return $"\e[48;2;74;74;76m{xs}\e[49m";
+        return $"{xs}";
     }
 
     private static int ArgMax(float[] array)
