@@ -19,7 +19,7 @@ internal class Program
         var loader = DataLoaderFactory.Create(DataSourceType.MNIST);
         var dataSet = loader.LoadCompleteDataset(
            batchSize: 64,
-           maxTrainSamples: 1000,
+           maxTrainSamples: 5000,
            maxTestSamples: 1000
        );
 
@@ -222,8 +222,7 @@ internal class Program
                     {
                         var v = probs[j];
                         var s = FmtPogression(v);
-                        if (v < 0.1f) Console.Write($" \e[2m{s}\e[22m");
-                        else Console.Write($" {s}");
+                        Console.Write($" {s}");
                     }
 
                     Console.WriteLine($" │  {(predicted == actual ? AsGreen(predicted.ToString()) : AsRed(predicted.ToString())),2}      {actual,2}   ║");
@@ -270,8 +269,8 @@ internal class Program
 
         switch (x)
         {
-            case 0: return $"\e[48;2;74;74;76m{x,5:f3}\e[49m";
-            case 1: return $"\e[7;48;2;74;74;76m{x,5:f3}\e[49;27m";
+            //case 0: return $"\e[48;2;74;74;76m{x,5:f3}\e[49m";
+            //case 1: return $"\e[7;48;2;74;74;76m{x,5:f3}\e[49;27m";
             case <= 0: return $"\e[48;2;110;74;76m{x,5:f2}\e[49m";
             case >= 1: return $"\e[7;48;2;74;74;76m{x,5:f3}\e[49;27m";
         }
