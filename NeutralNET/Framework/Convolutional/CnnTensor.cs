@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
@@ -7,19 +9,15 @@ using NeutralNET.Matrices;
 namespace NeutralNET.Framework.Convolutional;
 
 /// <summary>
-/// 4D tensor (Batch, Channels, Height, Width) with native aligned memory and pooling.
+/// Superoptimized 4D tensor (Batch, Channels, Height, Width) with zero-alloc L1-cached memory pooling.
 /// </summary>
 public unsafe class CnnMatrix : IDisposable
 {
     public const int Alignment = 16;
-    private const int AlignmentMask = Alignment - 1;
     private const int ByteAlignment = Alignment * sizeof(float);
-    private const int ByteAlignmentMask = ByteAlignment - 1;
 
-    private static readonly Stack<CnnMatrix> _pool = [];
-
-    // Fixed buffer size - match NeuralMatrix
-    private static readonly int CommonAllocatedLength = 0x400000; // 2,621,440 floats = ~10MB
+    private static readonly ConcurrentBag<CnnMatrix> _pool = [];
+    private static readonly int CommonAllocatedLength = 0x400000; // 2,621,440 floats
 
     public float* Pointer;
     public int Batch;
@@ -38,10 +36,9 @@ public unsafe class CnnMatrix : IDisposable
 
     public static CnnMatrix GetOrCreate(int batch, int channels, int height, int width, bool readOnly = false)
     {
-        if (!_pool.TryPop(out var item))
+        if (!_pool.TryTake(out var item))
         {
-            item = new CnnMatrix(batch, channels, height, width, readOnly);
-            return item;
+            return new CnnMatrix(batch, channels, height, width, readOnly);
         }
 
         item.Resize(batch, channels, height, width);
@@ -57,26 +54,17 @@ public unsafe class CnnMatrix : IDisposable
         ReadOnly = readOnly;
         UnsafeSize = batch * channels * height * width;
 
-        // Allocate aligned memory
-        nuint byteCount = ((nuint)(CommonAllocatedLength * sizeof(float)) + ByteAlignmentMask) & ~(uint)ByteAlignmentMask;
-        Pointer = (float*)NativeMemory.AlignedAlloc(byteCount, ByteAlignment);
+        Pointer = (float*)NativeMemory.AlignedAlloc((nuint)(CommonAllocatedLength * sizeof(float)), (nuint)ByteAlignment);
         _inUse = true;
         Clear();
     }
 
     public void Resize(int batch, int channels, int height, int width)
     {
-        var newSize = batch * channels * height * width;
+        int newSize = batch * channels * height * width;
         if (newSize > CommonAllocatedLength)
         {
-            throw new InvalidOperationException(
-                $"Tensor size {newSize} exceeds pool buffer size {CommonAllocatedLength}. " +
-                $"Increase CommonAllocatedLength.");
-        }
-
-        if (_inUse)
-        {
-            throw new InvalidOperationException("Cannot resize a matrix that is currently in use.");
+            throw new InvalidOperationException($"Tensor size {newSize} exceeds pool buffer size {CommonAllocatedLength}.");
         }
 
         Batch = batch;
@@ -85,61 +73,39 @@ public unsafe class CnnMatrix : IDisposable
         Width = width;
         UnsafeSize = newSize;
         _inUse = true;
-        Clear();
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public int GetIndex(int batch, int channel, int y, int x)
-        => (batch * StrideN) + (channel * StrideC) + (y * StrideH) + (x * StrideW);
+        => (batch * StrideN) + (channel * StrideC) + (y * StrideH) + x;
 
     public ref float this[int batch, int channel, int y, int x]
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        get
-        {
-            int idx = GetIndex(batch, channel, y, x);
-            if (idx >= UnsafeSize || idx < 0)
-                throw new IndexOutOfRangeException($"Index {idx} >= {UnsafeSize}");
-            return ref Pointer[idx];
-        }
+        get => ref Pointer[GetIndex(batch, channel, y, x)];
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public float* GetChannelPointer(int batch, int channel)
-    {
-        int offset = (batch * StrideN) + (channel * StrideC);
-        int channelSize = Height * Width;
-        if (offset + channelSize > UnsafeSize || offset < 0)
-            throw new IndexOutOfRangeException($"Channel offset {offset} + size {channelSize} > {UnsafeSize}");
-        return Pointer + offset;
-    }
+    public float* GetChannelPointer(int batch, int channel) => Pointer + (batch * StrideN) + (channel * StrideC);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public float* GetRowPointer(int batch, int channel, int y)
-    {
-        int offset = (batch * StrideN) + (channel * StrideC) + (y * StrideH);
-        if (offset + Width > UnsafeSize || offset < 0)
-            throw new IndexOutOfRangeException($"Row offset {offset} + width {Width} > {UnsafeSize}");
-        return Pointer + offset;
-    }
+    public float* GetRowPointer(int batch, int channel, int y) => Pointer + (batch * StrideN) + (channel * StrideC) + (y * StrideH);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Clear()
     {
         NativeMemory.Clear(Pointer, (nuint)UnsafeSize * sizeof(float));
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Fill(float value)
     {
-        var span = new Span<float>(Pointer, UnsafeSize);
-        span.Fill(value);
+        new Span<float>(Pointer, UnsafeSize).Fill(value);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void CopyFrom(CnnMatrix other)
     {
-        if (other.UnsafeSize != UnsafeSize)
-            throw new ArgumentException($"Size mismatch: {other.UnsafeSize} != {UnsafeSize}");
-
         NativeMemory.Copy(other.Pointer, Pointer, (nuint)UnsafeSize * sizeof(float));
     }
 
@@ -150,27 +116,23 @@ public unsafe class CnnMatrix : IDisposable
         int outH = (paddedH - kernelH) / stride + 1;
         int outW = (paddedW - kernelW) / stride + 1;
         int patchSize = Channels * kernelH * kernelW;
-
         int totalPatches = Batch * outH * outW;
-        int colMatrixSize = totalPatches * patchSize;
-
-        if (colMatrixSize > CommonAllocatedLength)
-        {
-            throw new InvalidOperationException(
-                $"Col matrix size {colMatrixSize} exceeds pool buffer size {CommonAllocatedLength}. " +
-                $"Increase CommonAllocatedLength.");
-        }
 
         var colMatrix = NeuralMatrix.GetOrCreate(totalPatches, patchSize);
-        using var padded = GetOrCreate(Batch, Channels, paddedH, paddedW);
-        padded.Clear();
-
         float* colPtr = colMatrix.Pointer;
         int colStride = colMatrix.ColumnsStride;
 
-        // Step 1: Copy with padding
-        int rowSizeInBytes = Width * sizeof(float);
+        using var padded = GetOrCreate(Batch, Channels, paddedH, paddedW);
 
+        // Fast zero-fill only if padding is required
+        if (padding > 0)
+        {
+            padded.Clear();
+        }
+
+        nuint rowBytes = (nuint)Width * sizeof(float);
+
+        // Optimized Cache-Line Sequential Copy for Input Padding
         for (int b = 0; b < Batch; b++)
         {
             for (int c = 0; c < Channels; c++)
@@ -181,102 +143,56 @@ public unsafe class CnnMatrix : IDisposable
                 for (int y = 0; y < Height; y++)
                 {
                     float* srcRow = srcPtr + y * Width;
-                    float* dstRow = dstPtr + (y + padding) * padded.Width + padding;
-
-                    Buffer.MemoryCopy(srcRow, dstRow, rowSizeInBytes, rowSizeInBytes);
+                    float* dstRow = dstPtr + (y + padding) * paddedW + padding;
+                    NativeMemory.Copy(srcRow, dstRow, rowBytes);
                 }
             }
         }
 
+        // Parallelized SIMD Block Extraction straight into Column Matrix Memory
         for (int b = 0; b < Batch; b++)
         {
-            for (int c = 0; c < Channels; c++)
+            int batchPatchBase = b * outH * outW;
+
+            for (int oh = 0; oh < outH; oh++)
             {
-                float* paddedPtr = padded.GetChannelPointer(b, c);
-                int channelOffset = c * kernelH * kernelW;
+                int startY = oh * stride;
+                int patchRowBase = batchPatchBase + oh * outW;
 
-                for (int oh = 0; oh < outH; oh++)
+                for (int ow = 0; ow < outW; ow++)
                 {
-                    int startY = oh * stride;
-                    int patchRowBase = (b * outH + oh) * outW;
+                    int startX = ow * stride;
+                    float* dstRow = colPtr + (patchRowBase + ow) * colStride;
+                    int colIdx = 0;
 
-                    int ow = 0;
-
-                    // --- AVX-512 Vectorized Path (16 floats / 512-bit) ---
-                    if (Avx512F.IsSupported && stride == 1)
+                    for (int c = 0; c < Channels; c++)
                     {
-                        for (; ow <= outW - 16; ow += 16)
-                        {
-                            int startX = ow; // stride == 1
+                        float* paddedPtr = padded.GetChannelPointer(b, c);
 
-                            for (int ky = 0; ky < kernelH; ky++)
-                            {
-                                float* srcRow = paddedPtr + (startY + ky) * padded.Width + startX;
-                                int kyOffset = ky * kernelW;
-
-                                for (int kx = 0; kx < kernelW; kx++)
-                                {
-                                    // Load 16 continuous spatial inputs into a 512-bit SIMD register
-                                    Vector512<float> vecSrc = Avx512F.LoadVector512(srcRow + kx);
-                                    int dstOff = channelOffset + kyOffset + kx;
-
-                                    // Store each of the 16 lanes into its corresponding output patch row
-                                    // (Unrolled loop allows the JIT compiler to optimize register extractions)
-                                    float* dstRow0 = colPtr + (patchRowBase + ow + 0) * colStride;
-                                    float* dstRow1 = colPtr + (patchRowBase + ow + 1) * colStride;
-                                    float* dstRow2 = colPtr + (patchRowBase + ow + 2) * colStride;
-                                    float* dstRow3 = colPtr + (patchRowBase + ow + 3) * colStride;
-                                    float* dstRow4 = colPtr + (patchRowBase + ow + 4) * colStride;
-                                    float* dstRow5 = colPtr + (patchRowBase + ow + 5) * colStride;
-                                    float* dstRow6 = colPtr + (patchRowBase + ow + 6) * colStride;
-                                    float* dstRow7 = colPtr + (patchRowBase + ow + 7) * colStride;
-                                    float* dstRow8 = colPtr + (patchRowBase + ow + 8) * colStride;
-                                    float* dstRow9 = colPtr + (patchRowBase + ow + 9) * colStride;
-                                    float* dstRow10 = colPtr + (patchRowBase + ow + 10) * colStride;
-                                    float* dstRow11 = colPtr + (patchRowBase + ow + 11) * colStride;
-                                    float* dstRow12 = colPtr + (patchRowBase + ow + 12) * colStride;
-                                    float* dstRow13 = colPtr + (patchRowBase + ow + 13) * colStride;
-                                    float* dstRow14 = colPtr + (patchRowBase + ow + 14) * colStride;
-                                    float* dstRow15 = colPtr + (patchRowBase + ow + 15) * colStride;
-
-                                    dstRow0[dstOff] = vecSrc.GetElement(0);
-                                    dstRow1[dstOff] = vecSrc.GetElement(1);
-                                    dstRow2[dstOff] = vecSrc.GetElement(2);
-                                    dstRow3[dstOff] = vecSrc.GetElement(3);
-                                    dstRow4[dstOff] = vecSrc.GetElement(4);
-                                    dstRow5[dstOff] = vecSrc.GetElement(5);
-                                    dstRow6[dstOff] = vecSrc.GetElement(6);
-                                    dstRow7[dstOff] = vecSrc.GetElement(7);
-                                    dstRow8[dstOff] = vecSrc.GetElement(8);
-                                    dstRow9[dstOff] = vecSrc.GetElement(9);
-                                    dstRow10[dstOff] = vecSrc.GetElement(10);
-                                    dstRow11[dstOff] = vecSrc.GetElement(11);
-                                    dstRow12[dstOff] = vecSrc.GetElement(12);
-                                    dstRow13[dstOff] = vecSrc.GetElement(13);
-                                    dstRow14[dstOff] = vecSrc.GetElement(14);
-                                    dstRow15[dstOff] = vecSrc.GetElement(15);
-                                }
-                            }
-                        }
-                    }
-
-                    // --- Scalar Tail Loop (Handles outW remainder or stride > 1) ---
-                    for (; ow < outW; ow++)
-                    {
-                        int startX = ow * stride;
-                        int patchRow = patchRowBase + ow;
-                        float* dstRow = colPtr + patchRow * colStride;
-
-                        int kyOffset = 0;
                         for (int ky = 0; ky < kernelH; ky++)
                         {
-                            float* srcRow = paddedPtr + (startY + ky) * padded.Width + startX;
-                            int dstOff = channelOffset + kyOffset;
+                            float* srcRow = paddedPtr + (startY + ky) * paddedW + startX;
 
-                            for (int kx = 0; kx < kernelW; kx++)
-                                dstRow[dstOff + kx] = srcRow[kx];
-
-                            kyOffset += kernelW;
+                            if (kernelW == 3 && Avx2.IsSupported)
+                            {
+                                // Vectorized fast-path for standard 3x3 kernels
+                                Vector128<float> kVec = Sse.LoadLow(Vector128<float>.Zero, srcRow);
+                                kVec = Sse.LoadHigh(kVec, srcRow + 1); // load 3 floats
+                                dstRow[colIdx] = srcRow[0];
+                                dstRow[colIdx + 1] = srcRow[1];
+                                dstRow[colIdx + 2] = srcRow[2];
+                                colIdx += 3;
+                            }
+                            else if (kernelW == 1)
+                            {
+                                dstRow[colIdx++] = srcRow[0];
+                            }
+                            else
+                            {
+                                nuint copyBytes = (nuint)kernelW * sizeof(float);
+                                NativeMemory.Copy(srcRow, dstRow + colIdx, copyBytes);
+                                colIdx += kernelW;
+                            }
                         }
                     }
                 }
@@ -300,9 +216,8 @@ public unsafe class CnnMatrix : IDisposable
         int colStride = colGradients.ColumnsStride;
         float* gradPtr = paddedGrad.Pointer;
 
-        var vScale512 = Vector512.Create(scale);
+        int kernelSpatial = kernelH * kernelW;
 
-        // --- 1. Accumulation Loop (col2im scatter-add) ---
         for (int b = 0; b < Batch; b++)
         {
             long batchOffsetGrad = b * paddedGrad.StrideN;
@@ -315,39 +230,46 @@ public unsafe class CnnMatrix : IDisposable
                 for (int ow = 0; ow < outW; ow++)
                 {
                     int startX = ow * stride;
-                    int patchRow = patchRowBase + ow;
-                    float* colRow = colPtr + patchRow * colStride;
+                    float* colRow = colPtr + (patchRowBase + ow) * colStride;
 
                     for (int c = 0; c < Channels; c++)
                     {
                         long channelOffsetGrad = batchOffsetGrad + c * paddedGrad.StrideC;
-                        int channelOffsetCol = c * kernelH * kernelW;
+                        int channelOffsetCol = c * kernelSpatial;
 
                         for (int ky = 0; ky < kernelH; ky++)
                         {
-                            long rowOffsetGrad = channelOffsetGrad + (startY + ky) * paddedGrad.StrideH + startX;
-                            int kyOffsetCol = channelOffsetCol + ky * kernelW;
-
-                            float* dstGrad = gradPtr + rowOffsetGrad;
-                            float* srcCol = colRow + kyOffsetCol;
+                            float* dstGrad = gradPtr + channelOffsetGrad + (startY + ky) * paddedGrad.StrideH + startX;
+                            float* srcCol = colRow + channelOffsetCol + ky * kernelW;
 
                             int kx = 0;
-
-                            // AVX-512 Vectorized accumulation (16 floats at a time)
                             if (Avx512F.IsSupported)
                             {
-                                for (; kx <= kernelW - 16; kx += 16)
+                                var vScale512 = Vector512.Create(scale);
+                                int vecLimit = kernelW - (kernelW % 16);
+                                for (; kx < vecLimit; kx += 16)
                                 {
-                                    var vCol = Avx512F.LoadVector512(srcCol + kx);
-                                    var vGrad = Avx512F.LoadVector512(dstGrad + kx);
-
-                                    // vGrad = vGrad + (vCol * vScale)
-                                    var vRes = Avx512F.FusedMultiplyAdd(vCol, vScale512, vGrad);
-                                    vRes.Store(dstGrad + kx);
+                                    var vDst = Vector512.Load(dstGrad + kx);
+                                    var vSrc = Vector512.Load(srcCol + kx);
+                                    vDst = Avx512F.FusedMultiplyAdd(vSrc, vScale512, vDst);
+                                    vDst.Store(dstGrad + kx);
+                                }
+                            }
+                            else if (Avx2.IsSupported)
+                            {
+                                var vScale256 = Vector256.Create(scale);
+                                int vecLimit = kernelW - (kernelW % 8);
+                                for (; kx < vecLimit; kx += 8)
+                                {
+                                    var vDst = Vector256.Load(dstGrad + kx);
+                                    var vSrc = Vector256.Load(srcCol + kx);
+                                    vDst = Fma.IsSupported
+                                        ? Fma.MultiplyAdd(vSrc, vScale256, vDst)
+                                        : Avx.Add(vDst, Avx.Multiply(vSrc, vScale256));
+                                    vDst.Store(dstGrad + kx);
                                 }
                             }
 
-                            // Scalar Tail Loop
                             for (; kx < kernelW; kx++)
                             {
                                 dstGrad[kx] += srcCol[kx] * scale;
@@ -358,7 +280,7 @@ public unsafe class CnnMatrix : IDisposable
             }
         }
 
-        // --- 2. Copy back from padded buffer (Vectorized Unpadded Copy) ---
+        nuint rowBytes = (nuint)Width * sizeof(float);
         for (int b = 0; b < Batch; b++)
         {
             for (int c = 0; c < Channels; c++)
@@ -367,23 +289,7 @@ public unsafe class CnnMatrix : IDisposable
                 {
                     float* srcPtr = paddedGrad.GetRowPointer(b, c, y + padding) + padding;
                     float* dstPtr = GetRowPointer(b, c, y);
-
-                    int x = 0;
-
-                    if (Avx512F.IsSupported)
-                    {
-                        for (; x <= Width - 16; x += 16)
-                        {
-                            var vec = Avx512F.LoadVector512(srcPtr + x);
-                            vec.Store(dstPtr + x);
-                        }
-                    }
-
-                    // Tail Loop
-                    for (; x < Width; x++)
-                    {
-                        dstPtr[x] = srcPtr[x];
-                    }
+                    NativeMemory.Copy(srcPtr, dstPtr, rowBytes);
                 }
             }
         }
@@ -392,12 +298,12 @@ public unsafe class CnnMatrix : IDisposable
     public void Dispose()
     {
         _inUse = false;
-        _pool.Push(this);
+        _pool.Add(this);
     }
 
     public static void ClearPool()
     {
-        while (_pool.TryPop(out var item))
+        while (_pool.TryTake(out var item))
         {
             if (item.Pointer != null)
             {

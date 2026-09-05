@@ -169,6 +169,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         foreach (var opt in _denseOptimizers) opt.Dispose();
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private float NextGaussianFloat(float mean, float stddev)
     {
         double u1 = 1.0 - _rng.NextDouble();
@@ -228,7 +229,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
             if (layer.UseMaxPool)
             {
-                var pooled = MaxPoolForward(convOut, layer.PoolSize);
+                var pooled = MaxPoolForwardInPlace(convOut, layer.PoolSize);
                 convOut.Dispose();
                 current = pooled;
             }
@@ -255,10 +256,10 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
     private static void ApplyActivationVectorized(float* ptr, int count, ActivationType activation)
     {
+        int i = 0;
         switch (activation)
         {
             case ActivationType.ReLU:
-                int i = 0;
                 if (Avx512F.IsSupported)
                 {
                     var vZero = Vector512<float>.Zero;
@@ -267,8 +268,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
                     for (; i < vecLimit; i += Avx512Size)
                     {
                         var vSrc = Vector512.Load(ptr + i);
-                        var vDst = Vector512.Max(vSrc, vZero);
-                        vDst.Store(ptr + i);
+                        Vector512.Max(vSrc, vZero).Store(ptr + i);
                     }
                 }
                 else if (Avx2.IsSupported)
@@ -279,8 +279,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
                     for (; i < vecLimit; i += Avx256Size)
                     {
                         var vSrc = Avx.LoadVector256(ptr + i);
-                        var vDst = Avx.Max(vSrc, vZero);
-                        vDst.Store(ptr + i);
+                        Avx.Max(vSrc, vZero).Store(ptr + i);
                     }
                 }
 
@@ -292,7 +291,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
             case ActivationType.LeakyReLU:
                 const float alpha = 0.01f;
-                i = 0;
 
                 if (Avx512F.IsSupported)
                 {
@@ -303,8 +301,19 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
                     {
                         var vSrc = Vector512.Load(ptr + i);
                         var vScaled = vSrc * vAlpha;
-                        var vDst = Vector512.Max(vSrc, vScaled);
-                        vDst.Store(ptr + i);
+                        Vector512.Max(vSrc, vScaled).Store(ptr + i);
+                    }
+                }
+                else if (Avx2.IsSupported)
+                {
+                    var vAlpha = Vector256.Create(alpha);
+                    int vecLimit = count - (count % Avx256Size);
+
+                    for (; i < vecLimit; i += Avx256Size)
+                    {
+                        var vSrc = Avx.LoadVector256(ptr + i);
+                        var vScaled = Avx.Multiply(vSrc, vAlpha);
+                        Avx.Max(vSrc, vScaled).Store(ptr + i);
                     }
                 }
 
@@ -334,9 +343,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         currentGrad?.Dispose();
         ClearIntermediates();
 
-        return float.IsNaN(loss)
-            || float.IsInfinity(loss)
-            || loss > 100f ? 10.0f : loss;
+        return float.IsNaN(loss) || float.IsInfinity(loss) || loss > 100f ? 10.0f : loss;
     }
 
     private CnnMatrix GetConvolutionBackwardPass(CnnMatrix currentGrad)
@@ -406,8 +413,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         dB.Dispose();
         gradPatchMat.Dispose();
 
-        currentGrad = inputGrad;
-        return currentGrad;
+        return inputGrad;
     }
 
     private static NeuralMatrix ComputeGradientWithRespectToInput(
@@ -508,7 +514,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         var preGradMatStride = preGradMatrix.ColumnsStride;
 
         var spatialSize = outH * outW;
-        var channelStride = spatialSize;
         var batchStride = filters * spatialSize;
 
         for (int b = 0; b < preGrad.Batch; b++)
@@ -516,27 +521,12 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
             float* pBatch = pPreGrad + b * batchStride;
             int patchBase = b * spatialSize;
 
-            for (int spatialIdx = 0; spatialIdx < spatialSize; spatialIdx++)
+            for (int f = 0; f < filters; f++)
             {
-                float* pMatRow = pPreGradMat + (patchBase + spatialIdx) * preGradMatStride;
-
-                int f = 0;
-                if (Avx512F.IsSupported)
+                float* pFilterSrc = pBatch + f * spatialSize;
+                for (int spatialIdx = 0; spatialIdx < spatialSize; spatialIdx++)
                 {
-                    int vecLimit = filters - (filters % Avx512Size);
-                    for (; f < vecLimit; f += Avx512Size)
-                    {
-                        for (int k = 0; k < Avx512Size; k++)
-                        {
-                            int filterIdx = f + k;
-                            pMatRow[filterIdx] = pBatch[filterIdx * channelStride + spatialIdx];
-                        }
-                    }
-                }
-
-                for (; f < filters; f++)
-                {
-                    pMatRow[f] = pBatch[f * channelStride + spatialIdx];
+                    pPreGradMat[(patchBase + spatialIdx) * preGradMatStride + f] = pFilterSrc[spatialIdx];
                 }
             }
         }
@@ -547,12 +537,64 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
     private CnnMatrix ComputePreGradient(CnnLayerConfig layer, CnnMatrix preAct, CnnMatrix postAct, CnnMatrix convGrad)
     {
         var preGrad = RentCnn(preAct.Batch, preAct.Channels, preAct.Height, preAct.Width);
-        preGrad.CopyFrom(convGrad);
-        ApplyDerivativeToGradient(preGrad, postAct, layer.Activation);
+
+        ApplyDerivativeDirect(convGrad, postAct, preGrad, layer.Activation);
 
         ClipCnnGradient(preGrad, GradientClipNorm);
 
         return preGrad;
+    }
+
+    private static void ApplyDerivativeDirect(CnnMatrix gradient, CnnMatrix postAct, CnnMatrix dest, ActivationType type)
+    {
+        int totalElements = gradient.UnsafeSize;
+        float* pGrad = gradient.Pointer;
+        float* pPost = postAct.Pointer;
+        float* pDst = dest.Pointer;
+
+        int i = 0;
+
+        if (type == ActivationType.ReLU)
+        {
+            if (Avx512F.IsSupported)
+            {
+                Vector512<float> vZero = Vector512<float>.Zero;
+                int limit = totalElements - (totalElements % Avx512Size);
+                for (; i < limit; i += Avx512Size)
+                {
+                    Vector512<float> g = Vector512.Load(pGrad + i);
+                    Vector512<float> p = Vector512.Load(pPost + i);
+                    Vector512<float> mask = Vector512.GreaterThan(p, vZero);
+                    (g & mask).Store(pDst + i);
+                }
+            }
+            else if (Avx2.IsSupported)
+            {
+                Vector256<float> vZero = Vector256<float>.Zero;
+                int limit = totalElements - (totalElements % Avx256Size);
+                for (; i < limit; i += Avx256Size)
+                {
+                    Vector256<float> g = Avx.LoadVector256(pGrad + i);
+                    Vector256<float> p = Avx.LoadVector256(pPost + i);
+                    Vector256<float> mask = Avx.Compare(p, vZero, FloatComparisonMode.OrderedGreaterThanNonSignaling);
+                    Avx.And(g, mask).Store(pDst + i);
+                }
+            }
+        }
+
+        for (; i < totalElements; i++)
+        {
+            float p = pPost[i];
+            float g = pGrad[i];
+            pDst[i] = type switch
+            {
+                ActivationType.ReLU => p <= 0 ? 0 : g,
+                ActivationType.LeakyReLU => p <= 0 ? 0.01f * g : g,
+                ActivationType.Sigmoid => g * p * (1.0f - p),
+                ActivationType.Tanh => g * (1.0f - p * p),
+                _ => g
+            };
+        }
     }
 
     private CnnMatrix BackPropagateThroughPool(CnnMatrix currentGrad, CnnLayerConfig layer, CnnMatrix postAct, NeuralMatrix indices)
@@ -649,8 +691,8 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
                 {
                     var vP = Avx.LoadVector256(rowP + c);
                     var vT = Avx.LoadVector256(rowT + c);
-                    var vDiff = vP - vT;
-                    (vDiff * vInvBatch256).Store(rowG + c);
+                    var vDiff = Avx.Subtract(vP, vT);
+                    Avx.Multiply(vDiff, vInvBatch256).Store(rowG + c);
                 }
             }
 
@@ -703,8 +745,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
         using (DenseForward(flat, storeIntermediates: true)) { }
 
-        var probabilities = _densePostAct.Last();
-        return probabilities;
+        return _densePostAct[^1];
     }
 
     private void ClipGradients(NeuralMatrix gradient, float maxNorm)
@@ -727,10 +768,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
         if (hasError)
         {
-            for (int i = 0; i < totalElements; i++)
-            {
-                ptr[i] = 0f;
-            }
+            new Span<float>(ptr, totalElements).Clear();
             return;
         }
 
@@ -771,10 +809,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
         if (hasError)
         {
-            for (int i = 0; i < totalElements; i++)
-            {
-                ptr[i] = 0f;
-            }
+            new Span<float>(ptr, totalElements).Clear();
             return;
         }
 
@@ -821,7 +856,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
         var pSrc = weights.Pointer;
         var pDst = weightMat.Pointer;
-
         var dstStride = weightMat.ColumnsStride;
 
         if (dstStride == innerDim)
@@ -837,31 +871,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         {
             float* srcRow = pSrc + (f * innerDim);
             float* dstRow = pDst + (f * dstStride);
-
-            if (innerDim >= 64)
-            {
-                Buffer.MemoryCopy(srcRow, dstRow, bytesPerRow, bytesPerRow);
-            }
-            else if (Avx512F.IsSupported)
-            {
-                int i = 0;
-                int vecLimit = innerDim - (innerDim % Avx512Size);
-
-                for (; i < vecLimit; i += Avx512Size)
-                {
-                    var vSrc = Vector512.Load(srcRow + i);
-                    vSrc.Store(dstRow + i);
-                }
-
-                for (; i < innerDim; i++)
-                {
-                    dstRow[i] = srcRow[i];
-                }
-            }
-            else
-            {
-                Buffer.MemoryCopy(srcRow, dstRow, bytesPerRow, bytesPerRow);
-            }
+            Buffer.MemoryCopy(srcRow, dstRow, bytesPerRow, bytesPerRow);
         }
 
         return weightMat;
@@ -893,19 +903,26 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         float* resPtr = result.Pointer;
         float* biasPtr = biases.Pointer;
 
-        int vSize = Vector256<float>.Count;
-        int vectorizableFilters = filters - (filters % vSize);
-
         for (int patch = 0; patch < patches; patch++)
         {
             float* row = resPtr + patch * resStride;
             int f = 0;
 
-            for (; f < vectorizableFilters; f += vSize)
+            if (Avx512F.IsSupported)
             {
-                Vector256<float> rVec = Vector256.Load(row + f);
-                Vector256<float> bVec = Vector256.Load(biasPtr + f);
-                (rVec + bVec).Store(row + f);
+                int limit = filters - (filters % Avx512Size);
+                for (; f < limit; f += Avx512Size)
+                {
+                    (Vector512.Load(row + f) + Vector512.Load(biasPtr + f)).Store(row + f);
+                }
+            }
+            else if (Avx2.IsSupported)
+            {
+                int limit = filters - (filters % Avx256Size);
+                for (; f < limit; f += Avx256Size)
+                {
+                    (Avx.LoadVector256(row + f) + Avx.LoadVector256(biasPtr + f)).Store(row + f);
+                }
             }
 
             for (; f < filters; f++)
@@ -938,43 +955,19 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
         int srcStride = result.ColumnsStride;
         int spatialSize = outH * outW;
-        int channelStride = spatialSize;
         int batchStrideDst = filters * spatialSize;
-
-        bool hasAvx512 = Avx512F.IsSupported;
 
         for (int b = 0; b < batchSize; b++)
         {
             int batchOffsetSrc = b * spatialSize;
             float* pDstBatch = pDst + (b * batchStrideDst);
 
-            for (int spatialIdx = 0; spatialIdx < spatialSize; spatialIdx++)
+            for (int f = 0; f < filters; f++)
             {
-                float* pSrcRow = pSrc + (batchOffsetSrc + spatialIdx) * srcStride;
-
-                int f = 0;
-
-                if (hasAvx512)
+                float* pDstChannel = pDstBatch + (f * spatialSize);
+                for (int spatialIdx = 0; spatialIdx < spatialSize; spatialIdx++)
                 {
-                    int vecLimit = filters - (filters % Avx512Size);
-
-                    for (; f < vecLimit; f += Avx512Size)
-                    {
-                        Vector512<float> vSrc = Vector512.Load(pSrcRow + f);
-
-                        for (int k = 0; k < Avx512Size; k++)
-                        {
-                            int filterIdx = f + k;
-                            float* pDstChannel = pDstBatch + (filterIdx * channelStride);
-                            pDstChannel[spatialIdx] = vSrc.GetElement(k);
-                        }
-                    }
-                }
-
-                for (; f < filters; f++)
-                {
-                    float* pDstChannel = pDstBatch + (f * channelStride);
-                    pDstChannel[spatialIdx] = pSrcRow[f];
+                    pDstChannel[spatialIdx] = pSrc[(batchOffsetSrc + spatialIdx) * srcStride + f];
                 }
             }
         }
@@ -982,13 +975,54 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         return preAct;
     }
 
-    private CnnMatrix MaxPoolForward(CnnMatrix input, int poolSize)
+    private CnnMatrix MaxPoolForwardInPlace(CnnMatrix input, int poolSize)
     {
-        var res = MaxPoolForward(input, poolSize, out NeuralMatrix indices);
+        int batch = input.Batch;
+        int channels = input.Channels;
+        int inH = input.Height;
+        int inW = input.Width;
 
-        indices.Dispose();
+        int outH = inH / poolSize;
+        int outW = inW / poolSize;
 
-        return res;
+        var pooled = RentCnn(batch, channels, outH, outW);
+
+        float* pIn = input.Pointer;
+        float* pOut = pooled.Pointer;
+
+        int spatialInSize = inH * inW;
+        int spatialOutSize = outH * outW;
+        int numSlices = batch * channels;
+
+        for (int slice = 0; slice < numSlices; slice++)
+        {
+            float* sliceIn = pIn + (slice * spatialInSize);
+            float* sliceOut = pOut + (slice * spatialOutSize);
+
+            for (int oh = 0; oh < outH; oh++)
+            {
+                int yStart = oh * poolSize;
+                for (int ow = 0; ow < outW; ow++)
+                {
+                    int xStart = ow * poolSize;
+                    float maxVal = float.NegativeInfinity;
+
+                    for (int dy = 0; dy < poolSize; dy++)
+                    {
+                        float* rowPtr = sliceIn + ((yStart + dy) * inW);
+                        for (int dx = 0; dx < poolSize; dx++)
+                        {
+                            float val = rowPtr[xStart + dx];
+                            if (val > maxVal) maxVal = val;
+                        }
+                    }
+
+                    sliceOut[oh * outW + ow] = maxVal;
+                }
+            }
+        }
+
+        return pooled;
     }
 
     private CnnMatrix MaxPoolForward(CnnMatrix input, int poolSize, out NeuralMatrix indices)
@@ -1012,132 +1046,46 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         int spatialOutSize = outH * outW;
         int numSlices = batch * channels;
 
-        bool hasAvx512 = Avx512F.IsSupported;
-
-        if (poolSize == 2 && hasAvx512)
+        for (int slice = 0; slice < numSlices; slice++)
         {
-            for (int slice = 0; slice < numSlices; slice++)
+            float* sliceIn = pIn + (slice * spatialInSize);
+            float* sliceOut = pOut + (slice * spatialOutSize);
+            float* sliceIdx = pIdx + (slice * spatialOutSize);
+
+            int outIdx = 0;
+
+            for (int oh = 0; oh < outH; oh++)
             {
-                float* sliceIn = pIn + (slice * spatialInSize);
-                float* sliceOut = pOut + (slice * spatialOutSize);
-                float* sliceIdx = pIdx + (slice * spatialOutSize);
+                int yStart = oh * poolSize;
 
-                for (int oh = 0; oh < outH; oh++)
+                for (int ow = 0; ow < outW; ow++)
                 {
-                    int y0 = oh * 2;
-                    int y1 = y0 + 1;
+                    int xStart = ow * poolSize;
 
-                    float* row0 = sliceIn + (y0 * inW);
-                    float* row1 = sliceIn + (y1 * inW);
+                    float maxVal = float.NegativeInfinity;
+                    int maxIdx = 0;
 
-                    float* outRow = sliceOut + (oh * outW);
-                    float* idxRow = sliceIdx + (oh * outW);
-
-                    int ow = 0;
-                    int vecLimit = outW - (outW % 16);
-
-                    for (; ow < vecLimit; ow += 16)
+                    for (int dy = 0; dy < poolSize; dy++)
                     {
-                        int xStart = ow * 2;
+                        int y = yStart + dy;
+                        float* rowPtr = sliceIn + (y * inW);
 
-                        for (int k = 0; k < 16; k++)
+                        for (int dx = 0; dx < poolSize; dx++)
                         {
-                            int x0 = xStart + (k * 2);
-                            int x1 = x0 + 1;
+                            int x = xStart + dx;
+                            float val = rowPtr[x];
 
-                            float v00 = row0[x0];
-                            float v01 = row0[x1];
-                            float v10 = row1[x0];
-                            float v11 = row1[x1];
-
-                            int idx00 = y0 * inW + x0;
-                            int idx01 = y0 * inW + x1;
-                            int idx10 = y1 * inW + x0;
-                            int idx11 = y1 * inW + x1;
-
-                            float max0 = v00;
-                            int maxIdx0 = idx00;
-
-                            if (v01 > max0) { max0 = v01; maxIdx0 = idx01; }
-                            if (v10 > max0) { max0 = v10; maxIdx0 = idx10; }
-                            if (v11 > max0) { max0 = v11; maxIdx0 = idx11; }
-
-                            outRow[ow + k] = max0;
-                            idxRow[ow + k] = (float)maxIdx0;
-                        }
-                    }
-
-                    for (; ow < outW; ow++)
-                    {
-                        int x0 = ow * 2;
-                        int x1 = x0 + 1;
-
-                        float v00 = row0[x0];
-                        float v01 = row0[x1];
-                        float v10 = row1[x0];
-                        float v11 = row1[x1];
-
-                        int idx00 = y0 * inW + x0;
-                        int idx01 = y0 * inW + x1;
-                        int idx10 = y1 * inW + x0;
-                        int idx11 = y1 * inW + x1;
-
-                        float max0 = v00;
-                        int maxIdx0 = idx00;
-
-                        if (v01 > max0) { max0 = v01; maxIdx0 = idx01; }
-                        if (v10 > max0) { max0 = v10; maxIdx0 = idx10; }
-                        if (v11 > max0) { max0 = v11; maxIdx0 = idx11; }
-
-                        outRow[ow] = max0;
-                        idxRow[ow] = (float)maxIdx0;
-                    }
-                }
-            }
-        }
-        else
-        {
-            for (int slice = 0; slice < numSlices; slice++)
-            {
-                float* sliceIn = pIn + (slice * spatialInSize);
-                float* sliceOut = pOut + (slice * spatialOutSize);
-                float* sliceIdx = pIdx + (slice * spatialOutSize);
-
-                int outIdx = 0;
-
-                for (int oh = 0; oh < outH; oh++)
-                {
-                    int yStart = oh * poolSize;
-
-                    for (int ow = 0; ow < outW; ow++)
-                    {
-                        int xStart = ow * poolSize;
-
-                        float maxVal = float.NegativeInfinity;
-                        int maxIdx = 0;
-
-                        for (int dy = 0; dy < poolSize; dy++)
-                        {
-                            int y = yStart + dy;
-                            float* rowPtr = sliceIn + (y * inW);
-
-                            for (int dx = 0; dx < poolSize; dx++)
+                            if (val > maxVal)
                             {
-                                int x = xStart + dx;
-                                float val = rowPtr[x];
-
-                                if (val > maxVal)
-                                {
-                                    maxVal = val;
-                                    maxIdx = y * inW + x;
-                                }
+                                maxVal = val;
+                                maxIdx = y * inW + x;
                             }
                         }
-
-                        sliceOut[outIdx] = maxVal;
-                        sliceIdx[outIdx] = (float)maxIdx;
-                        outIdx++;
                     }
+
+                    sliceOut[outIdx] = maxVal;
+                    sliceIdx[outIdx] = (float)maxIdx;
+                    outIdx++;
                 }
             }
         }
@@ -1166,10 +1114,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
         int spatialInSize = inH * inW;
         int spatialOutSize = outH * outW;
-        int totalSpatialItems = spatialOutSize;
-
-        bool hasAvx512 = Avx512F.IsSupported;
-        bool hasAvx2 = Avx2.IsSupported;
 
         int numSlices = batch * channels;
 
@@ -1179,44 +1123,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
             float* sliceGradIn = pGradIn + (slice * spatialInSize);
             float* sliceIndices = pIndices + (slice * spatialOutSize);
 
-            int i = 0;
-
-            if (hasAvx512)
-            {
-                int vecLimit = totalSpatialItems - (totalSpatialItems % 16);
-                for (; i < vecLimit; i += 16)
-                {
-                    var vGrad = Vector512.Load(sliceGradOut + i);
-                    var vIdxFloat = Vector512.Load(sliceIndices + i);
-
-                    Vector512<int> vIdxInt = Vector512.ConvertToInt32Native(vIdxFloat);
-
-                    for (int k = 0; k < 16; k++)
-                    {
-                        int targetOffset = vIdxInt.GetElement(k);
-                        sliceGradIn[targetOffset] += vGrad.GetElement(k);
-                    }
-                }
-            }
-            else if (hasAvx2)
-            {
-                int vecLimit = totalSpatialItems - (totalSpatialItems % 8);
-                for (; i < vecLimit; i += 8)
-                {
-                    var vGrad = Vector256.Load(sliceGradOut + i);
-                    var vIdxFloat = Vector256.Load(sliceIndices + i);
-
-                    Vector256<int> vIdxInt = Vector256.ConvertToInt32Native(vIdxFloat);
-
-                    for (int k = 0; k < 8; k++)
-                    {
-                        int targetOffset = vIdxInt.GetElement(k);
-                        sliceGradIn[targetOffset] += vGrad.GetElement(k);
-                    }
-                }
-            }
-
-            for (; i < totalSpatialItems; i++)
+            for (int i = 0; i < spatialOutSize; i++)
             {
                 int maxIdx = (int)sliceIndices[i];
                 sliceGradIn[maxIdx] += sliceGradOut[i];
@@ -1242,12 +1149,12 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
             var result = RentNeural(batchSize, outFeatures);
 
             GpuMatrixOps.ComputeDenseForwardGpu(
-            current.Pointer,
-            weights.Pointer,
-            biases.Pointer,
-            result.Pointer,
-            batchSize, inFeatures, outFeatures,
-            current.ColumnsStride, weights.ColumnsStride, result.ColumnsStride);
+                current.Pointer,
+                weights.Pointer,
+                biases.Pointer,
+                result.Pointer,
+                batchSize, inFeatures, outFeatures,
+                current.ColumnsStride, weights.ColumnsStride, result.ColumnsStride);
 
             if (storeIntermediates)
             {
@@ -1308,20 +1215,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
                 if (skipDeriv)
                 {
-                    int c = 0;
-                    if (Avx512F.IsSupported)
-                    {
-                        int limit = outDim - (outDim % 16);
-                        for (; c < limit; c += 16)
-                            Vector512.Store(Vector512.Load(rowGO + c), rowGP + c);
-                    }
-                    else if (Avx2.IsSupported)
-                    {
-                        int limit = outDim - (outDim % 8);
-                        for (; c < limit; c += 8)
-                            Avx.Store(rowGP + c, Avx2.LoadVector256(rowGO + c));
-                    }
-                    for (; c < outDim; c++) rowGP[c] = rowGO[c];
+                    Buffer.MemoryCopy(rowGO, rowGP, outDim * sizeof(float), outDim * sizeof(float));
                 }
                 else
                 {
@@ -1406,30 +1300,61 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         int totalElements = matrix.Batch * matrix.Channels * matrix.Height * matrix.Width;
         float* ptr = matrix.Pointer;
 
-        int vSize = Vector512<float>.Count;
-        int vectorizable = totalElements - (totalElements % vSize);
         int i = 0;
 
         if (type == ActivationType.ReLU)
         {
-            Vector512<float> zero = Vector512<float>.Zero;
-            for (; i < vectorizable; i += vSize)
+            if (Avx512F.IsSupported)
             {
-                Vector512<float> vec = Vector512.Load(ptr + i);
-                Vector512<float> res = Vector512.Max(vec, zero);
-                res.Store(ptr + i);
+                int vSize = Vector512<float>.Count;
+                int vectorizable = totalElements - (totalElements % vSize);
+                Vector512<float> zero = Vector512<float>.Zero;
+                for (; i < vectorizable; i += vSize)
+                {
+                    Vector512<float> vec = Vector512.Load(ptr + i);
+                    Vector512.Max(vec, zero).Store(ptr + i);
+                }
+            }
+            else if (Avx2.IsSupported)
+            {
+                int vSize = Vector256<float>.Count;
+                int vectorizable = totalElements - (totalElements % vSize);
+                Vector256<float> zero = Vector256<float>.Zero;
+                for (; i < vectorizable; i += vSize)
+                {
+                    Vector256<float> vec = Avx.LoadVector256(ptr + i);
+                    Avx.Max(vec, zero).Store(ptr + i);
+                }
             }
         }
         else if (type == ActivationType.LeakyReLU)
         {
-            Vector512<float> zero = Vector512<float>.Zero;
-            Vector512<float> alpha = Vector512.Create(0.01f);
-            for (; i < vectorizable; i += vSize)
+            if (Avx512F.IsSupported)
             {
-                Vector512<float> vec = Vector512.Load(ptr + i);
-                Vector512<float> scaled = Vector512.Multiply(vec, alpha);
-                Vector512<float> res = Vector512.ConditionalSelect(Vector512.GreaterThan(vec, zero), vec, scaled);
-                res.Store(ptr + i);
+                int vSize = Vector512<float>.Count;
+                int vectorizable = totalElements - (totalElements % vSize);
+                Vector512<float> zero = Vector512<float>.Zero;
+                Vector512<float> alpha = Vector512.Create(0.01f);
+                for (; i < vectorizable; i += vSize)
+                {
+                    Vector512<float> vec = Vector512.Load(ptr + i);
+                    Vector512<float> scaled = Vector512.Multiply(vec, alpha);
+                    Vector512.ConditionalSelect(Vector512.GreaterThan(vec, zero), vec, scaled).Store(ptr + i);
+                }
+            }
+            else if (Avx2.IsSupported)
+            {
+                int vSize = Vector256<float>.Count;
+                int vectorizable = totalElements - (totalElements % vSize);
+                Vector256<float> zero = Vector256<float>.Zero;
+                Vector256<float> alpha = Vector256.Create(0.01f);
+                for (; i < vectorizable; i += vSize)
+                {
+                    Vector256<float> vec = Avx.LoadVector256(ptr + i);
+                    Vector256<float> scaled = Avx.Multiply(vec, alpha);
+                    var mask = Avx.Compare(vec, zero, FloatComparisonMode.OrderedGreaterThanNonSignaling);
+                    Avx.BlendVariable(scaled, vec, mask).Store(ptr + i);
+                }
             }
         }
 
@@ -1443,179 +1368,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
                 ActivationType.Sigmoid => 1.0f / (1.0f + MathF.Exp(-val)),
                 ActivationType.Tanh => MathF.Tanh(val),
                 _ => val
-            };
-        }
-    }
-
-    private static void ApplyDerivativeToGradient(CnnMatrix gradient, CnnMatrix postAct, ActivationType type)
-    {
-        if (type == ActivationType.Identity) return;
-
-        int totalElements = gradient.UnsafeSize;
-        if (postAct.UnsafeSize != totalElements)
-        {
-            throw new ArgumentException($"Size mismatch: gradient ({totalElements}) != postAct ({postAct.UnsafeSize})");
-        }
-
-        float* pGrad = gradient.Pointer;
-        float* pPost = postAct.Pointer;
-
-        int i = 0;
-
-        switch (type)
-        {
-            case ActivationType.ReLU:
-                {
-                    Vector512<float> vZero = Vector512<float>.Zero;
-
-                    for (; i <= totalElements - 64; i += 64)
-                    {
-                        Vector512<float> g0 = Vector512.Load(pGrad + i);
-                        Vector512<float> g1 = Vector512.Load(pGrad + i + 16);
-                        Vector512<float> g2 = Vector512.Load(pGrad + i + 32);
-                        Vector512<float> g3 = Vector512.Load(pGrad + i + 48);
-
-                        Vector512<float> p0 = Vector512.Load(pPost + i);
-                        Vector512<float> p1 = Vector512.Load(pPost + i + 16);
-                        Vector512<float> p2 = Vector512.Load(pPost + i + 32);
-                        Vector512<float> p3 = Vector512.Load(pPost + i + 48);
-
-                        Vector512<float> mask0 = Vector512.GreaterThan(p0, vZero);
-                        Vector512<float> mask1 = Vector512.GreaterThan(p1, vZero);
-                        Vector512<float> mask2 = Vector512.GreaterThan(p2, vZero);
-                        Vector512<float> mask3 = Vector512.GreaterThan(p3, vZero);
-
-                        (g0 & mask0).Store(pGrad + i);
-                        (g1 & mask1).Store(pGrad + i + 16);
-                        (g2 & mask2).Store(pGrad + i + 32);
-                        (g3 & mask3).Store(pGrad + i + 48);
-                    }
-
-                    for (; i <= totalElements - 16; i += 16)
-                    {
-                        Vector512<float> g = Vector512.Load(pGrad + i);
-                        Vector512<float> p = Vector512.Load(pPost + i);
-                        Vector512<float> mask = Vector512.GreaterThan(p, vZero);
-                        (g & mask).Store(pGrad + i);
-                    }
-                    break;
-                }
-
-            case ActivationType.LeakyReLU:
-                {
-                    Vector512<float> vZero = Vector512<float>.Zero;
-                    Vector512<float> vAlpha = Vector512.Create(0.01f);
-
-                    for (; i <= totalElements - 64; i += 64)
-                    {
-                        Vector512<float> g0 = Vector512.Load(pGrad + i);
-                        Vector512<float> g1 = Vector512.Load(pGrad + i + 16);
-                        Vector512<float> g2 = Vector512.Load(pGrad + i + 32);
-                        Vector512<float> g3 = Vector512.Load(pGrad + i + 48);
-
-                        Vector512<float> p0 = Vector512.Load(pPost + i);
-                        Vector512<float> p1 = Vector512.Load(pPost + i + 16);
-                        Vector512<float> p2 = Vector512.Load(pPost + i + 32);
-                        Vector512<float> p3 = Vector512.Load(pPost + i + 48);
-
-                        Vector512<float> mask0 = Vector512.GreaterThan(p0, vZero);
-                        Vector512<float> mask1 = Vector512.GreaterThan(p1, vZero);
-                        Vector512<float> mask2 = Vector512.GreaterThan(p2, vZero);
-                        Vector512<float> mask3 = Vector512.GreaterThan(p3, vZero);
-
-                        Vector512.ConditionalSelect(mask0, g0, g0 * vAlpha).Store(pGrad + i);
-                        Vector512.ConditionalSelect(mask1, g1, g1 * vAlpha).Store(pGrad + i + 16);
-                        Vector512.ConditionalSelect(mask2, g2, g2 * vAlpha).Store(pGrad + i + 32);
-                        Vector512.ConditionalSelect(mask3, g3, g3 * vAlpha).Store(pGrad + i + 48);
-                    }
-
-                    for (; i <= totalElements - 16; i += 16)
-                    {
-                        Vector512<float> g = Vector512.Load(pGrad + i);
-                        Vector512<float> p = Vector512.Load(pPost + i);
-                        Vector512<float> mask = Vector512.GreaterThan(p, vZero);
-                        Vector512.ConditionalSelect(mask, g, g * vAlpha).Store(pGrad + i);
-                    }
-                    break;
-                }
-
-            case ActivationType.Sigmoid:
-                {
-                    Vector512<float> vOne = Vector512.Create(1.0f);
-
-                    for (; i <= totalElements - 64; i += 64)
-                    {
-                        Vector512<float> g0 = Vector512.Load(pGrad + i);
-                        Vector512<float> g1 = Vector512.Load(pGrad + i + 16);
-                        Vector512<float> g2 = Vector512.Load(pGrad + i + 32);
-                        Vector512<float> g3 = Vector512.Load(pGrad + i + 48);
-
-                        Vector512<float> p0 = Vector512.Load(pPost + i);
-                        Vector512<float> p1 = Vector512.Load(pPost + i + 16);
-                        Vector512<float> p2 = Vector512.Load(pPost + i + 32);
-                        Vector512<float> p3 = Vector512.Load(pPost + i + 48);
-
-                        (g0 * p0 * (vOne - p0)).Store(pGrad + i);
-                        (g1 * p1 * (vOne - p1)).Store(pGrad + i + 16);
-                        (g2 * p2 * (vOne - p2)).Store(pGrad + i + 32);
-                        (g3 * p3 * (vOne - p3)).Store(pGrad + i + 48);
-                    }
-
-                    for (; i <= totalElements - 16; i += 16)
-                    {
-                        Vector512<float> g = Vector512.Load(pGrad + i);
-                        Vector512<float> p = Vector512.Load(pPost + i);
-                        (g * p * (vOne - p)).Store(pGrad + i);
-                    }
-                    break;
-                }
-
-            case ActivationType.Tanh:
-                {
-                    Vector512<float> vOne = Vector512.Create(1.0f);
-
-                    for (; i <= totalElements - 64; i += 64)
-                    {
-                        Vector512<float> g0 = Vector512.Load(pGrad + i);
-                        Vector512<float> g1 = Vector512.Load(pGrad + i + 16);
-                        Vector512<float> g2 = Vector512.Load(pGrad + i + 32);
-                        Vector512<float> g3 = Vector512.Load(pGrad + i + 48);
-
-                        Vector512<float> p0 = Vector512.Load(pPost + i);
-                        Vector512<float> p1 = Vector512.Load(pPost + i + 16);
-                        Vector512<float> p2 = Vector512.Load(pPost + i + 32);
-                        Vector512<float> p3 = Vector512.Load(pPost + i + 48);
-
-                        (g0 * Vector512.FusedMultiplyAdd(-p0, p0, vOne)).Store(pGrad + i);
-                        (g1 * Vector512.FusedMultiplyAdd(-p1, p1, vOne)).Store(pGrad + i + 16);
-                        (g2 * Vector512.FusedMultiplyAdd(-p2, p2, vOne)).Store(pGrad + i + 32);
-                        (g3 * Vector512.FusedMultiplyAdd(-p3, p3, vOne)).Store(pGrad + i + 48);
-                    }
-
-                    for (; i <= totalElements - 16; i += 16)
-                    {
-                        Vector512<float> g = Vector512.Load(pGrad + i);
-                        Vector512<float> p = Vector512.Load(pPost + i);
-                        (g * Vector512.FusedMultiplyAdd(-p, p, vOne)).Store(pGrad + i);
-                    }
-                    break;
-                }
-
-            default:
-                break;
-        }
-
-        for (; i < totalElements; i++)
-        {
-            float p = pPost[i];
-            float g = pGrad[i];
-            pGrad[i] = type switch
-            {
-                ActivationType.ReLU => p <= 0 ? 0 : g,
-                ActivationType.LeakyReLU => p <= 0 ? 0.01f * g : g,
-                ActivationType.Sigmoid => g * p * (1.0f - p),
-                ActivationType.Tanh => g * (1.0f - p * p),
-                _ => g
             };
         }
     }
@@ -1710,9 +1462,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
         var avgLoss = totalLoss / rows;
 
-        return float.IsNaN(avgLoss)
-            || float.IsInfinity(avgLoss)
-            || avgLoss > 100f ? 10.0f : avgLoss;
+        return float.IsNaN(avgLoss) || float.IsInfinity(avgLoss) || avgLoss > 100f ? 10.0f : avgLoss;
     }
 
     private void ClearIntermediates()
@@ -1746,6 +1496,9 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         list.Clear();
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static NeuralMatrix RentNeural(int rows, int cols) => NeuralMatrix.GetOrCreate(rows, cols);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static CnnMatrix RentCnn(int batch, int channels, int h, int w) => CnnMatrix.GetOrCreate(batch, channels, h, w);
 }

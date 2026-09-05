@@ -13,25 +13,19 @@ using NeutralNET.Utils;
 namespace NeutralNET.Matrices;
 
 /// <summary>
-/// High‑performance matrix with AVX‑512 support, pooled unsafe memory buffers,
-/// and cuBLAS GPU execution paths for GEMM matrix multiplication.
+/// High‑performance matrix with SIMD AVX-512/AVX2 acceleration and pooled unsafe buffers.
 /// </summary>
 public unsafe class NeuralMatrix : IDisposable
 {
     public const int Alignment = 16;
-
-    private const int AlignmentMask = Alignment - 1;
     private const int ByteAlignment = Alignment * sizeof(float);
-    private const int ByteAlignmentMask = ByteAlignment - 1;
 
-    // ---------- Buffer Pool ----------
-    private static readonly Stack<NeuralMatrix> _pool = [];
-
+    private static readonly ConcurrentBag<NeuralMatrix> _pool = [];
     private static readonly int CommonAllocatedLength = 6422528;
+
     private readonly int _allocatedLength;
 
     public float* Pointer;
-
     public int Rows;
     public int ColumnsStride;
     public int UsedColumns;
@@ -39,11 +33,13 @@ public unsafe class NeuralMatrix : IDisposable
     public uint[] StrideMasks;
     public int UnsafeSize;
 
+    private bool _inUse = true;
+
     public Span<float> SpanWithGarbage => new(Pointer, UnsafeSize);
 
     public static NeuralMatrix GetOrCreate(int rows, int columns)
     {
-        if (!_pool.TryPop(out var item))
+        if (!_pool.TryTake(out var item))
         {
             item = new NeuralMatrix(rows, columns);
         }
@@ -67,20 +63,18 @@ public unsafe class NeuralMatrix : IDisposable
 
         if (UnsafeSize > CommonAllocatedLength)
         {
-            throw new Exception("Requested size exceeds CommonAllocatedLength pool buffer.");
+            throw new InvalidOperationException($"Requested size {UnsafeSize} exceeds CommonAllocatedLength buffer.");
         }
 
-        Pointer = (float*)NativeMemory.AlignedAlloc((nuint)_allocatedLength * sizeof(float), ByteAlignment);
+        Pointer = (float*)NativeMemory.AlignedAlloc((nuint)_allocatedLength * sizeof(float), (nuint)ByteAlignment);
         StrideMasks = MatrixUtils.GetStrideMask(columns);
-        SpanWithGarbage.Clear();
+        Clear();
     }
-
-    private bool _inUse = true;
 
     public void Dispose()
     {
         _inUse = false;
-        _pool.Push(this);
+        _pool.Add(this);
     }
 
     public void Resize(int rows, int columns)
@@ -94,18 +88,12 @@ public unsafe class NeuralMatrix : IDisposable
 
         if (UnsafeSize > CommonAllocatedLength)
         {
-            throw new Exception("Requested size exceeds CommonAllocatedLength pool buffer.");
-        }
-
-        if (_inUse)
-        {
-            throw new InvalidOperationException("Matrix buffer is currently locked in use.");
+            throw new InvalidOperationException($"Requested size {UnsafeSize} exceeds CommonAllocatedLength buffer.");
         }
 
         _inUse = true;
-
         StrideMasks = MatrixUtils.GetStrideMask(columns);
-        SpanWithGarbage.Clear();
+        Clear();
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -114,38 +102,67 @@ public unsafe class NeuralMatrix : IDisposable
         int inFeatures = UsedColumns;
         int outFeatures = other.Rows;
         int batchSize = Rows;
-        int vecSize = Alignment;
 
-        var inputRow = GetMatrixRow(0);
-        var resultRow = result.GetMatrixRow(0);
+        float* pInput = Pointer;
+        float* pResult = result.Pointer;
+        float* pOther = other.Pointer;
 
-        for (int row = 0; row < batchSize; row++, ++inputRow, ++resultRow)
+        int inStride = ColumnsStride;
+        int resStride = result.ColumnsStride;
+        int othStride = other.ColumnsStride;
+
+        for (int row = 0; row < batchSize; row++)
         {
-            var weights = other.GetMatrixRow(0);
+            float* inputRow = pInput + row * inStride;
+            float* resultRow = pResult + row * resStride;
 
-            for (int neuronIdx = 0; neuronIdx < outFeatures; neuronIdx++, ++weights)
+            for (int neuronIdx = 0; neuronIdx < outFeatures; neuronIdx++)
             {
-                var sum = 0f;
-                var k = 0;
+                float* weights = pOther + neuronIdx * othStride;
+                float sum = 0f;
+                int k = 0;
 
-                var sumVec = Vector512<float>.Zero;
-                var vectorizable = inFeatures - (inFeatures % vecSize);
-
-                for (; k < vectorizable; k += vecSize)
+                if (Avx512F.IsSupported)
                 {
-                    var inputVec = inputRow.LoadVectorAligned(k);
-                    var weightVec = weights.LoadVectorAligned(k);
-                    sumVec = Avx512F.FusedMultiplyAdd(inputVec, weightVec, sumVec);
-                }
+                    var sumVec = Vector512<float>.Zero;
+                    int vecLimit = inFeatures - (inFeatures % 16);
 
-                sum += Vector512.Sum(sumVec);
+                    for (; k < vecLimit; k += 16)
+                    {
+                        var inputVec = Vector512.Load(inputRow + k);
+                        var weightVec = Vector512.Load(weights + k);
+                        sumVec = Avx512F.FusedMultiplyAdd(inputVec, weightVec, sumVec);
+                    }
+                    sum += Vector512.Sum(sumVec);
+                }
+                else if (Avx2.IsSupported)
+                {
+                    var sumVec = Vector256<float>.Zero;
+                    int vecLimit = inFeatures - (inFeatures % 8);
+
+                    for (; k < vecLimit; k += 8)
+                    {
+                        var inputVec = Vector256.Load(inputRow + k);
+                        var weightVec = Vector256.Load(weights + k);
+                        sumVec = Fma.IsSupported
+                            ? Fma.MultiplyAdd(inputVec, weightVec, sumVec)
+                            : Avx.Add(sumVec, Avx.Multiply(inputVec, weightVec));
+                    }
+
+                    var hi = Avx.ExtractVector128(sumVec, 1);
+                    var lo = sumVec.GetLower();
+                    var sum128 = Sse.Add(lo, hi);
+                    sum128 = Sse3.HorizontalAdd(sum128, sum128);
+                    sum128 = Sse3.HorizontalAdd(sum128, sum128);
+                    sum += sum128.ToScalar();
+                }
 
                 for (; k < inFeatures; k++)
                 {
-                    sum += inputRow.Span[k] * weights.Span[k];
+                    sum += inputRow[k] * weights[k];
                 }
 
-                resultRow.Span[neuronIdx] = sum;
+                resultRow[neuronIdx] = sum;
             }
         }
     }
@@ -154,19 +171,12 @@ public unsafe class NeuralMatrix : IDisposable
     public Span<float> GetRowSpan(int row) => SpanWithGarbage.Slice(row * ColumnsStride, UsedColumns);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public NeuralVector GetMatrixRow(int row)
-    {
-        float* rowPtr = GetRowPointer(row);
-        return new NeuralVector(rowPtr, UsedColumns, ColumnsStride);
-    }
+    public NeuralVector GetMatrixRow(int row) => new(GetRowPointer(row), UsedColumns, ColumnsStride);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public float* GetRowPointer(int row) => row * ColumnsStride + Pointer;
+    public float* GetRowPointer(int row) => Pointer + (row * ColumnsStride);
 
-    public void CopyRowFrom(NeuralMatrix other, int row)
-    {
-        other.GetRowSpan(row).CopyTo(GetRowSpan(row));
-    }
+    public void CopyRowFrom(NeuralMatrix other, int row) => other.GetRowSpan(row).CopyTo(GetRowSpan(row));
 
     public void CopyDataFrom(NeuralMatrix other)
     {
@@ -185,27 +195,35 @@ public unsafe class NeuralMatrix : IDisposable
         Debug.Assert(Rows == other.Rows);
         Debug.Assert(UsedColumns == other.UsedColumns);
 
-        var zipPointer = new Zip2Pointer(Pointer, other.Pointer, UnsafeSize);
+        float* pA = Pointer;
+        float* pB = other.Pointer;
+        int count = UnsafeSize;
+        int i = 0;
 
-        if (Avx2.IsSupported)
+        if (Avx512F.IsSupported)
         {
-            while (zipPointer.IsInScope)
+            int vecLimit = count - (count % 16);
+            for (; i < vecLimit; i += 16)
             {
-                zipPointer.GetVectors(out var aVec, out var bVec);
-
-                var resultVec = Avx512F.Add(aVec, bVec);
-                resultVec.StoreAligned(zipPointer.A);
-
-                zipPointer += Alignment;
+                var vA = Vector512.Load(pA + i);
+                var vB = Vector512.Load(pB + i);
+                (vA + vB).Store(pA + i);
             }
         }
-        else
+        else if (Avx2.IsSupported)
         {
-            while (zipPointer.IsInScope)
+            int vecLimit = count - (count % 8);
+            for (; i < vecLimit; i += 8)
             {
-                *zipPointer.A += *zipPointer.B;
-                ++zipPointer;
+                var vA = Vector256.Load(pA + i);
+                var vB = Vector256.Load(pB + i);
+                (vA + vB).Store(pA + i);
             }
+        }
+
+        for (; i < count; i++)
+        {
+            pA[i] += pB[i];
         }
     }
 
@@ -228,16 +246,8 @@ public unsafe class NeuralMatrix : IDisposable
 
     public override string ToString() => $"{Rows}x{UsedColumns}";
 
-    // =========================================================================
-    // OPTIMIZED GPU / CPU EXECUTION PATHS
-    // =========================================================================
+    private const int GpuExecutionThresholdElements = 65536;
 
-    private const int GpuExecutionThresholdElements = 65536; // 256x256 elements minimum
-
-    /// <summary>
-    /// Multiplies matrices using direct cuBLAS pointers for large GEMM operations,
-    /// falling back to AVX-512 CPU execution paths for small sub-matrices.
-    /// </summary>
     public void Dot(NeuralMatrix other, NeuralMatrix result)
     {
         if (UsedColumns != other.Rows)
@@ -245,30 +255,22 @@ public unsafe class NeuralMatrix : IDisposable
             throw new ArgumentException($"Dimension mismatch: Left columns ({UsedColumns}) != Right rows ({other.Rows})");
         }
 
-        // Evaluate workload size against PCIe overhead threshold
         if (UnsafeSize >= GpuExecutionThresholdElements && other.UnsafeSize >= GpuExecutionThresholdElements)
         {
             try
             {
-                // Execute directly via cuBLAS GEMM wrapper using device/pinned pointers
-                //GpuMatrixOps.ComputeDenseForwardGpu(
-                //    Pointer,
-                //    other.Pointer,
-                //    null,
-                //    result.Pointer,
-                //    Rows,
-                //    UsedColumns,
-                //    other.UsedColumns);
-
+                GpuMatrixOps.ComputeConvolutionGpu(
+                    Pointer, other.Pointer, result.Pointer,
+                    Rows, other.UsedColumns, UsedColumns,
+                    ColumnsStride, other.ColumnsStride, result.ColumnsStride);
                 return;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"⚠️ cuBLAS runtime call failed: {ex.Message}. Falling back to AVX-512.");
+                Console.WriteLine($"⚠️ GPU execution call failed: {ex.Message}. Falling back to CPU SIMD.");
             }
         }
 
-        // Standard AVX-512 CPU Path
         DotVectorized(other, result);
     }
 
@@ -279,21 +281,17 @@ public unsafe class NeuralMatrix : IDisposable
         return result;
     }
 
-    /// <summary>
-    /// Executes element-wise addition using vectorized AVX-512 instructions.
-    /// CPU SIMD remains faster than GPU execution due to PCIe memory bus transfer constraints.
-    /// </summary>
-    public void AddInPlace(NeuralMatrix other)
-    {
-        SumVectorized(other);
-    }
+    public void AddInPlace(NeuralMatrix other) => SumVectorized(other);
 
     public void Randomize(float low = 0, float high = 1)
     {
-        var span = SpanWithGarbage;
-        for (int i = 0; i < span.Length; i++)
+        float* ptr = Pointer;
+        int count = UnsafeSize;
+        float range = high - low;
+
+        for (int i = 0; i < count; i++)
         {
-            span[i] = RandomUtils.GetFloat(1) * (high - low) + low;
+            ptr[i] = RandomUtils.GetFloat(1) * range + low;
         }
     }
 
@@ -302,100 +300,6 @@ public unsafe class NeuralMatrix : IDisposable
     {
         float* ptr = Pointer;
         float* end = ptr + UnsafeSize;
-
-        if (Avx2.IsSupported)
-        {
-            var meanVec = Vector512.Create(mean);
-            var stddevVec = Vector512.Create(stddev);
-            var multiplierVec = Vector512.Create(multiplier);
-
-            while (ptr + Alignment <= end)
-            {
-                var u1 = Vector512.Create(
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed));
-
-                var u2 = Vector512.Create(
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed),
-                    RandomUtils.GetFloat(multiplier, seed));
-
-                u1 = Avx512F.Max(u1, Vector512.Create(1e-38f));
-
-                float[] u1Array = new float[Alignment];
-                fixed (float* u1Ptr = u1Array)
-                {
-                    Avx512F.Store(u1Ptr, u1);
-                    for (int i = 0; i < Alignment; i++)
-                    {
-                        u1Ptr[i] = MathF.Log(u1Ptr[i]);
-                    }
-                }
-
-                // DANIEL PLZ FIX
-                var logU1Vec = Vector512.Create(
-                    u1Array[0], u1Array[1], u1Array[2], u1Array[3],
-                    u1Array[4], u1Array[5], u1Array[6], u1Array[7],
-                    u1Array[8], u1Array[9], u1Array[10], u1Array[11],
-                    u1Array[12], u1Array[13], u1Array[14], u1Array[15]);
-
-                var sqrtPart = Avx512F.Sqrt(Avx512F.Multiply(Vector512.Create(-2.0f), logU1Vec));
-
-                float[] sinInput = new float[Alignment];
-                float[] sinOutput = new float[Alignment];
-                fixed (float* sinInputPtr = sinInput)
-                {
-                    Avx512F.Multiply(Vector512.Create(2.0f * MathF.PI), u2).Store(sinInputPtr);
-                    for (int i = 0; i < Alignment; i++)
-                    {
-                        sinInput[i] = MathF.Sin(sinInput[i]);
-                    }
-                }
-
-                var sinVec = Vector512.Create(
-                    sinInput[0], sinInput[1], sinInput[2], sinInput[3],
-                    sinInput[4], sinInput[5], sinInput[6], sinInput[7],
-                    sinInput[8], sinInput[9], sinInput[10], sinInput[11],
-                    sinInput[12], sinInput[13], sinInput[14], sinInput[15]);
-
-                var z0 = Avx512F.Multiply(sqrtPart, sinVec);
-
-                z0 = Avx512F.FusedMultiplyAdd(
-                    Avx512F.Multiply(z0, stddevVec),
-                    multiplierVec,
-                    meanVec);
-
-                Avx512F.StoreAligned(ptr, z0);
-                ptr += Alignment;
-            }
-        }
 
         while (ptr < end)
         {
@@ -406,70 +310,89 @@ public unsafe class NeuralMatrix : IDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Clip(float min, float max)
     {
-        var span = SpanWithGarbage;
-        for (int i = 0; i < span.Length; i++)
+        float* ptr = Pointer;
+        int count = UnsafeSize;
+        int i = 0;
+
+        if (Avx512F.IsSupported)
         {
-            span[i] = Math.Clamp(span[i], min, max);
+            var minVec = Vector512.Create(min);
+            var maxVec = Vector512.Create(max);
+            int vecLimit = count - (count % 16);
+
+            for (; i < vecLimit; i += 16)
+            {
+                var vec = Vector512.Load(ptr + i);
+                vec = Vector512.Min(maxVec, Vector512.Max(minVec, vec));
+                vec.Store(ptr + i);
+            }
+        }
+        else if (Avx2.IsSupported)
+        {
+            var minVec = Vector256.Create(min);
+            var maxVec = Vector256.Create(max);
+            int vecLimit = count - (count % 8);
+
+            for (; i < vecLimit; i += 8)
+            {
+                var vec = Vector256.Load(ptr + i);
+                vec = Vector256.Min(maxVec, Vector256.Max(minVec, vec));
+                vec.Store(ptr + i);
+            }
+        }
+
+        for (; i < count; i++)
+        {
+            ptr[i] = Math.Clamp(ptr[i], min, max);
         }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Clip(float maxNorm) => Clip(-maxNorm, maxNorm);
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void ClipVectorized(float min, float max)
-    {
-        float* ptr = Pointer;
-        float* end = ptr + UnsafeSize;
-
-        var minVec = Vector512.Create(min);
-        var maxVec = Vector512.Create(max);
-
-        if (Avx2.IsSupported)
-        {
-            for (; ptr != end; ptr += Alignment)
-            {
-                var vec = Vector512.LoadAligned(ptr);
-                vec = Avx512F.Min(maxVec, Avx512F.Max(minVec, vec));
-                vec.StoreAligned(ptr);
-            }
-        }
-        else
-        {
-            Clip(min, max);
-        }
-    }
-
     public void Fill(float value)
     {
         float* ptr = Pointer;
-        float* end = ptr + UnsafeSize;
+        int count = UnsafeSize;
+        int i = 0;
 
-        var vec = Vector512.Create(value);
-
-        for (; ptr != end; ptr += Alignment)
+        if (Avx512F.IsSupported)
         {
-            vec.StoreAligned(ptr);
+            var vec = Vector512.Create(value);
+            int vecLimit = count - (count % 16);
+            for (; i < vecLimit; i += 16)
+            {
+                vec.Store(ptr + i);
+            }
+        }
+        else if (Avx2.IsSupported)
+        {
+            var vec = Vector256.Create(value);
+            int vecLimit = count - (count % 8);
+            for (; i < vecLimit; i += 8)
+            {
+                vec.Store(ptr + i);
+            }
+        }
+
+        for (; i < count; i++)
+        {
+            ptr[i] = value;
         }
     }
 
     public void Print(string name)
     {
         Console.WriteLine($"{name} = [");
-
         for (int i = 0; i < Rows; i++)
         {
             var row = GetRowSpan(i);
-
             foreach (var val in row)
             {
                 Console.Write($"{val,8:F4}");
             }
             Console.WriteLine();
         }
-
-        Console.WriteLine("]");
-        Console.WriteLine();
-        Console.WriteLine();
+        Console.WriteLine("]\n\n");
     }
 }

@@ -248,7 +248,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         var rReadyLoss = Math.Clamp((int)(rLoss * 255), 0, 255);
         var gReadyLoss = Math.Clamp((int)(gLoss * 255), 0, 255);
 
-        var result = $"Epoch ({epoch, 6}/{_config.Epochs, -6}) Accuracy: {lossToPercent:F5}% Loss: {loss,16:G13} BPS: {batchesPerSecond:F4}/s TP: {elapsed}";
+        var result = $"Epoch ({epoch,6}/{_config.Epochs,-6}) Accuracy: {lossToPercent:F5}% Loss: {loss,16:G13} BPS: {batchesPerSecond:F4}/s TP: {elapsed}";
         result = result.WithColor(System.Drawing.Color.FromArgb(255, rReadyLoss, gReadyLoss, 0));
 
         Console.WriteLine(result);
@@ -309,6 +309,23 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
                 result.StoreAligned(aPtr);
             }
         }
+        else if (Avx2.IsSupported)
+        {
+            var factorVec = Vector256.Create(factor);
+            var rateVec = Vector256.Create(-_config.LearningRate);
+
+            for (; aPtr != aEnd; aPtr += 8, bPtr += 8)
+            {
+                var aVec = Vector256.Load(aPtr);
+                var bVec = Vector256.Load(bPtr);
+
+                var result = Fma.IsSupported
+                    ? Fma.MultiplyAdd(bVec, rateVec, Avx.Multiply(aVec, factorVec))
+                    : Avx.Add(Avx.Multiply(aVec, factorVec), Avx.Multiply(bVec, rateVec));
+
+                result.Store(aPtr);
+            }
+        }
         else
         {
             for (var i = 0; i < matrixes[index].UnsafeSize; i++)
@@ -362,6 +379,16 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
                 diff.StoreAligned(gradOutputErrorPtr);
             }
         }
+        else if (Avx2.IsSupported)
+        {
+            for (; archOutputPtr != aEnd; archOutputPtr += 8, gradOutputErrorPtr += 8, trainingOutputPointer += 8)
+            {
+                var predVec = Vector256.Load(archOutputPtr);
+                var targetVec = Vector256.Load(trainingOutputPointer);
+                var diff = Avx.Subtract(predVec, targetVec);
+                diff.Store(gradOutputErrorPtr);
+            }
+        }
         else
         {
             for (; archOutputPtr < aEnd; ++archOutputPtr, ++gradOutputErrorPtr, ++trainingOutputPointer)
@@ -388,7 +415,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
     NeuralMatrix currentActivations,
     NeuralMatrix currentErrors)
     {
-        var previousLayerIndex = layerIndex - 1; 
+        var previousLayerIndex = layerIndex - 1;
         var isOutputLayer = layerIndex == (Architecture.Count - 1);
 
         var prevArchNeurons = Architecture.MatrixNeurons[previousLayerIndex];
@@ -422,7 +449,7 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         ref float* prevGradWeights,
         float* prevGradNeurons,
         float neuronGradient)
-    {       
+    {
         if (Avx512F.IsSupported)
         {
             var neuronGradientsVec = Vector512.Create(neuronGradient);
@@ -449,6 +476,32 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
                 grad.StoreAligned(prevGradNeurons);
             }
         }
+        else if (Avx2.IsSupported)
+        {
+            var neuronGradientsVec = Vector256.Create(neuronGradient);
+
+            for (; prevArchNeuronsPtr != prevArchNeuronsPtrEnd;
+                prevArchNeuronsPtr += 8,
+                prevArchWeightsPtr += 8,
+                prevGradWeights += 8,
+                prevGradNeurons += 8)
+            {
+                var prevArchNeuronsVector = Vector256.Load(prevArchNeuronsPtr);
+                var prevArchWeightsVector = Vector256.Load(prevArchWeightsPtr);
+
+                var wGrad = Avx.Multiply(neuronGradientsVec, prevArchNeuronsVector);
+                var pGrad = Avx.Multiply(neuronGradientsVec, prevArchWeightsVector);
+
+                var existingWGrad = Vector256.Load(prevGradWeights);
+                var existingPGrad = Vector256.Load(prevGradNeurons);
+
+                var grad = Avx.Add(existingWGrad, wGrad);
+                grad.Store(prevGradWeights);
+
+                grad = Avx.Add(existingPGrad, pGrad);
+                grad.Store(prevGradNeurons);
+            }
+        }
         else
         {
             for (; prevArchNeuronsPtr != prevArchNeuronsPtrEnd; ++prevArchNeuronsPtr, ++prevArchWeightsPtr, ++prevGradWeights, ++prevGradNeurons)
@@ -463,18 +516,19 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private void NormalizeGradientsVectorized(int rowNumber)
     {
-        var divisorVec = Vector512.Create((float)rowNumber);
+        var divisorVec512 = Vector512.Create((float)rowNumber);
+        var divisorVec256 = Vector256.Create((float)rowNumber);
         var divisorScalar = (float)rowNumber;
 
         for (var i = 0; i < _gradientArchitecture.Count; i++)
         {
-            NormalizeArray(_gradientArchitecture.MatrixWeights[i], divisorVec, divisorScalar);
-            NormalizeArray(_gradientArchitecture.MatrixBiases[i], divisorVec, divisorScalar);
+            NormalizeArray(_gradientArchitecture.MatrixWeights[i], divisorVec512, divisorVec256, divisorScalar);
+            NormalizeArray(_gradientArchitecture.MatrixBiases[i], divisorVec512, divisorVec256, divisorScalar);
         }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void NormalizeArray(NeuralMatrix matrix, Vector512<float> divisorVec, float divisorScalar)
+    private static void NormalizeArray(NeuralMatrix matrix, Vector512<float> divisorVec512, Vector256<float> divisorVec256, float divisorScalar)
     {
         var ptr = matrix.Pointer;
         float* end = ptr + matrix.UnsafeSize;
@@ -484,8 +538,17 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
             for (; ptr != end; ptr += NeuralMatrix.Alignment)
             {
                 var vec = Vector512.LoadAligned(ptr);
-                vec = Avx512F.Divide(vec, divisorVec);
+                vec = Avx512F.Divide(vec, divisorVec512);
                 vec.StoreAligned(ptr);
+            }
+        }
+        else if (Avx2.IsSupported)
+        {
+            for (; ptr != end; ptr += 8)
+            {
+                var vec = Vector256.Load(ptr);
+                vec = Avx.Divide(vec, divisorVec256);
+                vec.Store(ptr);
             }
         }
         else
@@ -516,7 +579,8 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
         var aPtr = realFirstNeuronMatrix.Pointer;
         var realLastNeuronPtr = realLastNeuronMatrix.Pointer;
 
-        var sumMask = Vector512.Create(_trainingOutputStrideMask).AsSingle();
+        var sumMask512 = Vector512.Create(_trainingOutputStrideMask).AsSingle();
+        var sumMask256 = Vector256.Create(_trainingOutputStrideMask[0]).AsSingle(); // fallback or partial
 
         foreach (var pair in batch)
         {
@@ -531,18 +595,44 @@ public unsafe class NeuralFramework<TArch> where TArch : IArchitecture<TArch>
             var predicted = realLastNeuronMatrix;
             var batchLoss = 0f;
 
-            var lossVec = Vector512<float>.Zero;
-
-            for (; cPtr != cEnd; bPtr += NeuralMatrix.Alignment, cPtr += NeuralMatrix.Alignment)
+            if (Avx512F.IsSupported)
             {
-                var predVec = Vector512.LoadAligned(bPtr);
-                var targetVec = Vector512.LoadAligned(cPtr);
-                var diff = Avx512F.Subtract(predVec, targetVec);
-                lossVec = Avx512F.Add(lossVec, Avx512F.Multiply(diff, diff));
-            }
+                var lossVec = Vector512<float>.Zero;
 
-            lossVec = Avx512F.And(lossVec.AsInt32(), sumMask.AsInt32()).AsSingle();
-            batchLoss += Vector512.Sum(lossVec);
+                for (; cPtr != cEnd; bPtr += NeuralMatrix.Alignment, cPtr += NeuralMatrix.Alignment)
+                {
+                    var predVec = Vector512.LoadAligned(bPtr);
+                    var targetVec = Vector512.LoadAligned(cPtr);
+                    var diff = Avx512F.Subtract(predVec, targetVec);
+                    lossVec = Avx512F.Add(lossVec, Avx512F.Multiply(diff, diff));
+                }
+
+                lossVec = Avx512F.And(lossVec.AsInt32(), sumMask512.AsInt32()).AsSingle();
+                batchLoss += Vector512.Sum(lossVec);
+            }
+            else if (Avx2.IsSupported)
+            {
+                var lossVec = Vector256<float>.Zero;
+
+                for (; cPtr != cEnd; bPtr += 8, cPtr += 8)
+                {
+                    var predVec = Vector256.Load(bPtr);
+                    var targetVec = Vector256.Load(cPtr);
+                    var diff = Avx.Subtract(predVec, targetVec);
+                    lossVec = Avx.Add(lossVec, Avx.Multiply(diff, diff));
+                }
+
+                lossVec = Avx.And(lossVec, sumMask256).AsSingle();
+                batchLoss += Vector256.Sum(lossVec);
+            }
+            else
+            {
+                for (; cPtr != cEnd; ++bPtr, ++cPtr)
+                {
+                    float diff = *bPtr - *cPtr;
+                    batchLoss += diff * diff;
+                }
+            }
 
             loss += batchLoss;
         }
