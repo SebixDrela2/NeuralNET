@@ -3,10 +3,8 @@ using NeutralNET.Framework.Connected;
 using NeutralNET.Framework.Connected.Neural;
 using NeutralNET.Framework.Connected.Optimizers;
 using NeutralNET.Framework.Convolutional;
-using NeutralNET.Framework.Neural;
 using NeutralNET.Framework.Neural.CNN;
 using NeutralNET.Matrices;
-using NeutralNET.Models;
 using NeutralNET.Stuff;
 using NeutralNET.Test.Data;
 
@@ -14,37 +12,60 @@ namespace NeutralTest;
 
 internal class Program
 {
-    private const int BatchSize = 64;
+    static void Main() => RunCnnNetwork();
 
-    static void Main()
+    public static void RunCnnNetwork()
     {
-        RunCnnCifar10HundredImagesFast();
-    }
-
-    public static void RunCnnCifar10HundredImagesFast()
-    {
-        string dataDir = @"D:\Cifar\datasets\cifar-10-batches-bin";
-
-        var loader = DataLoaderFactory.Create(DataSourceType.DigiDigi);
-        var dataSet = loader.LoadCompleteDataset(batchSize: 10, maxTrainSamples: 50000, maxTestSamples: 10000);
+        var loader = DataLoaderFactory.Create(DataSourceType.MNIST);
+        var dataSet = loader.LoadCompleteDataset(
+           batchSize: 64,
+           maxTrainSamples: 1000,
+           maxTestSamples: 1000
+       );
 
         var cnnConfig = new CnnArchitectureConfig
         {
             ConvLayers =
-            [
-                new() { KernelHeight = 3, KernelWidth = 3, Filters = 16, Stride = 1, Padding = 1,
-                        Activation = ActivationType.LeakyReLU, UseMaxPool = true, PoolSize = 2 },
-                new() { KernelHeight = 3, KernelWidth = 3, Filters = 32, Stride = 1, Padding = 1,
-                        Activation = ActivationType.LeakyReLU, UseMaxPool = true, PoolSize = 2 }
-            ],
-            DenseArchitecture = [128, 64],
-            DenseHiddenActivation = ActivationType.ReLU,
+    [
+        new() {
+            KernelHeight = 3,
+            KernelWidth = 3,
+            Filters = 32,                    
+            Stride = 1,
+            Padding = 1,
+            Activation = ActivationType.LeakyReLU,
+            UseMaxPool = true,
+            PoolSize = 2
+        },
+        new() {
+            KernelHeight = 3,
+            KernelWidth = 3,
+            Filters = 64,                    
+            Stride = 1,
+            Padding = 1,
+            Activation = ActivationType.LeakyReLU,
+            UseMaxPool = true,
+            PoolSize = 2
+        },
+        new() {
+            KernelHeight = 3,
+            KernelWidth = 3,
+            Filters = 128,                   
+            Stride = 1,
+            Padding = 1,
+            Activation = ActivationType.LeakyReLU,
+            UseMaxPool = true,
+            PoolSize = 2
+        }
+    ],
+            DenseArchitecture = [256, 128, 10],          
+            DenseHiddenActivation = ActivationType.LeakyReLU,
             OutputActivation = ActivationType.Softmax,
             OptimizerConfig = new CnnOptimizerConfig
             {
                 OptimizerType = CnnOptimizerType.Adam,
-                LearningRate = 0.0005f,
-                WeightDecay = 0.001f,
+                LearningRate = 0.001f,               
+                WeightDecay = 0.0001f,               
                 Beta1 = 0.9f,
                 Beta2 = 0.999f,
                 Epsilon = 1e-8f
@@ -54,10 +75,10 @@ internal class Program
         var denseConfig = new NeuralNetworkConfig
         {
             LearningRate = 0.001f,
-            WeightDecay = 0.0005f,
-            BatchSize = 10,
+            WeightDecay = 0.0001f,                  
+            BatchSize = 64,                         
             Epochs = 1,
-            DropoutRate = 0.3f,
+            DropoutRate = 0.25f,                    
             WithShuffle = true,
             OptimizerType = OptimizerType.Adam,
             Model = null
@@ -66,11 +87,11 @@ internal class Program
         using var network = new CnnBuilder<Architecture>()
             .WithCnnConfig(cnnConfig)
             .WithDenseConfig(denseConfig)
-            .WithInputSize(GraphicsUtils.Width, GraphicsUtils.Height, 3)
+            .WithInputSize(loader.ImageScale, loader.ImageScale, 3)
             .Build();
         var validator = new CnnValidator();
-
-        RenderTable(network, validator);
+        DiagnoseNetwork(network, dataSet);
+        TrainAndRenderTable(network, validator, dataSet, loader.DatasetName);
 
         Console.WriteLine("\n=== FINAL EVALUATION ===");
         var finalResult = validator.Validate(network, dataSet.TestImages, dataSet.TestLabels);
@@ -82,15 +103,72 @@ internal class Program
         foreach (var lbl in dataSet.TestLabels) lbl.Dispose();
     }
 
-    private static void RenderTable(CnnNetwork<Architecture> network, CnnValidator validator)
+    private static void DiagnoseNetwork(CnnNetwork<Architecture> network, NeuralDataset dataSet)
     {
-        string dataDir = @"D:\Cifar\datasets\cifar-10-batches-bin";
-        var (trainImages, trainLabels, actualLabels, testImages, testLabels, actualTestLabels) = Cifar10DataLoader.LoadBatches(
-            dataDir: dataDir,
-            batchSize: 10,
-            maxSamples: 50
-        );
+        Console.WriteLine("\n=== NETWORK DIAGNOSTIC ===\n");
 
+        // 1. Check input data
+        var firstImage = dataSet.TrainImages[0];
+        Console.WriteLine($"Input shape: {firstImage.Batch}x{firstImage.Channels}x{firstImage.Height}x{firstImage.Width}");
+
+        float min = float.MaxValue, max = float.MinValue, sum = 0;
+        int count = 0;
+        for (int b = 0; b < firstImage.Batch; b++)
+            for (int c = 0; c < firstImage.Channels; c++)
+                for (int y = 0; y < firstImage.Height; y++)
+                    for (int x = 0; x < firstImage.Width; x++)
+                    {
+                        float v = firstImage[b, c, y, x];
+                        if (v < min) min = v;
+                        if (v > max) max = v;
+                        sum += v;
+                        count++;
+                    }
+        Console.WriteLine($"Pixel values: Min={min:F4}, Max={max:F4}, Avg={sum / count:F4}");
+        Console.WriteLine($"Expected: Min=0, Max=1, Avg~0.1-0.2\n");
+
+        // 2. Check labels
+        var firstLabel = dataSet.TrainLabels[0];
+        Console.WriteLine($"Label shape: {firstLabel.Rows}x{firstLabel.UsedColumns}");
+        Console.Write("First label row: ");
+        for (int j = 0; j < firstLabel.UsedColumns; j++)
+            Console.Write($"{firstLabel.At(0, j):F0} ");
+        Console.WriteLine("\n");
+
+        // 3. Forward pass debug - get raw logits and softmax output
+        Console.WriteLine("=== FORWARD PASS DEBUG ===");
+        var pred = network.Forward(firstImage);
+        Console.WriteLine($"Output shape: {pred.Rows}x{pred.UsedColumns}");
+
+        Console.Write("Softmax output (first row): ");
+        float sumProbs = 0;
+        for (int j = 0; j < 10; j++)
+        {
+            float v = pred.At(0, j);
+            sumProbs += v;
+            Console.Write($"{v:F4} ");
+        }
+        Console.WriteLine($"\nSum of probabilities: {sumProbs:F6} (should be ~1.0)");
+
+        if (sumProbs < 0.5f)
+            Console.WriteLine("❌ SOFTMAX IS BROKEN - all outputs are zero!");
+        pred.Dispose();
+
+        // 4. Train one batch and check gradients
+        Console.WriteLine("\n=== GRADIENT DEBUG ===");
+        float loss = network.TrainBatch(firstImage, firstLabel, 0.001f);
+        Console.WriteLine($"Loss after one batch: {loss:F4} (should be ~2.3, not 14.5)");
+
+        if (loss > 10f)
+            Console.WriteLine("❌ LOSS TOO HIGH - gradients are not working!");
+    }
+
+    private static void TrainAndRenderTable(
+    CnnNetwork<Architecture> network,
+    CnnValidator validator,
+    NeuralDataset dataSet,
+    string datasetName)
+    {
         var learningRate = 0.001f;
         var maxEpochs = 2000;
         var earlyStopPatience = 3000;
@@ -98,25 +176,29 @@ internal class Program
         var bestAccuracy = 0f;
         var epochsSinceBest = 0;
 
+        // Get test data as single batches for validation
+        var testImages = dataSet.TestImages;
+        var testLabels = dataSet.TestLabels;
+
         for (int epoch = 0; epoch < maxEpochs; epoch++)
         {
             var totalLoss = 0f;
 
-            for (int batchIdx = 0; batchIdx < trainImages.Count; batchIdx++)
+            for (int batchIdx = 0; batchIdx < dataSet.TrainImages.Count; batchIdx++)
             {
-                float loss = network.TrainBatch(trainImages[batchIdx], trainLabels[batchIdx], learningRate);
+                float loss = network.TrainBatch(dataSet.TrainImages[batchIdx], dataSet.TrainLabels[batchIdx], learningRate);
                 totalLoss += loss;
             }
 
-            var avgLoss = totalLoss / trainImages.Count;
-            
-            if ((epoch & ((1 << 3) - 1)) == 0)
+            var avgLoss = totalLoss / dataSet.TrainImages.Count;
+
+            //if ((epoch & ((1 << 1) - 1)) == 0)
             {
                 var result = validator.Validate(network, testImages, testLabels);
                 float accuracy = result.Accuracy;
                 Console.Write("\e[H");
                 Console.WriteLine($"╔══════════════╤══════════════════╤════════════════════╤═════════════════════════════╗");
-                Console.WriteLine($"║  Epoch {epoch + 1,6} │ Loss: {avgLoss,9:F6}  │  Accuracy: {accuracy,7:P2} │  Best: {bestAccuracy,7:P2}              ║");
+                Console.WriteLine($"║  Epoch {epoch + 1,5} │ Loss: {avgLoss,9:F6}  │  Accuracy: {accuracy,7:P2} │  Best: {bestAccuracy,7:P2}              ║");
                 Console.WriteLine($"╠═══════╤══════╧══════════════════╧════════════════════╧══════════════╤══════════════╣");
                 Console.WriteLine($"║       │     0     1     2     3     4     5     6     7     8     9 │ Pred  Actual ║");
                 Console.WriteLine($"╠═══════╪═════════════════════════════════════════════════════════════╪══════════════╣");
@@ -152,7 +234,7 @@ internal class Program
                 Console.WriteLine($"╚═══════╧═════════════════════════════════════════════════════════════╧══════════════╝");
                 Console.WriteLine();
                 Console.WriteLine($"Best accuracy: {bestAccuracy:P2}  |  Epochs since best: {epochsSinceBest}");
-                
+
                 if (accuracy > bestAccuracy)
                 {
                     bestAccuracy = accuracy;
@@ -226,114 +308,6 @@ internal class Program
             if (labelMatrix.At(0, i) > 0.5f) return i;
         }
         return -1;
-    }
-
-    public static void RunNetwork()
-    {
-        var model = new SumBitsModel();
-        model.Prepare();
-
-        var network = new NeuralNetworkBuilder<Architecture>(model)
-            .WithArchitecture([32, 32])
-            .WithEpochs(10000)
-            .WithHiddenLayerActivation(ActivationType.ReLU)
-            .WithOutputLayerActivation(ActivationType.Sigmoid)
-            .WithBatchSize(BatchSize)
-            .WithLearningRate(0.01f)
-            .WithWeightDecay(1e-5f)
-            .WithShuffle(true)
-            .Build();
-
-        var forward = network.RunModel();
-        model.Validate(forward);
-    }
-
-    public static void RunNetworkDigit()
-    {
-        var model = new DigitModel();
-        model.Prepare();
-
-        var network = new NeuralNetworkBuilder<Architecture>(model)
-            .WithArchitecture([128, 64, 32])
-            .WithEpochs(5000)
-            .WithBatchSize(64)
-            .WithHiddenLayerActivation(ActivationType.ReLU)
-            .WithOutputLayerActivation(ActivationType.Sigmoid)
-            .WithOptimizer(OptimizerType.AdamW)
-            .WithLearningRate(0.001f)
-            .WithWeightDecay(1e-4f)
-            .WithBeta1(0.9f)
-            .WithBeta2(0.999f)
-            .WithEpsilon(1e-8f)
-            .WithShuffle(true)
-            .Build();
-
-        var forward = network.RunModel();
-        model.Validate(forward);
-    }
-
-    public static void RunSumBitsModel()
-    {
-        var model = new SumBitsModel();
-        model.Prepare();
-
-        var network = new NeuralNetworkBuilder<Architecture>(model)
-            .WithArchitecture([64, 64, 64, 64])
-            .WithEpochs(200)
-            .WithHiddenLayerActivation(ActivationType.ReLU)
-            .WithOutputLayerActivation(ActivationType.Sigmoid)
-            .WithBatchSize(BatchSize)
-            .WithBeta1(0.9f)
-            .WithBeta2(0.999f)
-            .WithLearningRate(1e-2f)
-            .WithOptimizer(OptimizerType.SGD)
-            .WithEpsilon(1e-8f)
-            .WithShuffle(true)
-            .Build();
-
-        var forward = network.RunModel();
-        model.Validate(forward);
-    }
-
-    public static void RunSingleDigitTransformation()
-    {
-        var model = new BitMapTransformationModel();
-        model.Prepare();
-
-        var network = new NeuralNetworkBuilder<Architecture>(model)
-            .WithArchitecture([2, 2])
-            .WithEpochs(100000)
-            .WithBatchSize(BatchSize)
-            .WithLearningRate(5e-5f)
-            .WithWeightDecay(1e-5f)
-            .WithBeta1(0.9f)
-            .WithBeta2(0.999f)
-            .WithEpsilon(1e-8f)
-            .WithShuffle(true)
-            .Build();
-
-        var forward = network.RunModel();
-    }
-
-    public static void RunInfiniteFunction()
-    {
-        var model = new FunctionModel();
-        var network = new NeuralNetworkBuilder<Architecture>(model)
-            .WithArchitecture([32, 32])
-            .WithEpochs(20000)
-            .WithHiddenLayerActivation(ActivationType.ReLU)
-            .WithOutputLayerActivation(ActivationType.Identity)
-            .WithBatchSize(BatchSize)
-            .WithBeta1(0.9f)
-            .WithBeta2(0.999f)
-            .WithLearningRate(1e-5f)
-            .WithOptimizer(OptimizerType.Adam)
-            .WithEpsilon(1e-8f)
-            .WithShuffle(true)
-            .Build();
-
-        var forward = network.RunDynamicModel();
-        model.Validate(forward, network.Architecture);
     }
 
     private static string AsGreen(string x) => $"\e[38;2;124;179;66m{x}\e[39m";

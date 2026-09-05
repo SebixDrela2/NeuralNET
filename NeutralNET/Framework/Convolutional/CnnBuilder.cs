@@ -1,7 +1,5 @@
 using NeutralNET.Framework.Connected;
 using NeutralNET.Framework.Connected.Neural;
-using NeutralNET.Framework.Neural.CNN;
-using NeutralNET.Matrices;
 
 namespace NeutralNET.Framework.Neural.CNN;
 
@@ -9,9 +7,9 @@ public class CnnBuilder<TArch> where TArch : IArchitecture<TArch>
 {
     private NeuralNetworkConfig _denseConfig;
     private CnnArchitectureConfig _cnnConfig;
-    private int _inputHeight = 32;
-    private int _inputWidth = 32;
-    private int _inputChannels = 3;
+    private int _inputHeight;
+    private int _inputWidth;
+    private int _inputChannels ;
 
     public CnnBuilder<TArch> WithDenseConfig(NeuralNetworkConfig config)
     {

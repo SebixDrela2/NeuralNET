@@ -26,7 +26,7 @@ public unsafe class NeuralMatrix : IDisposable
     // ---------- Buffer Pool ----------
     private static readonly Stack<NeuralMatrix> _pool = [];
 
-    private static readonly int CommonAllocatedLength = 0x400000;
+    private static readonly int CommonAllocatedLength = 6422528;
     private readonly int _allocatedLength;
 
     public float* Pointer;
@@ -93,7 +93,6 @@ public unsafe class NeuralMatrix : IDisposable
 
         if (UnsafeSize > CommonAllocatedLength)
         {
-            //Pointer = RentBuffer(AllocatedLength);
             throw new Exception();
         }
 

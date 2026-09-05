@@ -796,52 +796,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         return probabilities;
     }
 
-    private unsafe bool NeedsStabilization(NeuralMatrix matrix)
-    {
-        int totalElements = matrix.Rows * matrix.UsedColumns;
-        float* ptr = matrix.Pointer;
-
-        for (int i = 0; i < totalElements; i++)
-        {
-            if (float.IsNaN(ptr[i]) || float.IsInfinity(ptr[i]) || ptr[i] < 0f || ptr[i] > 1f)
-            {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private void StabilizeSoftmax(NeuralMatrix matrix)
-    {
-        int rows = matrix.Rows;
-        int cols = matrix.UsedColumns;
-        int stride = matrix.ColumnsStride;
-        float* ptr = matrix.Pointer;
-
-        for (int r = 0; r < rows; r++)
-        {
-            float* row = ptr + r * stride;
-            float maxVal = row[0];
-            for (int c = 1; c < cols; c++)
-            {
-                if (row[c] > maxVal) maxVal = row[c];
-            }
-
-            float sum = 0f;
-            for (int c = 0; c < cols; c++)
-            {
-                float val = MathF.Exp(row[c] - maxVal);
-                row[c] = val;
-                sum += val;
-            }
-
-            float invSum = 1.0f / sum;
-            for (int c = 0; c < cols; c++)
-            {
-                row[c] *= invSum;
-            }
-        }
-    }
 
     // =========================================================================
     // GRADIENT CLIPPING METHODS
