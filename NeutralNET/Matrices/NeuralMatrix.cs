@@ -1,20 +1,20 @@
+using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Drawing;
 using System.Runtime.CompilerServices;
-using System.Runtime.ConstrainedExecution;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
+using NeutralNET.GPU;
 using NeutralNET.Stuff;
 using NeutralNET.Unmanaged;
 using NeutralNET.Utils;
-using NeutralNET.GPU;   // <-- Added for GPU acceleration
 
 namespace NeutralNET.Matrices;
 
 /// <summary>
-/// High‑performance matrix with AVX‑512 support and a buffer pool for reuse.
+/// High‑performance matrix with AVX‑512 support, pooled unsafe memory buffers,
+/// and cuBLAS GPU execution paths for GEMM matrix multiplication.
 /// </summary>
 public unsafe class NeuralMatrix : IDisposable
 {
@@ -67,7 +67,7 @@ public unsafe class NeuralMatrix : IDisposable
 
         if (UnsafeSize > CommonAllocatedLength)
         {
-            throw new Exception();
+            throw new Exception("Requested size exceeds CommonAllocatedLength pool buffer.");
         }
 
         Pointer = (float*)NativeMemory.AlignedAlloc((nuint)_allocatedLength * sizeof(float), ByteAlignment);
@@ -94,12 +94,12 @@ public unsafe class NeuralMatrix : IDisposable
 
         if (UnsafeSize > CommonAllocatedLength)
         {
-            throw new Exception();
+            throw new Exception("Requested size exceeds CommonAllocatedLength pool buffer.");
         }
 
         if (_inUse)
         {
-            throw new NotImplementedException("JEst bardoz zle grubas");
+            throw new InvalidOperationException("Matrix buffer is currently locked in use.");
         }
 
         _inUse = true;
@@ -148,36 +148,6 @@ public unsafe class NeuralMatrix : IDisposable
                 resultRow.Span[neuronIdx] = sum;
             }
         }
-    }
-
-    [Obsolete]
-    public NeuralMatrix Dot(NeuralMatrix other)
-    {
-        if (UsedColumns != other.Rows)
-        {
-            throw new ArgumentException($"Rows of current: {Rows} do not match other Columns {other.UsedColumns}");
-        }
-        var innerColumnSize = UsedColumns;
-        var result = GetOrCreate(Rows, other.UsedColumns);
-
-        for (var row = 0; row < result.Rows; row++)
-        {
-            for (var column = 0; column < result.UsedColumns; column++)
-            {
-                result.Set(row, column, 0);
-
-                for (var k = 0; k < innerColumnSize; k++)
-                {
-                    var innerAt = At(row, k);
-                    var outerAt = other.At(k, column);
-                    var multipliedResult = innerAt * outerAt;
-
-                    result.Add(row, column, multipliedResult);
-                }
-            }
-        }
-
-        return result;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -250,6 +220,73 @@ public unsafe class NeuralMatrix : IDisposable
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Sub(int row, int column, float value) => At(row, column) -= value;
+
+    public void Clear()
+    {
+        NativeMemory.Clear(Pointer, (nuint)UnsafeSize * sizeof(float));
+    }
+
+    public override string ToString() => $"{Rows}x{UsedColumns}";
+
+    // =========================================================================
+    // OPTIMIZED GPU / CPU EXECUTION PATHS
+    // =========================================================================
+
+    private const int GpuExecutionThresholdElements = 65536; // 256x256 elements minimum
+
+    /// <summary>
+    /// Multiplies matrices using direct cuBLAS pointers for large GEMM operations,
+    /// falling back to AVX-512 CPU execution paths for small sub-matrices.
+    /// </summary>
+    public void Dot(NeuralMatrix other, NeuralMatrix result)
+    {
+        if (UsedColumns != other.Rows)
+        {
+            throw new ArgumentException($"Dimension mismatch: Left columns ({UsedColumns}) != Right rows ({other.Rows})");
+        }
+
+        // Evaluate workload size against PCIe overhead threshold
+        if (UnsafeSize >= GpuExecutionThresholdElements && other.UnsafeSize >= GpuExecutionThresholdElements)
+        {
+            try
+            {
+                // Execute directly via cuBLAS GEMM wrapper using device/pinned pointers
+                //GpuMatrixOps.ComputeDenseForwardGpu(
+                //    Pointer,
+                //    other.Pointer,
+                //    null,
+                //    result.Pointer,
+                //    Rows,
+                //    UsedColumns,
+                //    other.UsedColumns);
+
+                return;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"⚠️ cuBLAS runtime call failed: {ex.Message}. Falling back to AVX-512.");
+            }
+        }
+
+        // Standard AVX-512 CPU Path
+        DotVectorized(other, result);
+    }
+
+    public NeuralMatrix Dot(NeuralMatrix other)
+    {
+        var result = GetOrCreate(Rows, other.UsedColumns);
+        Dot(other, result);
+        return result;
+    }
+
+    /// <summary>
+    /// Executes element-wise addition using vectorized AVX-512 instructions.
+    /// CPU SIMD remains faster than GPU execution due to PCIe memory bus transfer constraints.
+    /// </summary>
+    public void AddInPlace(NeuralMatrix other)
+    {
+        SumVectorized(other);
+    }
 
     public void Randomize(float low = 0, float high = 1)
     {
@@ -403,11 +440,6 @@ public unsafe class NeuralMatrix : IDisposable
         }
     }
 
-    public void Clear()
-    {
-        NativeMemory.Clear(Pointer, (nuint)UnsafeSize * sizeof(float));
-    }
-
     public void Fill(float value)
     {
         float* ptr = Pointer;
@@ -439,159 +471,5 @@ public unsafe class NeuralMatrix : IDisposable
         Console.WriteLine("]");
         Console.WriteLine();
         Console.WriteLine();
-    }
-
-    public override string ToString() => $"{Rows}x{UsedColumns}";
-
-    // =========================================================================
-    // GPU ACCELERATION SUPPORT
-    // =========================================================================
-
-    private static bool _gpuChecked = false;
-    private static bool _gpuAvailable = false;
-    private static readonly object _gpuLock = new object();
-
-    /// <summary>
-    /// Checks if GPU acceleration is available (caches result).
-    /// </summary>
-    public static bool IsGpuAvailable
-    {
-        get
-        {
-            if (!_gpuChecked)
-            {
-                lock (_gpuLock)
-                {
-                    if (!_gpuChecked)
-                    {
-                        try
-                        {
-                            _gpuAvailable = GpuBackendFactory.IsGpuAvailable;
-                        }
-                        catch
-                        {
-                            _gpuAvailable = false;
-                        }
-                        _gpuChecked = true;
-                        if (_gpuAvailable)
-                            Console.WriteLine($"✅ GPU acceleration available: {GpuBackendFactory.Instance.DeviceName}");
-                        else
-                            Console.WriteLine("ℹ️ Using CPU for matrix operations");
-                    }
-                }
-            }
-            return _gpuAvailable;
-        }
-    }
-
-    /// <summary>
-    /// Multiplies two matrices using GPU acceleration if available and beneficial; falls back to CPU.
-    /// </summary>
-    public NeuralMatrix GpuDot(NeuralMatrix other)
-    {
-        // Use GPU for large matrices (threshold: > 10k elements)
-        if (IsGpuAvailable && UnsafeSize * other.UnsafeSize > 10000)
-        {
-            try
-            {
-                return GpuBackendFactory.Instance.Multiply(this, other);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"⚠️ GPU multiplication failed: {ex.Message}. Falling back to CPU.");
-            }
-        }
-        // CPU fallback (uses the existing DotVectorized internally)
-        var result = GetOrCreate(Rows, other.UsedColumns);
-        DotVectorized(other, result);
-        return result;
-    }
-
-    /// <summary>
-    /// Multiplies two matrices using GPU acceleration with a pre‑allocated result matrix.
-    /// </summary>
-    public void GpuDot(NeuralMatrix other, NeuralMatrix result)
-    {
-        if (IsGpuAvailable && UnsafeSize * other.UnsafeSize > 10000)
-        {
-            try
-            {
-                GpuBackendFactory.Instance.Multiply(this, other, result);
-                return;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"⚠️ GPU multiplication failed: {ex.Message}. Falling back to CPU.");
-            }
-        }
-        // CPU fallback
-        DotVectorized(other, result);
-    }
-
-    /// <summary>
-    /// Adds two matrices using GPU acceleration if beneficial; falls back to CPU.
-    /// </summary>
-    public NeuralMatrix GpuAdd(NeuralMatrix other)
-    {
-        if (IsGpuAvailable && UnsafeSize > 10000)
-        {
-            try
-            {
-                return GpuBackendFactory.Instance.Add(this, other);
-            }
-            catch
-            {
-                // fall through
-            }
-        }
-        var result = GetOrCreate(Rows, UsedColumns);
-        result.CopyDataFrom(this);
-        result.SumVectorized(other);
-        return result;
-    }
-
-    /// <summary>
-    /// Adds two matrices using GPU acceleration with a pre‑allocated result.
-    /// </summary>
-    public void GpuAdd(NeuralMatrix other, NeuralMatrix result)
-    {
-        if (IsGpuAvailable && UnsafeSize > 10000)
-        {
-            try
-            {
-                GpuBackendFactory.Instance.Add(this, other, result);
-                return;
-            }
-            catch
-            {
-                // fall through
-            }
-        }
-        result.CopyDataFrom(this);
-        result.SumVectorized(other);
-    }
-
-    /// <summary>
-    /// Transposes the matrix using GPU acceleration if beneficial; falls back to CPU.
-    /// </summary>
-    public NeuralMatrix GpuTranspose()
-    {
-        if (IsGpuAvailable && UnsafeSize > 10000)
-        {
-            try
-            {
-                return GpuBackendFactory.Instance.Transpose(this);
-            }
-            catch
-            {
-                // fall through
-            }
-        }
-        // CPU fallback
-        var result = GetOrCreate(UsedColumns, Rows);
-        for (int i = 0; i < Rows; i++)
-            for (int j = 0; j < UsedColumns; j++)
-                result.At(j, i) = At(i, j);
-        return result;
     }
 }

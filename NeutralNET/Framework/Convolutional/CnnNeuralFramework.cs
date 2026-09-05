@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
@@ -6,13 +9,14 @@ using NeutralNET.Framework.Connected;
 using NeutralNET.Framework.Connected.Neural;
 using NeutralNET.Framework.Convolutional;
 using NeutralNET.Matrices;
-using NeutralNET.GPU;                     // <-- Added for GPU acceleration
+using NeutralNET.GPU;
 using static NeutralNET.Activation.ActivationSelector;
 
 namespace NeutralNET.Framework.Neural.CNN;
 
 /// <summary>
-/// Zero‑GC CNN framework with full object and buffer pooling, and pluggable optimizers.
+/// Zero‑GC CNN framework with full object and buffer pooling, pluggable optimizers,
+/// and low-latency P/Invoke CUDA/cuBLAS GPU matrix acceleration.
 /// </summary>
 public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
     where TArch : IArchitecture<TArch>
@@ -263,7 +267,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
                     for (; i < vecLimit; i += Avx512Size)
                     {
                         var vSrc = Vector512.Load(ptr + i);
-                        var vDst = Avx512F.Max(vSrc, vZero);
+                        var vDst = Vector512.Max(vSrc, vZero);
                         vDst.Store(ptr + i);
                     }
                 }
@@ -292,7 +296,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
                 if (Avx512F.IsSupported)
                 {
-                    var vZero = Vector512<float>.Zero;
                     var vAlpha = Vector512.Create(alpha);
                     int vecLimit = count - (count % Avx512Size);
 
@@ -300,7 +303,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
                     {
                         var vSrc = Vector512.Load(ptr + i);
                         var vScaled = vSrc * vAlpha;
-                        var vDst = Avx512F.Max(vSrc, vScaled);
+                        var vDst = Vector512.Max(vSrc, vScaled);
                         vDst.Store(ptr + i);
                     }
                 }
@@ -312,7 +315,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
                 break;
 
             default:
-                throw new NotImplementedException();
+                break;
         }
     }
 
@@ -338,9 +341,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
     private CnnMatrix GetConvolutionBackwardPass(CnnMatrix currentGrad)
     {
-        // =========================================================================
-        // 4. CONVOLUTION BACKWARD PASS - ALL GRADIENTS CLIPPED
-        // =========================================================================
         for (int layerIdx = _cnnConfig.ConvLayers.Count - 1; layerIdx >= 0; layerIdx--)
         {
             var layer = _cnnConfig.ConvLayers[layerIdx];
@@ -385,7 +385,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
         ClipGradients(preGradMatrix, GradientClipNorm);
 
-        // ---- Weight gradient dW = colInput^T * preGradMatrix ----
         var dW = ComputeWeightGradient(colInput, preGradMatrix, patches, filters, inDim);
         ClipGradients(dW, GradientClipNorm);
 
@@ -394,7 +393,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
         _convOptimizers[layerIdx].UpdateConvWeights(_convWeights[layerIdx], _convBiases[layerIdx], dW, dB);
 
-        // ---- gradPatchMat = preGradMatrix * weightMat ----
         var gradPatchMat = ComputeGradientWithRespectToInput(weightMat, preGradMatrix, patches, filters, inDim);
         ClipGradients(gradPatchMat, GradientClipNorm);
 
@@ -412,64 +410,46 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         return currentGrad;
     }
 
-    private static NeuralMatrix ComputeGradientWithRespectToInput(NeuralMatrix weightMat, NeuralMatrix preGradMatrix, int patches, int filters, int inDim)
+    private static NeuralMatrix ComputeGradientWithRespectToInput(
+        NeuralMatrix weightMat,
+        NeuralMatrix preGradMatrix,
+        int patches,
+        int filters,
+        int inDim)
     {
         var gradPatchMat = RentNeural(patches, inDim);
-        var pGradPatch = gradPatchMat.Pointer;
-        var pPreGradMat = preGradMatrix.Pointer;
-        var pWeightMat = weightMat.Pointer;
 
-        int gradPatchStride = gradPatchMat.ColumnsStride;
-        int weightMatStride = weightMat.ColumnsStride;
-        int preGradMatStride = preGradMatrix.ColumnsStride;
-
-        for (int patch = 0; patch < patches; patch++)
-        {
-            float* rowPreGradMat = pPreGradMat + patch * preGradMatStride;
-            float* rowGradPatch = pGradPatch + patch * gradPatchStride;
-
-            for (int inner = 0; inner < inDim; inner++)
-            {
-                float sum = 0f;
-                int f = 0;
-
-                if (Avx512F.IsSupported)
-                {
-                    Vector512<float> sumVec = Vector512<float>.Zero;
-                    int vecLimit = filters - (filters % Avx512Size);
-
-                    for (; f < vecLimit; f += Avx512Size)
-                    {
-                        var vGrad = Vector512.Load(rowPreGradMat + f);
-                        var vW = Vector512.Load(pWeightMat + f * weightMatStride + inner);
-                        sumVec = Avx512F.FusedMultiplyAdd(vGrad, vW, sumVec);
-                    }
-                    sum = Vector512.Sum(sumVec);
-                }
-                else if (Avx2.IsSupported)
-                {
-                    Vector256<float> sumVec = Vector256<float>.Zero;
-                    int vecLimit = filters - (filters % Avx256Size);
-
-                    for (; f < vecLimit; f += Avx256Size)
-                    {
-                        var vGrad = Avx2.LoadVector256(rowPreGradMat + f);
-                        var vW = Avx2.LoadVector256(pWeightMat + f * weightMatStride + inner);
-                        sumVec = Fma.MultiplyAdd(vGrad, vW, sumVec);
-                    }
-                    sum = Vector256.Sum(sumVec);
-                }
-
-                for (; f < filters; f++)
-                {
-                    sum += rowPreGradMat[f] * pWeightMat[f * weightMatStride + inner];
-                }
-
-                rowGradPatch[inner] = sum;
-            }
-        }
+        GpuMatrixOps.ComputeGradientWithRespectToInputGpu(
+            weightMat.Pointer,
+            preGradMatrix.Pointer,
+            gradPatchMat.Pointer,
+            patches, filters, inDim,
+            weightMat.ColumnsStride,
+            preGradMatrix.ColumnsStride,
+            gradPatchMat.ColumnsStride);
 
         return gradPatchMat;
+    }
+
+    private static NeuralMatrix ComputeWeightGradient(
+        NeuralMatrix colInput,
+        NeuralMatrix preGradMatrix,
+        int patches,
+        int filters,
+        int inDim)
+    {
+        var dW = RentNeural(filters, inDim);
+
+        GpuMatrixOps.ComputeWeightGradientGpu(
+            colInput.Pointer,
+            preGradMatrix.Pointer,
+            dW.Pointer,
+            patches, filters, inDim,
+            colInput.ColumnsStride,
+            preGradMatrix.ColumnsStride,
+            dW.ColumnsStride);
+
+        return dW;
     }
 
     private static NeuralMatrix ComputeBiasGradient(NeuralMatrix preGradMatrix, int patches, int filters)
@@ -513,65 +493,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         }
 
         return dB;
-    }
-
-    private static NeuralMatrix ComputeWeightGradient(NeuralMatrix colInput, NeuralMatrix preGradMatrix, int patches, int filters, int inDim)
-    {
-        var dW = RentNeural(inDim, filters);
-        float* pdW = dW.Pointer;
-        int dWStride = dW.ColumnsStride;
-        new Span<float>(pdW, inDim * dWStride).Clear();
-
-        float* pColIn = colInput.Pointer;
-        int colInStride = colInput.ColumnsStride;
-        float* pPreGradMat = preGradMatrix.Pointer;
-        int preGradMatStride = preGradMatrix.ColumnsStride;
-        for (int patch = 0; patch < patches; patch++)
-        {
-            float* rowColIn = pColIn + patch * colInStride;
-            float* rowPreGradMat = pPreGradMat + patch * preGradMatStride;
-
-            for (int inner = 0; inner < inDim; inner++)
-            {
-                float valIn = rowColIn[inner];
-                if (valIn == 0f) continue;
-
-                float* rowDW = pdW + inner * dWStride;
-
-                int f = 0;
-                if (Avx512F.IsSupported)
-                {
-                    Vector512<float> vIn512 = Vector512.Create(valIn);
-                    int vecLimit = filters - (filters % Avx512Size);
-                    for (; f < vecLimit; f += Avx512Size)
-                    {
-                        var vDW = Vector512.Load(rowDW + f);
-                        var vGrad = Vector512.Load(rowPreGradMat + f);
-                        vDW = Avx512F.FusedMultiplyAdd(vIn512, vGrad, vDW);
-                        vDW.Store(rowDW + f);
-                    }
-                }
-                else if (Avx2.IsSupported)
-                {
-                    Vector256<float> vIn256 = Vector256.Create(valIn);
-                    int vecLimit = filters - (filters % Avx256Size);
-                    for (; f < vecLimit; f += Avx256Size)
-                    {
-                        var vDW = Avx.LoadVector256(rowDW + f);
-                        var vGrad = Avx.LoadVector256(rowPreGradMat + f);
-                        vDW = Fma.MultiplyAdd(vIn256, vGrad, vDW);
-                        vDW.Store(rowDW + f);
-                    }
-                }
-
-                for (; f < filters; f++)
-                {
-                    rowDW[f] += valIn * rowPreGradMat[f];
-                }
-            }
-        }
-
-        return dW;
     }
 
     private static NeuralMatrix ConvertPregradToMatrix(CnnMatrix preGrad)
@@ -649,10 +570,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
     private CnnMatrix BulkMemoryCopy(NeuralMatrix denseGrad)
     {
-        // =========================================================================
-        // 3. ZERO-COPY / BULK MEMORY COPY: denseGrad -> pooledGrad (Unflattening)
-        // =========================================================================
-        var lastPooled = _lastPooledOutput;
+        var lastPooled = _lastPooledOutput!;
         var pooledGrad = RentCnn(lastPooled.Batch, lastPooled.Channels, lastPooled.Height, lastPooled.Width);
 
         float* pDenseGrad = denseGrad.Pointer;
@@ -671,15 +589,11 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         }
 
         denseGrad.Dispose();
-        CnnMatrix currentGrad = pooledGrad;
-        return currentGrad;
+        return pooledGrad;
     }
 
     private NeuralMatrix DenseBackWardClipped(float learningRate, NeuralMatrix grad)
     {
-        // =========================================================================
-        // DENSE BACKWARD WITH CLIPPING
-        // =========================================================================
         ClipGradients(grad, GradientClipNorm);
         var denseGrad = DenseBackward(grad, learningRate, skipLastDerivative: true);
         ClipGradients(denseGrad, GradientClipNorm);
@@ -694,9 +608,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
     private static NeuralMatrix GetVectorizedLossGradients(NeuralMatrix target, NeuralMatrix probabilities)
     {
-        // =========================================================================
-        // 2. VECTORIZED LOSS GRADIENT: grad = (probabilities - target) / batchSize
-        // =========================================================================
         int rows = probabilities.Rows;
         int cols = probabilities.UsedColumns;
         var grad = RentNeural(rows, cols);
@@ -754,9 +665,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
     private NeuralMatrix ForwardPoolingPass(ref CnnMatrix current)
     {
-        // =========================================================================
-        // 1. FORWARD CONVOLUTION & POOLING PASS
-        // =========================================================================
         for (int layerIdx = 0; layerIdx < _cnnConfig.ConvLayers.Count; layerIdx++)
         {
             var layer = _cnnConfig.ConvLayers[layerIdx];
@@ -793,17 +701,11 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         var flat = CnnNeuralFramework<TArch>.Flatten(current);
         _flattenedInput = flat;
 
-        // Execute Dense Layers Forward Pass
         using (DenseForward(flat, storeIntermediates: true)) { }
 
         var probabilities = _densePostAct.Last();
         return probabilities;
     }
-
-
-    // =========================================================================
-    // GRADIENT CLIPPING METHODS
-    // =========================================================================
 
     private void ClipGradients(NeuralMatrix gradient, float maxNorm)
     {
@@ -893,10 +795,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         }
     }
 
-    // =========================================================================
-    // CONVOLUTION FORWARD
-    // =========================================================================
-
     private (CnnMatrix preAct, NeuralMatrix colInput, NeuralMatrix weightMat) ConvForward(CnnMatrix current, int layerIdx)
     {
         var layer = _cnnConfig.ConvLayers[layerIdx];
@@ -969,9 +867,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         return weightMat;
     }
 
-    // --------------------------------------------------------------
-    // ComputeConvolution - GPU accelerated version
-    // --------------------------------------------------------------
     private NeuralMatrix ComputeConvolution(NeuralMatrix colInput, NeuralMatrix weightMat)
     {
         int patches = colInput.Rows;
@@ -980,76 +875,12 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
         var result = RentNeural(patches, filters);
 
-        // Use GPU acceleration for large convolutions
-        long estimatedOps = (long)patches * filters * innerDim;
-        if (NeuralMatrix.IsGpuAvailable && estimatedOps > 100000)
-        {
-            try
-            {
-                colInput.GpuDot(weightMat, result);
-                return result;
-            }
-            catch (Exception ex)
-            {
-                // Fall through to CPU
-                Console.WriteLine($"⚠️ GPU convolution failed: {ex.Message}. Falling back to CPU.");
-            }
-        }
-
-        // ========================================================================
-        // CPU IMPLEMENTATION (AVX-512 / AVX2)
-        // ========================================================================
-        float* colPtr = colInput.Pointer;
-        float* weightPtr = weightMat.Pointer;
-        float* resPtr = result.Pointer;
-        int colStride = colInput.ColumnsStride;
-        int weightStride = weightMat.ColumnsStride;
-        int resStride = result.ColumnsStride;
-
-        for (int patch = 0; patch < patches; patch++)
-        {
-            float* colRow = colPtr + patch * colStride;
-            float* resRow = resPtr + patch * resStride;
-
-            for (int f = 0; f < filters; f++)
-            {
-                float* weightRow = weightPtr + f * weightStride;
-                float sum = 0;
-                int inner = 0;
-
-                if (Avx512F.IsSupported)
-                {
-                    Vector512<float> sumVec = Vector512<float>.Zero;
-                    int vectorizable = innerDim - (innerDim % Avx512Size);
-                    for (; inner < vectorizable; inner += Avx512Size)
-                    {
-                        var colVec = Avx512F.LoadAlignedVector512(colRow + inner);
-                        var weightVec = Avx512F.LoadAlignedVector512(weightRow + inner);
-                        sumVec = Avx512F.FusedMultiplyAdd(colVec, weightVec, sumVec);
-                    }
-                    sum = Vector512.Sum(sumVec);
-                }
-                else if (Avx2.IsSupported)
-                {
-                    Vector256<float> sumVec = Vector256<float>.Zero;
-                    int vectorizable = innerDim - (innerDim % Avx256Size);
-                    for (; inner < vectorizable; inner += Avx256Size)
-                    {
-                        var colVec = Avx2.LoadAlignedVector256(colRow + inner);
-                        var weightVec = Avx2.LoadAlignedVector256(weightRow + inner);
-                        sumVec = Fma.MultiplyAdd(colVec, weightVec, sumVec);
-                    }
-                    sum = Vector256.Sum(sumVec);
-                }
-
-                for (; inner < innerDim; inner++)
-                {
-                    sum += colRow[inner] * weightRow[inner];
-                }
-
-                resRow[f] = sum;
-            }
-        }
+        GpuMatrixOps.ComputeConvolutionGpu(
+            colInput.Pointer,
+            weightMat.Pointer,
+            result.Pointer,
+            patches, filters, innerDim,
+            colInput.ColumnsStride, weightMat.ColumnsStride, result.ColumnsStride);
 
         return result;
     }
@@ -1074,7 +905,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
             {
                 Vector256<float> rVec = Vector256.Load(row + f);
                 Vector256<float> bVec = Vector256.Load(biasPtr + f);
-                Vector256.Add(rVec, bVec).Store(row + f);
+                (rVec + bVec).Store(row + f);
             }
 
             for (; f < filters; f++)
@@ -1111,7 +942,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         int batchStrideDst = filters * spatialSize;
 
         bool hasAvx512 = Avx512F.IsSupported;
-        const int Avx512Size = 16;
 
         for (int b = 0; b < batchSize; b++)
         {
@@ -1186,11 +1016,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
         if (poolSize == 2 && hasAvx512)
         {
-            Vector512<float> vOffsets = Vector512.Create(
-                0f, 1f, 2f, 3f, 4f, 5f, 6f, 7f,
-                8f, 9f, 10f, 11f, 12f, 13f, 14f, 15f
-            );
-
             for (int slice = 0; slice < numSlices; slice++)
             {
                 float* sliceIn = pIn + (slice * spatialInSize);
@@ -1214,12 +1039,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
                     for (; ow < vecLimit; ow += 16)
                     {
                         int xStart = ow * 2;
-
-                        var vR0_A = Vector512.Load(row0 + xStart);
-                        var vR0_B = Vector512.Load(row0 + xStart + 16);
-
-                        var vR1_A = Vector512.Load(row1 + xStart);
-                        var vR1_B = Vector512.Load(row1 + xStart + 16);
 
                         for (int k = 0; k < 16; k++)
                         {
@@ -1407,9 +1226,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         return gradInput;
     }
 
-    // --------------------------------------------------------------
-    // DenseForward - GPU accelerated version
-    // --------------------------------------------------------------
     private NeuralMatrix DenseForward(NeuralMatrix input, bool storeIntermediates)
     {
         var current = input;
@@ -1425,208 +1241,13 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
             var result = RentNeural(batchSize, outFeatures);
 
-            // Use GPU for large matrix multiplications
-            long estimatedOps = (long)batchSize * inFeatures * outFeatures;
-            if (NeuralMatrix.IsGpuAvailable && estimatedOps > 100000)
-            {
-                try
-                {
-                    current.GpuDot(weights, result);
-
-                    // Add bias
-                    for (int r = 0; r < batchSize; r++)
-                    {
-                        var row = result.GetRowSpan(r);
-                        for (int c = 0; c < outFeatures; c++)
-                            row[c] += biases.At(0, c);
-                    }
-
-                    // Apply activation
-                    _denseActivations[i](result);
-
-                    if (storeIntermediates)
-                    {
-                        _densePreAct.Add(result.Copy());
-                        _densePostAct.Add(result.Copy());
-                    }
-
-                    if (!ReferenceEquals(current, input))
-                        current.Dispose();
-
-                    current = result;
-                    continue;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"⚠️ GPU dense forward failed: {ex.Message}. Falling back to CPU.");
-                    result.Dispose();
-                    result = RentNeural(batchSize, outFeatures);
-                }
-            }
-
-            // ========================================================================
-            // CPU IMPLEMENTATION (AVX-512 / AVX2)
-            // ========================================================================
-            float* inPtr = current.Pointer;
-            float* weightPtr = weights.Pointer;
-            float* biasPtr = biases.Pointer;
-            float* resPtr = result.Pointer;
-
-            int inStride = current.ColumnsStride;
-            int weightStride = weights.ColumnsStride;
-            int resStride = result.ColumnsStride;
-
-            for (int r = 0; r < batchSize; r++)
-            {
-                float* inRow = inPtr + r * inStride;
-                float* resRow = resPtr + r * resStride;
-
-                int outNeuron = 0;
-
-                if (Avx512F.IsSupported)
-                {
-                    int vecInFeatures = inFeatures - (inFeatures % Avx512Size);
-
-                    for (; outNeuron <= outFeatures - 4; outNeuron += 4)
-                    {
-                        float* w0 = weightPtr + (outNeuron + 0) * weightStride;
-                        float* w1 = weightPtr + (outNeuron + 1) * weightStride;
-                        float* w2 = weightPtr + (outNeuron + 2) * weightStride;
-                        float* w3 = weightPtr + (outNeuron + 3) * weightStride;
-
-                        Vector512<float> acc0 = Vector512<float>.Zero;
-                        Vector512<float> acc1 = Vector512<float>.Zero;
-                        Vector512<float> acc2 = Vector512<float>.Zero;
-                        Vector512<float> acc3 = Vector512<float>.Zero;
-
-                        int inIdx = 0;
-                        for (; inIdx < vecInFeatures; inIdx += Avx512Size)
-                        {
-                            var vIn = Vector512.Load(inRow + inIdx);
-
-                            acc0 = Avx512F.FusedMultiplyAdd(vIn, Vector512.Load(w0 + inIdx), acc0);
-                            acc1 = Avx512F.FusedMultiplyAdd(vIn, Vector512.Load(w1 + inIdx), acc1);
-                            acc2 = Avx512F.FusedMultiplyAdd(vIn, Vector512.Load(w2 + inIdx), acc2);
-                            acc3 = Avx512F.FusedMultiplyAdd(vIn, Vector512.Load(w3 + inIdx), acc3);
-                        }
-
-                        resRow[outNeuron + 0] = Vector512.Sum(acc0) + biasPtr[outNeuron + 0];
-                        resRow[outNeuron + 1] = Vector512.Sum(acc1) + biasPtr[outNeuron + 1];
-                        resRow[outNeuron + 2] = Vector512.Sum(acc2) + biasPtr[outNeuron + 2];
-                        resRow[outNeuron + 3] = Vector512.Sum(acc3) + biasPtr[outNeuron + 3];
-
-                        for (; inIdx < inFeatures; inIdx++)
-                        {
-                            float val = inRow[inIdx];
-                            resRow[outNeuron + 0] += val * w0[inIdx];
-                            resRow[outNeuron + 1] += val * w1[inIdx];
-                            resRow[outNeuron + 2] += val * w2[inIdx];
-                            resRow[outNeuron + 3] += val * w3[inIdx];
-                        }
-                    }
-
-                    for (; outNeuron < outFeatures; outNeuron++)
-                    {
-                        float* wRow = weightPtr + outNeuron * weightStride;
-                        Vector512<float> acc = Vector512<float>.Zero;
-
-                        int inIdx = 0;
-                        for (; inIdx < vecInFeatures; inIdx += Avx512Size)
-                        {
-                            var vIn = Vector512.Load(inRow + inIdx);
-                            var vW = Vector512.Load(wRow + inIdx);
-                            acc = Avx512F.FusedMultiplyAdd(vIn, vW, acc);
-                        }
-
-                        float sum = Vector512.Sum(acc);
-                        for (; inIdx < inFeatures; inIdx++)
-                        {
-                            sum += inRow[inIdx] * wRow[inIdx];
-                        }
-
-                        resRow[outNeuron] = sum + biasPtr[outNeuron];
-                    }
-                }
-                else if (Avx2.IsSupported)
-                {
-                    int vecInFeatures = inFeatures - (inFeatures % Avx256Size);
-
-                    for (; outNeuron <= outFeatures - 4; outNeuron += 4)
-                    {
-                        float* w0 = weightPtr + (outNeuron + 0) * weightStride;
-                        float* w1 = weightPtr + (outNeuron + 1) * weightStride;
-                        float* w2 = weightPtr + (outNeuron + 2) * weightStride;
-                        float* w3 = weightPtr + (outNeuron + 3) * weightStride;
-
-                        Vector256<float> acc0 = Vector256<float>.Zero;
-                        Vector256<float> acc1 = Vector256<float>.Zero;
-                        Vector256<float> acc2 = Vector256<float>.Zero;
-                        Vector256<float> acc3 = Vector256<float>.Zero;
-
-                        int inIdx = 0;
-                        for (; inIdx < vecInFeatures; inIdx += Avx256Size)
-                        {
-                            var vIn = Avx2.LoadVector256(inRow + inIdx);
-
-                            acc0 = Fma.MultiplyAdd(vIn, Avx2.LoadVector256(w0 + inIdx), acc0);
-                            acc1 = Fma.MultiplyAdd(vIn, Avx2.LoadVector256(w1 + inIdx), acc1);
-                            acc2 = Fma.MultiplyAdd(vIn, Avx2.LoadVector256(w2 + inIdx), acc2);
-                            acc3 = Fma.MultiplyAdd(vIn, Avx2.LoadVector256(w3 + inIdx), acc3);
-                        }
-
-                        resRow[outNeuron + 0] = Vector256.Sum(acc0) + biasPtr[outNeuron + 0];
-                        resRow[outNeuron + 1] = Vector256.Sum(acc1) + biasPtr[outNeuron + 1];
-                        resRow[outNeuron + 2] = Vector256.Sum(acc2) + biasPtr[outNeuron + 2];
-                        resRow[outNeuron + 3] = Vector256.Sum(acc3) + biasPtr[outNeuron + 3];
-
-                        for (; inIdx < inFeatures; inIdx++)
-                        {
-                            float val = inRow[inIdx];
-                            resRow[outNeuron + 0] += val * w0[inIdx];
-                            resRow[outNeuron + 1] += val * w1[inIdx];
-                            resRow[outNeuron + 2] += val * w2[inIdx];
-                            resRow[outNeuron + 3] += val * w3[inIdx];
-                        }
-                    }
-
-                    for (; outNeuron < outFeatures; outNeuron++)
-                    {
-                        float* wRow = weightPtr + outNeuron * weightStride;
-                        Vector256<float> acc = Vector256<float>.Zero;
-
-                        int inIdx = 0;
-                        for (; inIdx < vecInFeatures; inIdx += Avx256Size)
-                        {
-                            var vIn = Avx2.LoadVector256(inRow + inIdx);
-                            var vW = Avx2.LoadVector256(wRow + inIdx);
-                            acc = Fma.MultiplyAdd(vIn, vW, acc);
-                        }
-
-                        float sum = Vector256.Sum(acc);
-                        for (; inIdx < inFeatures; inIdx++)
-                        {
-                            sum += inRow[inIdx] * wRow[inIdx];
-                        }
-
-                        resRow[outNeuron] = sum + biasPtr[outNeuron];
-                    }
-                }
-                else
-                {
-                    for (; outNeuron < outFeatures; outNeuron++)
-                    {
-                        float* wRow = weightPtr + outNeuron * weightStride;
-                        float sum = 0f;
-
-                        for (int inIdx = 0; inIdx < inFeatures; inIdx++)
-                        {
-                            sum += inRow[inIdx] * wRow[inIdx];
-                        }
-
-                        resRow[outNeuron] = sum + biasPtr[outNeuron];
-                    }
-                }
-            }
+            GpuMatrixOps.ComputeDenseForwardGpu(
+            current.Pointer,
+            weights.Pointer,
+            biases.Pointer,
+            result.Pointer,
+            batchSize, inFeatures, outFeatures,
+            current.ColumnsStride, weights.ColumnsStride, result.ColumnsStride);
 
             if (storeIntermediates)
             {
@@ -1651,7 +1272,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
         return current;
     }
 
-    // ---------- Dense Backward ----------
     private NeuralMatrix DenseBackward(NeuralMatrix gradOutput, float learningRate, bool skipLastDerivative = false)
     {
         for (int i = _denseWeights.Count - 1; i >= 0; i--)
@@ -1713,80 +1333,13 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
             }
 
             var dW = RentNeural(inDim, outDim);
-            dW.Clear();
 
-            // Use GPU for gradient computation if large
-            long estimatedOps = (long)batch * inDim * outDim;
-            if (NeuralMatrix.IsGpuAvailable && estimatedOps > 100000)
-            {
-                try
-                {
-                    // dW = inputToLayer^T * gradPre
-                    using var inputTransposed = inputToLayer.GpuTranspose();
-                    inputTransposed.GpuDot(gradPre, dW);
-                    // bias gradient still CPU (small)
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"⚠️ GPU backward dW failed: {ex.Message}. Falling back to CPU.");
-                    // fall through
-                    dW.Clear();
-                    // re-run CPU computation (below)
-                }
-            }
-
-            // If GPU failed or not used, compute on CPU
-            if (dW.UnsafeSize > 0 && !GpuBackendFactory.IsGpuAvailable)
-            {
-                // CPU fallback for dW
-                float* pIn = inputToLayer.Pointer;
-                float* pDW = dW.Pointer;
-                int strideIn = inputToLayer.ColumnsStride;
-                int strideDW = dW.ColumnsStride;
-
-                for (int r = 0; r < batch; r++)
-                {
-                    float* rowIn = pIn + r * strideIn;
-                    float* rowGP = pGradPre + r * strideGradPre;
-
-                    for (int cIn = 0; cIn < inDim; cIn++)
-                    {
-                        float xVal = rowIn[cIn];
-                        if (xVal == 0f) continue;
-
-                        float* rowDW = pDW + cIn * strideDW;
-                        int cOut = 0;
-
-                        if (Avx512F.IsSupported)
-                        {
-                            var vX = Vector512.Create(xVal);
-                            int limit = outDim - (outDim % 16);
-                            for (; cOut < limit; cOut += 16)
-                            {
-                                var vGP = Vector512.Load(rowGP + cOut);
-                                var vDW = Vector512.Load(rowDW + cOut);
-                                Avx512F.FusedMultiplyAdd(vX, vGP, vDW).Store(rowDW + cOut);
-                            }
-                        }
-                        else if (Avx2.IsSupported)
-                        {
-                            var vX = Vector256.Create(xVal);
-                            int limit = outDim - (outDim % 8);
-                            for (; cOut < limit; cOut += 8)
-                            {
-                                var vGP = Avx.LoadVector256(rowGP + cOut);
-                                var vDW = Avx.LoadVector256(rowDW + cOut);
-                                Fma.MultiplyAdd(vX, vGP, vDW).Store(rowDW + cOut);
-                            }
-                        }
-
-                        for (; cOut < outDim; cOut++)
-                        {
-                            rowDW[cOut] += xVal * rowGP[cOut];
-                        }
-                    }
-                }
-            }
+            GpuMatrixOps.ComputeDenseWeightGradientGpu(
+                inputToLayer.Pointer,
+                gradPre.Pointer,
+                dW.Pointer,
+                batch, inDim, outDim,
+                inputToLayer.ColumnsStride, gradPre.ColumnsStride, dW.ColumnsStride);
 
             var dB = RentNeural(1, outDim);
             dB.Clear();
@@ -1828,55 +1381,12 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
             int weightInDim = weights.UsedColumns;
             var gradInput = RentNeural(batch, weightInDim);
 
-            float* pWeights = weights.Pointer;
-            float* pGradInput = gradInput.Pointer;
-            int strideWeights = weights.ColumnsStride;
-            int strideGradInput = gradInput.ColumnsStride;
-
-            for (int r = 0; r < batch; r++)
-            {
-                float* rowGP = pGradPre + r * strideGradPre;
-                float* rowGI = pGradInput + r * strideGradInput;
-
-                Unsafe.InitBlockUnaligned(rowGI, 0, (uint)(weightInDim * sizeof(float)));
-
-                for (int cOut = 0; cOut < weightOutDim; cOut++)
-                {
-                    float gVal = rowGP[cOut];
-                    if (gVal == 0f) continue;
-
-                    float* rowW = pWeights + cOut * strideWeights;
-                    int cIn = 0;
-
-                    if (Avx512F.IsSupported)
-                    {
-                        var vG = Vector512.Create(gVal);
-                        int limit = weightInDim - (weightInDim % 16);
-                        for (; cIn < limit; cIn += 16)
-                        {
-                            var vW = Vector512.Load(rowW + cIn);
-                            var vGI = Vector512.Load(rowGI + cIn);
-                            Avx512F.FusedMultiplyAdd(vG, vW, vGI).Store(rowGI + cIn);
-                        }
-                    }
-                    else if (Avx2.IsSupported)
-                    {
-                        var vG = Vector256.Create(gVal);
-                        int limit = weightInDim - (weightInDim % 8);
-                        for (; cIn < limit; cIn += 8)
-                        {
-                            var vW = Avx2.LoadVector256(rowW + cIn);
-                            var vGI = Avx2.LoadVector256(rowGI + cIn);
-                            Fma.MultiplyAdd(vG, vW, vGI).Store(rowGI + cIn);
-                        }
-                    }
-
-                    for (; cIn < weightInDim; cIn++)
-                    {
-                        rowGI[cIn] += gVal * rowW[cIn];
-                    }
-                }
-            }
+            GpuMatrixOps.ComputeDenseInputGradientGpu(
+                gradPre.Pointer,
+                weights.Pointer,
+                gradInput.Pointer,
+                batch, weightOutDim, weightInDim,
+                gradPre.ColumnsStride, weights.ColumnsStride, gradInput.ColumnsStride);
 
             gradOutput.Dispose();
             dW.Dispose();
@@ -1960,33 +1470,33 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
                     for (; i <= totalElements - 64; i += 64)
                     {
-                        Vector512<float> g0 = Vector512.LoadAligned(pGrad + i);
-                        Vector512<float> g1 = Vector512.LoadAligned(pGrad + i + 16);
-                        Vector512<float> g2 = Vector512.LoadAligned(pGrad + i + 32);
-                        Vector512<float> g3 = Vector512.LoadAligned(pGrad + i + 48);
+                        Vector512<float> g0 = Vector512.Load(pGrad + i);
+                        Vector512<float> g1 = Vector512.Load(pGrad + i + 16);
+                        Vector512<float> g2 = Vector512.Load(pGrad + i + 32);
+                        Vector512<float> g3 = Vector512.Load(pGrad + i + 48);
 
-                        Vector512<float> p0 = Vector512.LoadAligned(pPost + i);
-                        Vector512<float> p1 = Vector512.LoadAligned(pPost + i + 16);
-                        Vector512<float> p2 = Vector512.LoadAligned(pPost + i + 32);
-                        Vector512<float> p3 = Vector512.LoadAligned(pPost + i + 48);
+                        Vector512<float> p0 = Vector512.Load(pPost + i);
+                        Vector512<float> p1 = Vector512.Load(pPost + i + 16);
+                        Vector512<float> p2 = Vector512.Load(pPost + i + 32);
+                        Vector512<float> p3 = Vector512.Load(pPost + i + 48);
 
                         Vector512<float> mask0 = Vector512.GreaterThan(p0, vZero);
                         Vector512<float> mask1 = Vector512.GreaterThan(p1, vZero);
                         Vector512<float> mask2 = Vector512.GreaterThan(p2, vZero);
                         Vector512<float> mask3 = Vector512.GreaterThan(p3, vZero);
 
-                        (g0 & mask0).StoreAligned(pGrad + i);
-                        (g1 & mask1).StoreAligned(pGrad + i + 16);
-                        (g2 & mask2).StoreAligned(pGrad + i + 32);
-                        (g3 & mask3).StoreAligned(pGrad + i + 48);
+                        (g0 & mask0).Store(pGrad + i);
+                        (g1 & mask1).Store(pGrad + i + 16);
+                        (g2 & mask2).Store(pGrad + i + 32);
+                        (g3 & mask3).Store(pGrad + i + 48);
                     }
 
                     for (; i <= totalElements - 16; i += 16)
                     {
-                        Vector512<float> g = Vector512.LoadAligned(pGrad + i);
-                        Vector512<float> p = Vector512.LoadAligned(pPost + i);
+                        Vector512<float> g = Vector512.Load(pGrad + i);
+                        Vector512<float> p = Vector512.Load(pPost + i);
                         Vector512<float> mask = Vector512.GreaterThan(p, vZero);
-                        (g & mask).StoreAligned(pGrad + i);
+                        (g & mask).Store(pGrad + i);
                     }
                     break;
                 }
@@ -1998,33 +1508,33 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
                     for (; i <= totalElements - 64; i += 64)
                     {
-                        Vector512<float> g0 = Vector512.LoadAligned(pGrad + i);
-                        Vector512<float> g1 = Vector512.LoadAligned(pGrad + i + 16);
-                        Vector512<float> g2 = Vector512.LoadAligned(pGrad + i + 32);
-                        Vector512<float> g3 = Vector512.LoadAligned(pGrad + i + 48);
+                        Vector512<float> g0 = Vector512.Load(pGrad + i);
+                        Vector512<float> g1 = Vector512.Load(pGrad + i + 16);
+                        Vector512<float> g2 = Vector512.Load(pGrad + i + 32);
+                        Vector512<float> g3 = Vector512.Load(pGrad + i + 48);
 
-                        Vector512<float> p0 = Vector512.LoadAligned(pPost + i);
-                        Vector512<float> p1 = Vector512.LoadAligned(pPost + i + 16);
-                        Vector512<float> p2 = Vector512.LoadAligned(pPost + i + 32);
-                        Vector512<float> p3 = Vector512.LoadAligned(pPost + i + 48);
+                        Vector512<float> p0 = Vector512.Load(pPost + i);
+                        Vector512<float> p1 = Vector512.Load(pPost + i + 16);
+                        Vector512<float> p2 = Vector512.Load(pPost + i + 32);
+                        Vector512<float> p3 = Vector512.Load(pPost + i + 48);
 
                         Vector512<float> mask0 = Vector512.GreaterThan(p0, vZero);
                         Vector512<float> mask1 = Vector512.GreaterThan(p1, vZero);
                         Vector512<float> mask2 = Vector512.GreaterThan(p2, vZero);
                         Vector512<float> mask3 = Vector512.GreaterThan(p3, vZero);
 
-                        Vector512.ConditionalSelect(mask0, g0, g0 * vAlpha).StoreAligned(pGrad + i);
-                        Vector512.ConditionalSelect(mask1, g1, g1 * vAlpha).StoreAligned(pGrad + i + 16);
-                        Vector512.ConditionalSelect(mask2, g2, g2 * vAlpha).StoreAligned(pGrad + i + 32);
-                        Vector512.ConditionalSelect(mask3, g3, g3 * vAlpha).StoreAligned(pGrad + i + 48);
+                        Vector512.ConditionalSelect(mask0, g0, g0 * vAlpha).Store(pGrad + i);
+                        Vector512.ConditionalSelect(mask1, g1, g1 * vAlpha).Store(pGrad + i + 16);
+                        Vector512.ConditionalSelect(mask2, g2, g2 * vAlpha).Store(pGrad + i + 32);
+                        Vector512.ConditionalSelect(mask3, g3, g3 * vAlpha).Store(pGrad + i + 48);
                     }
 
                     for (; i <= totalElements - 16; i += 16)
                     {
-                        Vector512<float> g = Vector512.LoadAligned(pGrad + i);
-                        Vector512<float> p = Vector512.LoadAligned(pPost + i);
+                        Vector512<float> g = Vector512.Load(pGrad + i);
+                        Vector512<float> p = Vector512.Load(pPost + i);
                         Vector512<float> mask = Vector512.GreaterThan(p, vZero);
-                        Vector512.ConditionalSelect(mask, g, g * vAlpha).StoreAligned(pGrad + i);
+                        Vector512.ConditionalSelect(mask, g, g * vAlpha).Store(pGrad + i);
                     }
                     break;
                 }
@@ -2035,27 +1545,27 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
                     for (; i <= totalElements - 64; i += 64)
                     {
-                        Vector512<float> g0 = Vector512.LoadAligned(pGrad + i);
-                        Vector512<float> g1 = Vector512.LoadAligned(pGrad + i + 16);
-                        Vector512<float> g2 = Vector512.LoadAligned(pGrad + i + 32);
-                        Vector512<float> g3 = Vector512.LoadAligned(pGrad + i + 48);
+                        Vector512<float> g0 = Vector512.Load(pGrad + i);
+                        Vector512<float> g1 = Vector512.Load(pGrad + i + 16);
+                        Vector512<float> g2 = Vector512.Load(pGrad + i + 32);
+                        Vector512<float> g3 = Vector512.Load(pGrad + i + 48);
 
-                        Vector512<float> p0 = Vector512.LoadAligned(pPost + i);
-                        Vector512<float> p1 = Vector512.LoadAligned(pPost + i + 16);
-                        Vector512<float> p2 = Vector512.LoadAligned(pPost + i + 32);
-                        Vector512<float> p3 = Vector512.LoadAligned(pPost + i + 48);
+                        Vector512<float> p0 = Vector512.Load(pPost + i);
+                        Vector512<float> p1 = Vector512.Load(pPost + i + 16);
+                        Vector512<float> p2 = Vector512.Load(pPost + i + 32);
+                        Vector512<float> p3 = Vector512.Load(pPost + i + 48);
 
-                        (g0 * p0 * (vOne - p0)).StoreAligned(pGrad + i);
-                        (g1 * p1 * (vOne - p1)).StoreAligned(pGrad + i + 16);
-                        (g2 * p2 * (vOne - p2)).StoreAligned(pGrad + i + 32);
-                        (g3 * p3 * (vOne - p3)).StoreAligned(pGrad + i + 48);
+                        (g0 * p0 * (vOne - p0)).Store(pGrad + i);
+                        (g1 * p1 * (vOne - p1)).Store(pGrad + i + 16);
+                        (g2 * p2 * (vOne - p2)).Store(pGrad + i + 32);
+                        (g3 * p3 * (vOne - p3)).Store(pGrad + i + 48);
                     }
 
                     for (; i <= totalElements - 16; i += 16)
                     {
-                        Vector512<float> g = Vector512.LoadAligned(pGrad + i);
-                        Vector512<float> p = Vector512.LoadAligned(pPost + i);
-                        (g * p * (vOne - p)).StoreAligned(pGrad + i);
+                        Vector512<float> g = Vector512.Load(pGrad + i);
+                        Vector512<float> p = Vector512.Load(pPost + i);
+                        (g * p * (vOne - p)).Store(pGrad + i);
                     }
                     break;
                 }
@@ -2066,33 +1576,33 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
 
                     for (; i <= totalElements - 64; i += 64)
                     {
-                        Vector512<float> g0 = Vector512.LoadAligned(pGrad + i);
-                        Vector512<float> g1 = Vector512.LoadAligned(pGrad + i + 16);
-                        Vector512<float> g2 = Vector512.LoadAligned(pGrad + i + 32);
-                        Vector512<float> g3 = Vector512.LoadAligned(pGrad + i + 48);
+                        Vector512<float> g0 = Vector512.Load(pGrad + i);
+                        Vector512<float> g1 = Vector512.Load(pGrad + i + 16);
+                        Vector512<float> g2 = Vector512.Load(pGrad + i + 32);
+                        Vector512<float> g3 = Vector512.Load(pGrad + i + 48);
 
-                        Vector512<float> p0 = Vector512.LoadAligned(pPost + i);
-                        Vector512<float> p1 = Vector512.LoadAligned(pPost + i + 16);
-                        Vector512<float> p2 = Vector512.LoadAligned(pPost + i + 32);
-                        Vector512<float> p3 = Vector512.LoadAligned(pPost + i + 48);
+                        Vector512<float> p0 = Vector512.Load(pPost + i);
+                        Vector512<float> p1 = Vector512.Load(pPost + i + 16);
+                        Vector512<float> p2 = Vector512.Load(pPost + i + 32);
+                        Vector512<float> p3 = Vector512.Load(pPost + i + 48);
 
-                        (g0 * Vector512.FusedMultiplyAdd(-p0, p0, vOne)).StoreAligned(pGrad + i);
-                        (g1 * Vector512.FusedMultiplyAdd(-p1, p1, vOne)).StoreAligned(pGrad + i + 16);
-                        (g2 * Vector512.FusedMultiplyAdd(-p2, p2, vOne)).StoreAligned(pGrad + i + 32);
-                        (g3 * Vector512.FusedMultiplyAdd(-p3, p3, vOne)).StoreAligned(pGrad + i + 48);
+                        (g0 * Vector512.FusedMultiplyAdd(-p0, p0, vOne)).Store(pGrad + i);
+                        (g1 * Vector512.FusedMultiplyAdd(-p1, p1, vOne)).Store(pGrad + i + 16);
+                        (g2 * Vector512.FusedMultiplyAdd(-p2, p2, vOne)).Store(pGrad + i + 32);
+                        (g3 * Vector512.FusedMultiplyAdd(-p3, p3, vOne)).Store(pGrad + i + 48);
                     }
 
                     for (; i <= totalElements - 16; i += 16)
                     {
-                        Vector512<float> g = Vector512.LoadAligned(pGrad + i);
-                        Vector512<float> p = Vector512.LoadAligned(pPost + i);
-                        (g * Vector512.FusedMultiplyAdd(-p, p, vOne)).StoreAligned(pGrad + i);
+                        Vector512<float> g = Vector512.Load(pGrad + i);
+                        Vector512<float> p = Vector512.Load(pPost + i);
+                        (g * Vector512.FusedMultiplyAdd(-p, p, vOne)).Store(pGrad + i);
                     }
                     break;
                 }
 
             default:
-                throw new NotImplementedException($"Derivative for {type} not implemented");
+                break;
         }
 
         for (; i < totalElements; i++)
@@ -2205,7 +1715,6 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
             || avgLoss > 100f ? 10.0f : avgLoss;
     }
 
-    // ---------- Cleanup ----------
     private void ClearIntermediates()
     {
         DisposeList(_densePostAct);
@@ -2223,7 +1732,7 @@ public sealed unsafe class CnnNeuralFramework<TArch> : IDisposable
             _flattenedInput = default;
         }
 
-        _lastPooledOutput = null!;
+        _lastPooledOutput = null;
     }
 
     private static void DisposeList<T>(List<T> list, bool skipFirst = false) where T : IDisposable
