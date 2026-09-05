@@ -29,35 +29,25 @@ internal class Program
         new() {
             KernelHeight = 3,
             KernelWidth = 3,
-            Filters = 32,                    
+            Filters = 32,
             Stride = 1,
             Padding = 1,
             Activation = ActivationType.LeakyReLU,
             UseMaxPool = true,
-            PoolSize = 2
+            PoolSize = 2 // 28x28 -> 14x14
         },
         new() {
             KernelHeight = 3,
             KernelWidth = 3,
-            Filters = 64,                    
+            Filters = 64,
             Stride = 1,
             Padding = 1,
             Activation = ActivationType.LeakyReLU,
             UseMaxPool = true,
-            PoolSize = 2
-        },
-        new() {
-            KernelHeight = 3,
-            KernelWidth = 3,
-            Filters = 128,                   
-            Stride = 1,
-            Padding = 1,
-            Activation = ActivationType.LeakyReLU,
-            UseMaxPool = true,
-            PoolSize = 2
+            PoolSize = 2 // 14x14 -> 7x7
         }
     ],
-            DenseArchitecture = [256, 128, 10],          
+            DenseArchitecture = [128, 10],          
             DenseHiddenActivation = ActivationType.LeakyReLU,
             OutputActivation = ActivationType.Softmax,
             OptimizerConfig = new CnnOptimizerConfig
@@ -76,7 +66,7 @@ internal class Program
             LearningRate = 0.001f,
             WeightDecay = 0.0001f,                  
             BatchSize = 64,                         
-            Epochs = 1,
+            Epochs = 15,
             DropoutRate = 0.25f,                    
             WithShuffle = true,
             OptimizerType = OptimizerType.Adam,
@@ -89,7 +79,7 @@ internal class Program
             .WithInputSize(loader.ImageScale, loader.ImageScale, 3)
             .Build();
         var validator = new CnnValidator();
-        DiagnoseNetwork(network, dataSet);
+        //DiagnoseNetwork(network, dataSet);
         TrainAndRenderTable(network, validator, dataSet, loader.DatasetName);
 
         Console.WriteLine("\n=== FINAL EVALUATION ===");
@@ -171,7 +161,7 @@ internal class Program
         var learningRate = 0.001f;
         var maxEpochs = 2000;
         var earlyStopPatience = 3000;
-        var targetAccuracy = 0.99f;
+        var targetAccuracy = 0.98f;
         var bestAccuracy = 0f;
         var epochsSinceBest = 0;
 
