@@ -75,7 +75,7 @@ public sealed unsafe class CnnNeuralFramework
         _colInputs = new List<NeuralMatrix>(convCount);
         _poolIndices = new List<NeuralMatrix>(convCount);
 
-        SetupCnnWeightsBiases(cnnConfig);
+        SetupCnnConvParameters(cnnConfig);
 
         int flattenedSize = ComputeFlattenedSize(cnnConfig);
         int[] denseArch = [flattenedSize, .. cnnConfig.DenseArchitecture];
@@ -91,7 +91,7 @@ public sealed unsafe class CnnNeuralFramework
         SetupDenseArchitecture(denseArch, cnnConfig);
     }
 
-    private void SetupCnnWeightsBiases(CnnArchitectureConfig cnnConfig)
+    private void SetupCnnConvParameters(CnnArchitectureConfig cnnConfig)
     {
         var prevInput = _input;
 
@@ -223,7 +223,7 @@ public sealed unsafe class CnnNeuralFramework
     {
         using var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true);
 
-        writer.Write(key.ToString());
+        writer.Write(Convert.ToInt32(key));
         writer.Write(_convHyperParameters.Count);
         writer.Write(_denseHyperParameters.Count);
 
@@ -254,8 +254,8 @@ public sealed unsafe class CnnNeuralFramework
     {
         using var reader = new BinaryReader(stream, System.Text.Encoding.UTF8, leaveOpen: true);
 
-        var savedEnumKey = reader.ReadString();
-        if (!string.Equals(savedEnumKey, key.ToString(), StringComparison.OrdinalIgnoreCase))
+        var savedEnumKey = reader.ReadInt32();
+        if (!int.Equals(savedEnumKey, Convert.ToInt32(key)))
         {
             throw new InvalidOperationException($"Mismatch enum key in model file. Expected: '{key}', Found: '{savedEnumKey}'.");
         }

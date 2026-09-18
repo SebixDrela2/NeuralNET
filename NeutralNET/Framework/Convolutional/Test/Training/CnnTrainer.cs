@@ -110,7 +110,7 @@ public class CnnTrainer
     {
         display.Update(results[..offset]);
 
-        if (display.Accuracy == display.BestAccuracy)
+        if (display.EpochsSinceBest == 1)
         {
             _network.SaveWeights(_config.DatasetKey, _config.CheckpointDir);
             Console.WriteLine($"Saved Weights!");
