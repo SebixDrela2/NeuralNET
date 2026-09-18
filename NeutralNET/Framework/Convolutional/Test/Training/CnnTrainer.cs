@@ -10,13 +10,15 @@ public class CnnTrainer
 {
     private readonly CnnNetwork _network;
     private readonly CnnValidator _validator;
-    private readonly TrainingConfig _config;
+    private readonly CnnTrainingConfig _config;
+    private readonly DataLoaderBase _loader;
 
-    public CnnTrainer(CnnNetwork network, CnnValidator validator, TrainingConfig config)
+    public CnnTrainer(CnnNetwork network, CnnValidator validator, CnnTrainingConfig config, DataLoaderBase loader)
     {
         _network = network;
         _validator = validator;
         _config = config;
+        _loader = loader;
     }
 
     public void Train(NeuralDataset dataSet, int numClasses)
@@ -50,7 +52,8 @@ public class CnnTrainer
         }
     }
 
-    private void DisplayInstances()
+    [Obsolete]
+    public void DisplayInstances()
     {
         var locations = NeuralMatrix.Instances
             .SelectMany(x => x.Locations)
@@ -103,10 +106,10 @@ public class CnnTrainer
             }
         }
 
-        return DisplayWithControlFlow(display, results, offset);
+        return DisplayWithControlFlow(display, dataSet, results, offset);
     }
 
-    private bool DisplayWithControlFlow(CnnDisplayWriter display, Span<float> results, int offset)
+    private bool DisplayWithControlFlow(CnnDisplayWriter display, NeuralDataset dataset, Span<float> results, int offset)
     {
         display.Update(results[..offset]);
 
@@ -116,7 +119,7 @@ public class CnnTrainer
             Console.WriteLine($"Saved Weights!");
         }
 
-        if (display.Accuracy >= _config.TargetAccuracy && display.AvgLoss <= _config.TargetLoss)
+        if (display.AvgLoss <= _config.TargetLoss)
         {
             _network.SaveWeights(_config.DatasetKey, _config.CheckpointDir);
             Console.WriteLine($"\n🎯 Target accuracy {_config.TargetAccuracy:P2} reached! Stopping early at epoch {display.Epoch}");
@@ -124,13 +127,23 @@ public class CnnTrainer
             return false;
         }
 
-        if (display.EpochsSinceBest >= _config.EarlyStopPatience && display.BestAccuracy > 0.4f)
+        if (display.EpochsSinceBest >= _config.EarlyStopPatience)
         {
             Console.WriteLine($"\n⏹️ No improvement for {_config.EarlyStopPatience} epochs. Stopping early at epoch {display.Epoch}");
             Console.WriteLine($"Best accuracy: {display.BestAccuracy:P2}");
             _network.LoadWeights(_config.DatasetKey, _config.CheckpointDir);
 
             return false;
+        }
+
+
+        if (display.Accuracy is >= 1)
+        {
+            Console.Write("\e[J");
+            _loader.ReloadCompleteDataset(dataset, _config);
+            display.EpochsSinceBest = 0;
+            display.BestAccuracy = 0;
+            Console.WriteLine("Reloaded dataset.");
         }
 
         return true;

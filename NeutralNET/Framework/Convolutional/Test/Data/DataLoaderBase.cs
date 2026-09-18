@@ -1,6 +1,7 @@
 using System.Data;
 using NeutralNET.Framework.Convolutional;
 using NeutralNET.Matrices;
+using NeutralTest;
 
 namespace NeutralNET.Test.Data;
 
@@ -24,7 +25,8 @@ public abstract class DataLoaderBase
     /// <summary>
     /// Loads the complete dataset
     /// </summary>
-    public virtual NeuralDataset LoadCompleteDataset(int batchSize = 64, int maxTrainSamples = int.MaxValue, int maxTestSamples = int.MaxValue)
+    /// 
+    public NeuralDataset LoadCompleteDataset(int batchSize = 64, int maxTrainSamples = int.MaxValue, int maxTestSamples = int.MaxValue)
     {
         var (trainImages, trainLabels, testImages, testLabels) = LoadBatches(batchSize, maxTrainSamples, maxTestSamples);
 
@@ -37,6 +39,19 @@ public abstract class DataLoaderBase
             TestLabels = testLabels,
             TestActualLabels = ExtractActualLabels(testLabels)
         };
+    }
+
+    ///<summary>
+    /// Reloads complete dataset.
+    ///</summary>
+    public void ReloadCompleteDataset(NeuralDataset dataset, CnnTrainingConfig config)
+    {
+        var (trainImages, trainLabels, testImages, testLabels) = LoadBatches(config.BatchSize, config.MaxTrainSamples, config.MaxTestSamples);
+
+        for (int i = 0; i < trainImages.Count; i++) { dataset.TrainImages[i].CopyFrom(trainImages[i]); trainImages[i].Dispose(); }
+        for (int i = 0; i < trainLabels.Count; i++) { dataset.TrainLabels[i].CopyFrom(trainLabels[i]); trainLabels[i].Dispose(); }
+        for (int i = 0; i < testImages.Count; i++) { dataset.TestImages[i].CopyFrom(testImages[i]); testImages[i].Dispose(); }
+        for (int i = 0; i < testLabels.Count; i++) { dataset.TestLabels[i].CopyFrom(testLabels[i]); testLabels[i].Dispose(); }
     }
 
     /// <summary>

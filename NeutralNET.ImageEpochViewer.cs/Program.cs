@@ -14,7 +14,7 @@ internal static class Program
 
         var datasetKey = DataSourceType.Letters;
         var loader = DataLoaderFactory.Create(datasetKey);
-        var config = TrainingConfig.CreateDefault(loader.NumClasses);
+        var config = CnnTrainingConfig.CreateDefault(loader.NumClasses);
         config.DatasetKey = datasetKey;
 
         var network = new CnnBuilder()

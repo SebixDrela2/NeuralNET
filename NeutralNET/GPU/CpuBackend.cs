@@ -29,14 +29,14 @@ public class CpuBackend : IGpuBackend
     public NeuralMatrix Add(NeuralMatrix a, NeuralMatrix b)
     {
         var result = NeuralMatrix.GetOrCreate(a.Rows, a.UsedColumns);
-        result.CopyDataFrom(a);
+        result.CopyFrom(a);
         result.SumVectorized(b);
         return result;
     }
 
     public void Add(NeuralMatrix a, NeuralMatrix b, NeuralMatrix result)
     {
-        result.CopyDataFrom(a);
+        result.CopyFrom(a);
         result.SumVectorized(b);
     }
 

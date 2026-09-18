@@ -6,11 +6,9 @@ using NeutralNET.Test.Data;
 
 namespace NeutralTest;
 
-public class TrainingConfig
+public class CnnTrainingConfig
 {
     public DataSourceType DatasetKey { get; set; } = DataSourceType.Letters;
-
-    // CRITICAL: Must be ~60,000 so the network gets ~2,300 images per letter instead of 76
     public int MaxTrainSamples { get; set; } = 5000;
     public int MaxTestSamples { get; set; } = 1000;
 
@@ -25,9 +23,9 @@ public class TrainingConfig
     public CnnArchitectureConfig CnnArchitecture { get; set; } = new();
     public NeuralNetworkConfig DenseConfig { get; set; } = new();
 
-    public static TrainingConfig CreateDefault(int numClasses = 26)
+    public static CnnTrainingConfig CreateDefault(int numClasses = 26)
     {
-        return new TrainingConfig
+        return new CnnTrainingConfig
         {
             CnnArchitecture = new CnnArchitectureConfig
             {

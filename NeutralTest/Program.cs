@@ -67,7 +67,7 @@ internal class Program
         // 1. Data Loading
         var datasetKey = DataSourceType.Letters;
         var loader = DataLoaderFactory.Create(datasetKey);
-        var config = TrainingConfig.CreateDefault(loader.NumClasses);
+        var config = CnnTrainingConfig.CreateDefault(loader.NumClasses);
 
         config.DatasetKey = datasetKey;
 
@@ -85,7 +85,7 @@ internal class Program
             .Build();
 
         var validator = new CnnValidator();
-        var trainer = new CnnTrainer(network, validator, config);
+        var trainer = new CnnTrainer(network, validator, config, loader);
         trainer.Train(dataSet, loader.NumClasses);
 
         Console.WriteLine("\n=== FINAL EVALUATION ===");

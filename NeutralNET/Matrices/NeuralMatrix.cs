@@ -194,7 +194,7 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
 
     public void CopyRowFrom(NeuralMatrix other, int row) => other.GetRowSpan(row).CopyTo(GetRowSpan(row));
 
-    public void CopyDataFrom(NeuralMatrix other)
+    public void CopyFrom(NeuralMatrix other)
     {
         NativeMemory.Copy(other.Pointer, Pointer, (nuint)UnsafeSize * sizeof(float));
     }
@@ -202,7 +202,7 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
     public NeuralMatrix Copy()
     {
         var matrix = GetOrCreate(Rows, UsedColumns);
-        matrix.CopyDataFrom(this);
+        matrix.CopyFrom(this);
         return matrix;
     }
 
