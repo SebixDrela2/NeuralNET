@@ -25,7 +25,7 @@ internal static class Program
 
         try
         {
-            network.LoadWeights(config.DatasetKey, config.CheckpointDir);
+            network.LoadData(config.DatasetKey, config.CheckpointDir);
             Console.WriteLine($"[INFO] Successfully loaded existing weights for {config.DatasetKey}.");
         }
         catch (Exception ex)

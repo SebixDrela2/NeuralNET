@@ -23,7 +23,7 @@ public class CnnTrainer
 
     public void Train(NeuralDataset dataSet, int numClasses)
     {
-        _network.LoadWeights(_config.DatasetKey, _config.CheckpointDir);
+        _network.LoadData(_config.DatasetKey, _config.CheckpointDir);
         char[] chars = [.. EnumerateChars('A').Take(numClasses)];
         var display = new CnnDisplayWriter(chars, dataSet.TrainImages.Count);
 
@@ -115,13 +115,13 @@ public class CnnTrainer
 
         if (display.EpochsSinceBest == 1)
         {
-            _network.SaveWeights(_config.DatasetKey, _config.CheckpointDir);
+            _network.SaveData(_config.DatasetKey, _config.CheckpointDir);
             Console.WriteLine($"Saved Weights!");
         }
 
         if (display.AvgLoss <= _config.TargetLoss)
         {
-            _network.SaveWeights(_config.DatasetKey, _config.CheckpointDir);
+            _network.SaveData(_config.DatasetKey, _config.CheckpointDir);
             Console.WriteLine($"\n🎯 Target accuracy {_config.TargetAccuracy:P2} reached! Stopping early at epoch {display.Epoch}");
 
             return false;
@@ -131,7 +131,7 @@ public class CnnTrainer
         {
             Console.WriteLine($"\n⏹️ No improvement for {_config.EarlyStopPatience} epochs. Stopping early at epoch {display.Epoch}");
             Console.WriteLine($"Best accuracy: {display.BestAccuracy:P2}");
-            _network.LoadWeights(_config.DatasetKey, _config.CheckpointDir);
+            _network.LoadData(_config.DatasetKey, _config.CheckpointDir);
 
             return false;
         }

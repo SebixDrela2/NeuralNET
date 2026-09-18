@@ -219,7 +219,7 @@ public sealed unsafe class CnnNeuralFramework
         return current;
     }
 
-    public void SaveWeights<TEnum>(TEnum key, Stream stream) where TEnum : struct, Enum
+    public void SaveData<TEnum>(TEnum key, Stream stream) where TEnum : struct, Enum
     {
         using var writer = new BinaryWriter(stream, System.Text.Encoding.UTF8, leaveOpen: true);
 
@@ -242,15 +242,15 @@ public sealed unsafe class CnnNeuralFramework
         writer.Flush();
     }
 
-    public void SaveWeights<TEnum>(TEnum key, string directoryPath) where TEnum : struct, Enum
+    public void SaveData<TEnum>(TEnum key, string directoryPath) where TEnum : struct, Enum
     {
         Directory.CreateDirectory(directoryPath);
         var filePath = Path.Combine(directoryPath, $"{typeof(TEnum).Name}_{key}.bin");
         using var stream = File.Create(filePath);
-        SaveWeights(key, stream);
+        SaveData(key, stream);
     }
 
-    public void LoadWeights<TEnum>(TEnum key, Stream stream) where TEnum : struct, Enum
+    public void LoadData<TEnum>(TEnum key, Stream stream) where TEnum : struct, Enum
     {
         using var reader = new BinaryReader(stream, System.Text.Encoding.UTF8, leaveOpen: true);
 
@@ -281,7 +281,7 @@ public sealed unsafe class CnnNeuralFramework
         }
     }
 
-    public bool LoadWeights<TEnum>(TEnum key, string directoryPath) where TEnum : struct, Enum
+    public bool LoadData<TEnum>(TEnum key, string directoryPath) where TEnum : struct, Enum
     {
         var filePath = Path.Combine(directoryPath, $"{typeof(TEnum).Name}_{key}.bin");
 
@@ -291,7 +291,7 @@ public sealed unsafe class CnnNeuralFramework
         }
 
         using var stream = File.OpenRead(filePath);
-        LoadWeights(key, stream);
+        LoadData(key, stream);
 
         return true;
     }

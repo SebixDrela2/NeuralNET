@@ -35,36 +35,36 @@ public class CnnNetwork
     /// <summary>
     /// Saves weights to a binary stream using an enum key.
     /// </summary>
-    public CnnNetwork SaveWeights<TEnum>(TEnum key, Stream stream) where TEnum : struct, Enum
+    public CnnNetwork SaveData<TEnum>(TEnum key, Stream stream) where TEnum : struct, Enum
     {
-        _framework.SaveWeights(key, stream);
+        _framework.SaveData(key, stream);
         return this;
     }
 
     /// <summary>
     /// Saves weights to a directory path using an enum key.
     /// </summary>
-    public CnnNetwork SaveWeights<TEnum>(TEnum key, string directoryPath) where TEnum : struct, Enum
+    public CnnNetwork SaveData<TEnum>(TEnum key, string directoryPath) where TEnum : struct, Enum
     {
-        _framework.SaveWeights(key, directoryPath);
+        _framework.SaveData(key, directoryPath);
         return this;
     }
 
     /// <summary>
     /// Loads weights from a binary stream using an enum key.
     /// </summary>
-    public CnnNetwork LoadWeights<TEnum>(TEnum key, Stream stream) where TEnum : struct, Enum
+    public CnnNetwork LoadData<TEnum>(TEnum key, Stream stream) where TEnum : struct, Enum
     {
-        _framework.LoadWeights(key, stream);
+        _framework.LoadData(key, stream);
         return this;
     }
 
     /// <summary>
     /// Loads weights from a directory path using an enum key.
     /// </summary>
-    public bool LoadWeights<TEnum>(TEnum key, string directoryPath) where TEnum : struct, Enum
+    public bool LoadData<TEnum>(TEnum key, string directoryPath) where TEnum : struct, Enum
     {
-        return _framework.LoadWeights(key, directoryPath);
+        return _framework.LoadData(key, directoryPath);
     }
 
     #endregion
