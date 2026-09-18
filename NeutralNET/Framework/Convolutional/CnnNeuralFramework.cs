@@ -22,7 +22,7 @@ namespace NeutralNET.Framework.Neural.CNN;
 /// </summary>
 ///
 
-internal record struct CnnInput(int Height, int Width, int Channels);
+internal record struct CnnSize(int BatchSize, int Channels, int Height, int Width);
 
 public sealed unsafe class CnnNeuralFramework
 {
@@ -35,7 +35,7 @@ public sealed unsafe class CnnNeuralFramework
     private readonly NeuralNetworkConfig _baseConfig;
     private readonly CnnArchitectureConfig _cnnConfig;
     private readonly ActivationSelector _activationSelector = new();
-    private readonly CnnInput _input;
+    private readonly CnnSize _input;
 
     private readonly List<ActivationType> _convActivationTypes;
     private readonly List<ActivationFunction> _denseActivations;
@@ -44,12 +44,10 @@ public sealed unsafe class CnnNeuralFramework
     private readonly List<ICnnOptimizer> _denseOptimizers;
 
     private readonly List<CnnMatrix> _convInputs;
-    private readonly List<CnnMatrix> _convPreAct;
-    private readonly List<CnnMatrix> _convPostAct;
     private readonly List<NeuralMatrix> _colInputs;
-    private readonly List<NeuralMatrix> _poolIndices;
     private readonly List<NeuralMatrix> _densePreAct;
     private readonly List<NeuralMatrix> _densePostAct;
+    private readonly List<NeuralMatrix> _poolIndices;
 
     private readonly List<DenseHyperParameters> _denseHyperParameters = [];
     private readonly List<ConvHyperParameters> _convHyperParameters = [];
@@ -60,21 +58,20 @@ public sealed unsafe class CnnNeuralFramework
     private readonly Random _rng;
 
     public CnnNeuralFramework(NeuralNetworkConfig baseConfig, CnnArchitectureConfig cnnConfig,
-        int inputHeight, int inputWidth, int inputChannels)
+        int batchSize, int inputChannels, int inputHeight, int inputWidth)
     {
         _baseConfig = baseConfig;
         _cnnConfig = cnnConfig;
         _rng = new Random();
-        _input = new CnnInput(inputHeight, inputWidth, inputChannels);
+        _input = new CnnSize(batchSize, inputChannels, inputHeight, inputWidth);
 
-        int convCount = cnnConfig.ConvLayers.Count;
+        var convCount = cnnConfig.ConvLayers.Count;
+
         _convHyperParameters = [with(convCount)];
         _convActivationTypes = new List<ActivationType>(convCount);
         _convOptimizers = new List<ICnnOptimizer>(convCount);
 
         _convInputs = new List<CnnMatrix>(convCount + 1);
-        _convPreAct = new List<CnnMatrix>(convCount);
-        _convPostAct = new List<CnnMatrix>(convCount);
         _colInputs = new List<NeuralMatrix>(convCount);
         _poolIndices = new List<NeuralMatrix>(convCount);
 
@@ -96,17 +93,17 @@ public sealed unsafe class CnnNeuralFramework
 
     private void SetupCnnWeightsBiases(CnnArchitectureConfig cnnConfig)
     {
-        int inChannels = _input.Channels;
+        var prevInput = _input;
 
         foreach (var layer in cnnConfig.ConvLayers)
         {
-            var fanIn = inChannels * layer.KernelHeight * layer.KernelWidth;
+            var fanIn = prevInput.Channels * layer.KernelHeight * layer.KernelWidth;
             var stddev = MathF.Sqrt(2.0f / fanIn);
-            var weights = RentCnn(layer.Filters, inChannels, layer.KernelHeight, layer.KernelWidth);
+            var weights = RentCnn(layer.Filters, prevInput.Channels, layer.KernelHeight, layer.KernelWidth);
 
             for (int f = 0; f < layer.Filters; f++)
             {
-                for (int c = 0; c < inChannels; c++)
+                for (int c = 0; c < prevInput.Channels; c++)
                 {
                     for (int y = 0; y < layer.KernelHeight; y++)
                     {
@@ -126,14 +123,21 @@ public sealed unsafe class CnnNeuralFramework
             }
 
             var flattenedWeights = FlattenConvWeights(weights);
+            var convOutSz = GetCnnSize(prevInput.BatchSize, weights.Batch, prevInput.Height, prevInput.Width, layer);
+            var preAct = RentCnn(convOutSz);
+            var postAct = RentCnn(convOutSz);
 
-            _convHyperParameters.Add(new(weights, flattenedWeights, biases));
+            var nextH = layer.UseMaxPool ? convOutSz.Height / layer.PoolSize : convOutSz.Height;
+            var nextW = layer.UseMaxPool ? convOutSz.Width / layer.PoolSize : convOutSz.Width;
+            var nextLayer = new CnnSize(prevInput.BatchSize, weights.Batch, nextH, nextW);
+
+            _convHyperParameters.Add(new(weights, flattenedWeights, biases, preAct, postAct));
             _convActivationTypes.Add(layer.Activation);
 
             var opt = CnnOptimizerFactory.Create(_cnnConfig.OptimizerConfig);
             _convOptimizers.Add(opt);
 
-            inChannels = layer.Filters;
+            prevInput = nextLayer;
         }
     }
 
@@ -184,7 +188,8 @@ public sealed unsafe class CnnNeuralFramework
         for (int i = 0; i <= layerIndex && i < _cnnConfig.ConvLayers.Count; i++)
         {
             var layer = _cnnConfig.ConvLayers[i];
-            var (convPreAct, colInput) = ConvForward(current, i);
+            var colInput = ConvForward(current, i);
+            var convPreAct = _convHyperParameters[i].PreAct;
 
             colInput.Dispose();
 
@@ -201,7 +206,6 @@ public sealed unsafe class CnnNeuralFramework
             if (layer.UseMaxPool)
             {
                 next = MaxPoolForwardInPlace(convPreAct, layer.PoolSize);
-                convPreAct.Dispose();
             }
             else
             {
@@ -418,10 +422,13 @@ public sealed unsafe class CnnNeuralFramework
         CnnMatrix? current = input;
         var needsDispose = false;
 
+        SetBatchLimitAll(input.Batch);
+
         for (int layerIdx = 0; layerIdx < _cnnConfig.ConvLayers.Count; layerIdx++)
         {
             var layer = _cnnConfig.ConvLayers[layerIdx];
-            var (convOut, colInput) = ConvForward(current, layerIdx);
+            var colInput = ConvForward(current, layerIdx);
+            var convOut = _convHyperParameters[layerIdx].PreAct;
 
             colInput.Dispose();
 
@@ -438,7 +445,6 @@ public sealed unsafe class CnnNeuralFramework
             if (layer.UseMaxPool)
             {
                 var pooled = MaxPoolForwardInPlace(convOut, layer.PoolSize);
-                convOut.Dispose();
                 current = pooled;
             }
             else
@@ -541,6 +547,7 @@ public sealed unsafe class CnnNeuralFramework
         ClearIntermediates();
         CnnMatrix current = input;
 
+        SetBatchLimitAll(current.Batch);
         var probabilities = ForwardPoolingPass(ref current);
         var loss = ComputeCrossEntropyLoss(probabilities, target);
         var grad = GetVectorizedLossGradients(target, probabilities);
@@ -554,13 +561,21 @@ public sealed unsafe class CnnNeuralFramework
         return float.IsNaN(loss) || float.IsInfinity(loss) || loss > 100f ? 10.0f : loss;
     }
 
+    private void SetBatchLimitAll(int limit)
+    {
+        foreach(var elem in _convHyperParameters)
+        {
+            elem.SetBatchLimit(limit);
+        }
+    }
+
     private CnnMatrix GetConvolutionBackwardPass(CnnMatrix currentGrad)
     {
         for (int layerIdx = _cnnConfig.ConvLayers.Count - 1; layerIdx >= 0; layerIdx--)
         {
             var layer = _cnnConfig.ConvLayers[layerIdx];
-            var preAct = _convPreAct[layerIdx];
-            var postAct = _convPostAct[layerIdx];
+            var preAct = _convHyperParameters[layerIdx].PreAct;
+            var postAct = _convHyperParameters[layerIdx].PostAct;
             var colInput = _colInputs[layerIdx];
             var inputTensor = _convInputs[layerIdx];
             var indices = _poolIndices[layerIdx];
@@ -585,7 +600,6 @@ public sealed unsafe class CnnNeuralFramework
         NeuralMatrix indices)
     {
         var convGrad = BackPropagateThroughPool(currentGrad, layer, postAct, indices);
-
         var preGrad = ComputePreGradient(layer, preAct, postAct, convGrad);
         convGrad.Dispose();
 
@@ -907,24 +921,24 @@ public sealed unsafe class CnnNeuralFramework
             var layer = _cnnConfig.ConvLayers[layerIdx];
             _convInputs.Add(current);
 
-            var (convPreAct, colInput) = ConvForward(current, layerIdx);
-            _convPreAct.Add(convPreAct);
+            var  colInput = ConvForward(current, layerIdx);
             _colInputs.Add(colInput);
 
-            var convPostAct = RentCnn(convPreAct.Batch, convPreAct.Channels, convPreAct.Height, convPreAct.Width);
-            convPostAct.CopyFrom(convPreAct);
-            ApplyActivation(convPostAct, layer.Activation);
-            _convPostAct.Add(convPostAct);
+            var preAct = _convHyperParameters[layerIdx].PreAct;
+            var postAct = _convHyperParameters[layerIdx].PostAct;
+
+            postAct.CopyFrom(preAct);
+            ApplyActivation(postAct, layer.Activation);
 
             CnnMatrix pooled;
             if (layer.UseMaxPool)
             {
-                pooled = MaxPoolForward(convPostAct, layer.PoolSize, out var indices);
+                pooled = MaxPoolForward(postAct, layer.PoolSize, out var indices);
                 _poolIndices.Add(indices);
             }
             else
             {
-                pooled = convPostAct;
+                pooled = postAct;
                 _poolIndices.Add(RentNeural(1, 1));
             }
 
@@ -942,22 +956,23 @@ public sealed unsafe class CnnNeuralFramework
         return _densePostAct[^1];
     }
 
-    private (CnnMatrix preAct, NeuralMatrix colInput) ConvForward(CnnMatrix current, int layerIdx)
+    private NeuralMatrix ConvForward(CnnMatrix current, int layerIdx)
     {
         var layer = _cnnConfig.ConvLayers[layerIdx];
         var weights = _convHyperParameters[layerIdx].Weights;
         var flattenedWeights = _convHyperParameters[layerIdx].FlattenedWeights;
+        var preAct = _convHyperParameters[layerIdx].PreAct;
         var biases = _convHyperParameters[layerIdx].Biases;
 
         var colInput = current.Im2Col(layer.KernelHeight, layer.KernelWidth, layer.Stride, layer.Padding);
         var result = ComputeConvolution(colInput, flattenedWeights);
         AddBias(result, biases);
 
-        var preAct = ReshapeToCnnMatrix(result, current.Batch, weights.Batch, current.Height, current.Width, layer);
+        FillToCnnMatrix(result, preAct);
 
         result.Dispose();
 
-        return (preAct, colInput);
+        return colInput;
     }
 
     private NeuralMatrix FlattenConvWeights(CnnMatrix weights)
@@ -1047,37 +1062,21 @@ public sealed unsafe class CnnNeuralFramework
         }
     }
 
-    private CnnMatrix ReshapeToCnnMatrix(NeuralMatrix result, int batchSize, int filters, int height, int width, CnnLayerConfig layer)
+    private void FillToCnnMatrix(NeuralMatrix result, CnnMatrix preAct)
     {
-        int outH = (height + 2 * layer.Padding - layer.KernelHeight) / layer.Stride + 1;
-        int outW = (width + 2 * layer.Padding - layer.KernelWidth) / layer.Stride + 1;
-        int expectedRows = batchSize * outH * outW;
-
-        if (result.Rows != expectedRows)
-        {
-            throw new InvalidOperationException($"result.Rows ({result.Rows}) != expectedRows ({expectedRows}).");
-        }
-
-        if (result.UsedColumns != filters)
-        {
-            throw new InvalidOperationException($"result.UsedColumns ({result.UsedColumns}) != filters ({filters})");
-        }
-
-        var preAct = RentCnn(batchSize, filters, outH, outW);
-
         float* pSrc = result.Pointer;
         float* pDst = preAct.Pointer;
 
         int srcStride = result.ColumnsStride;
-        int spatialSize = outH * outW;
-        int batchStrideDst = filters * spatialSize;
+        int spatialSize = preAct.Height * preAct.Width;
+        int batchStrideDst = preAct.Channels * spatialSize;
 
-        for (int b = 0; b < batchSize; b++)
+        for (int b = 0; b < preAct.Batch; b++)
         {
             int batchOffsetSrc = b * spatialSize;
             float* pDstBatch = pDst + (b * batchStrideDst);
 
-            for (int f = 0; f < filters; f++)
+            for (int f = 0; f < preAct.Channels; f++)
             {
                 float* pDstChannel = pDstBatch + (f * spatialSize);
                 for (int spatialIdx = 0; spatialIdx < spatialSize; spatialIdx++)
@@ -1086,8 +1085,14 @@ public sealed unsafe class CnnNeuralFramework
                 }
             }
         }
+    }
 
-        return preAct;
+    private CnnSize GetCnnSize(int batchSize, int filters, int height, int width, CnnLayerConfig layer)
+    {
+        int outH = (height + 2 * layer.Padding - layer.KernelHeight) / layer.Stride + 1;
+        int outW = (width + 2 * layer.Padding - layer.KernelWidth) / layer.Stride + 1;
+
+        return new(batchSize, filters, outH, outW);
     }
 
     private CnnMatrix MaxPoolForwardInPlace(CnnMatrix input, int poolSize)
@@ -1600,8 +1605,6 @@ public sealed unsafe class CnnNeuralFramework
         DisposeList(_densePostAct);
         DisposeList(_densePreAct);
         DisposeList(_convInputs, skipFirst: true);
-        DisposeList(_convPreAct);
-        DisposeList(_convPostAct);
         DisposeList(_colInputs);
         DisposeList(_poolIndices);
 
@@ -1632,4 +1635,7 @@ public sealed unsafe class CnnNeuralFramework
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static CnnMatrix RentCnn(int batch, int channels, int h, int w, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "")
         => CnnMatrix.GetOrCreate(batch, channels, h, w, readOnly:false, ln, fp);
+
+    private static CnnMatrix RentCnn(CnnSize cnnSize, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "")
+        => CnnMatrix.GetOrCreate(cnnSize.BatchSize, cnnSize.Channels, cnnSize.Height, cnnSize.Width, readOnly: false, ln, fp);
 }

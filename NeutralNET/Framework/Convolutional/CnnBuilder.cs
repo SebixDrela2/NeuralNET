@@ -7,9 +7,11 @@ public class CnnBuilder
 {
     private NeuralNetworkConfig _denseConfig;
     private CnnArchitectureConfig _cnnConfig;
+
+    private int _inputBatchSize;
+    private int _inputChannels;
     private int _inputHeight;
     private int _inputWidth;
-    private int _inputChannels ;
 
     public CnnBuilder WithDenseConfig(NeuralNetworkConfig config)
     {
@@ -23,11 +25,12 @@ public class CnnBuilder
         return this;
     }
 
-    public CnnBuilder WithInputSize(int height, int width, int channels = 3)
+    public CnnBuilder WithInputSize(int batchSize, int channels, int height, int width)
     {
+        _inputBatchSize = batchSize;
+        _inputChannels = channels;
         _inputHeight = height;
         _inputWidth = width;
-        _inputChannels = channels;
         return this;
     }
 
@@ -41,10 +44,10 @@ public class CnnBuilder
         var framework = new CnnNeuralFramework(
             _denseConfig,
             _cnnConfig,
+            _inputBatchSize,
+            _inputChannels,
             _inputHeight,
-            _inputWidth,
-            _inputChannels
-        );
+            _inputWidth);
 
         return new CnnNetwork(framework);
     }

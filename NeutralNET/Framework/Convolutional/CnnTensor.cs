@@ -35,7 +35,7 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
 
     public static readonly ConcurrentBag<CnnMatrix> Instances = [];
     public float* Pointer;
-    public int Batch;
+    public int Batch { get; set; }
     public int Channels;
     public int Height;
     public int Width;

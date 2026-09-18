@@ -15,21 +15,6 @@ public class CnnNetwork
         _framework = framework;
     }
 
-    public CnnNetwork Train(CnnMatrix input, NeuralMatrix target, float learningRate)
-    {
-        _framework.Train(input, target, learningRate);
-        return this;
-    }
-
-    public CnnNetwork TrainEpoch(List<CnnMatrix> inputs, List<NeuralMatrix> targets, float learningRate)
-    {
-        for (int i = 0; i < inputs.Count; i++)
-        {
-            _framework.Train(inputs[i], targets[i], learningRate);
-        }
-        return this;
-    }
-
     public float TrainBatch(CnnMatrix input, NeuralMatrix target, float learningRate)
     {
         return _framework.Train(input, target, learningRate);
