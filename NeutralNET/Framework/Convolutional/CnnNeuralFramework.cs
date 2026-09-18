@@ -921,7 +921,7 @@ public sealed unsafe class CnnNeuralFramework
             var layer = _cnnConfig.ConvLayers[layerIdx];
             _convInputs.Add(current);
 
-            var  colInput = ConvForward(current, layerIdx);
+            var colInput = ConvForward(current, layerIdx);
             _colInputs.Add(colInput);
 
             var preAct = _convHyperParameters[layerIdx].PreAct;
@@ -965,6 +965,7 @@ public sealed unsafe class CnnNeuralFramework
         var biases = _convHyperParameters[layerIdx].Biases;
 
         var colInput = current.Im2Col(layer.KernelHeight, layer.KernelWidth, layer.Stride, layer.Padding);
+        UpdateFlattenConvWeights(weights, flattenedWeights);
         var result = ComputeConvolution(colInput, flattenedWeights);
         AddBias(result, biases);
 
@@ -975,21 +976,20 @@ public sealed unsafe class CnnNeuralFramework
         return colInput;
     }
 
-    private NeuralMatrix FlattenConvWeights(CnnMatrix weights)
+    private void UpdateFlattenConvWeights(CnnMatrix weights, NeuralMatrix flattenedWeights)
     {
-        var innerDim = weights.Channels * weights.Height * weights.Width;
-        var filters = weights.Batch;
-        var weightMat = RentNeural(filters, innerDim);
+        var innerDim = flattenedWeights.UsedColumns;
+        var filters = flattenedWeights.Rows;
 
         var pSrc = weights.Pointer;
-        var pDst = weightMat.Pointer;
-        var dstStride = weightMat.ColumnsStride;
+        var pDst = flattenedWeights.Pointer;
+        var dstStride = flattenedWeights.ColumnsStride;
 
         if (dstStride == innerDim)
         {
             nuint totalBytes = (nuint)((long)filters * innerDim * sizeof(float));
             NativeMemory.Copy(pSrc, pDst, totalBytes);
-            return weightMat;
+            return;
         }
 
         nuint bytesPerRow = (nuint)((long)innerDim * sizeof(float));
@@ -1000,6 +1000,13 @@ public sealed unsafe class CnnNeuralFramework
             float* dstRow = pDst + (f * dstStride);
             NativeMemory.Copy(srcRow, dstRow, bytesPerRow);
         }
+    }
+
+    private NeuralMatrix FlattenConvWeights(CnnMatrix weights)
+    {
+        var innerDim = weights.Channels * weights.Height * weights.Width;
+        var filters = weights.Batch;
+        var weightMat = RentNeural(filters, innerDim);
 
         return weightMat;
     }
