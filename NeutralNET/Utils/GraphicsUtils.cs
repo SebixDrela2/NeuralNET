@@ -438,4 +438,45 @@ public static partial class GraphicsUtils
     }
 
     #endregion
+
+    public static PixelStructRGB GetPixels(Bitmap bmp)
+    {
+        if (!IsSupported) throw new NotSupportedException();
+        var pixels = new PixelStructRGB(default, bmp.Size.Height * bmp.Size.Width);
+        byte[] buff;
+
+        var data = bmp.LockBits(
+            new Rectangle(Point.Empty, bmp.Size),
+            ImageLockMode.ReadOnly,
+            PixelFormat.Format32bppArgb
+        );
+        try
+        {
+            buff = new byte[data.Stride * data.Height];
+            Marshal.Copy(data.Scan0, buff, 0, buff.Length);
+        }
+        finally
+        {
+            bmp.UnlockBits(data);
+        }
+
+        const float mlt = 1.0f / 255;
+
+        var src = buff.AsSpan();
+        var dst = pixels.Pixels;
+
+        for (int y = 0, i = 0, pos = 0; y < data.Height; ++y, pos += data.Stride)
+        {
+            for (int x = 0, posX = pos; x < data.Width; ++x, ++i, posX += 4)
+            {
+                dst[i] = (
+                    float.Clamp(src[posX + 2] * mlt, 0, 1),
+                    float.Clamp(src[posX + 1] * mlt, 0, 1),
+                    float.Clamp(src[posX + 0] * mlt, 0, 1)
+                );
+            }
+        }
+
+        return pixels;
+    }
 }

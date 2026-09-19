@@ -12,18 +12,44 @@ public partial class LetterWindow : Form
     private TabPage realTimeTab;
 
     private FlowLayoutPanel flowPanel;
-    private System.Windows.Forms.Timer _timer;
+    private readonly System.Windows.Forms.Timer _timer;
+    private readonly PictureBox DebugPreview;
+
+    public const int CapturedRefreshRate = 750;
+    public const int CapturedWidth = (int)(GraphicsUtils.Width * CapturedZoom);
+    public const int CapturedHeight = (int)(GraphicsUtils.Height * CapturedZoom);
+    public const float CapturedZoom = 1;
+
+    public const int CapturedSourcePosX = 1545;
+    public const int CapturedSourcePosY = 270;
 
     private readonly CnnNetwork _network;
     private readonly List<(PictureBox Pic, Label Lbl, char TargetChar)> _letterSlots = [];
 
+
+    static (int Min, int Max) MinMax(int a, int b) => (int.Min(a, b), int.Max(a, b));
+
     public LetterWindow(CnnNetwork network)
     {
         _network = network;
+
         InitializeComponent();
+        DebugPreview = new PictureBox
+        {
+            Width = CapturedWidth,
+            Height = CapturedHeight,
+            SizeMode = PictureBoxSizeMode.Zoom,
+            Image = new Bitmap(CapturedWidth, CapturedHeight),
+            BackColor = Color.Black,
+            BorderStyle = BorderStyle.FixedSingle,
+            Margin = new Padding(4),
+        };
+
         InitializeCustomLayout();
 
-        RefreshAllLetters();
+        _timer = new() { Interval = CapturedRefreshRate };
+        _timer.Tick += (_, _) => HandleTick();
+
         StartTimer();
     }
 
@@ -114,23 +140,44 @@ public partial class LetterWindow : Form
 
             _letterSlots.Add((pic, lbl, targetChar));
         }
+
+        flowPanel.Controls.Add(DebugPreview);
     }
 
-    private void StartTimer()
-    {
-        _timer = new System.Windows.Forms.Timer
-        {
-            Interval = 5000
-        };
-        _timer.Tick += (s, e) => RefreshAllLetters();
-        _timer.Start();
-    }
+    private void StartTimer() => _timer.Start();
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         _timer?.Stop();
         _timer?.Dispose();
         base.OnFormClosed(e);
+    }
+
+    private void UpdateCapture()
+    {
+        if (DebugPreview.Image is not Bitmap bmp) throw new InvalidOperationException();
+
+        using (var g = Graphics.FromImage(bmp))
+        {
+            var p1 = new Point(CapturedSourcePosX, CapturedSourcePosY);
+            var p2 = new Point(p1.X - CapturedWidth, p1.Y + CapturedHeight);
+
+            (p1.X, p2.X) = MinMax(p1.X, p2.X);
+            (p1.Y, p2.Y) = MinMax(p1.Y, p2.Y);
+            var pDiff = new Size(p2.X - p1.X, p2.Y - p1.Y);
+
+            g.CopyFromScreen(p1, Point.Empty, pDiff, CopyPixelOperation.SourceCopy);
+            g.Flush();
+        }
+
+        var px = GraphicsUtils.GetPixels(bmp); // !! <--- TUTAJ MASZ PIXELE <--- !!
+        DebugPreview.Invalidate();
+    }
+
+    private void HandleTick()
+    {
+        UpdateCapture();
+        RefreshAllLetters();
     }
 
     private unsafe void RefreshAllLetters()
