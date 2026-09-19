@@ -176,7 +176,7 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
         NativeMemory.Copy(other.Pointer, Pointer, (nuint)UnsafeSize * sizeof(float));
     }
 
-    public NeuralMatrix Im2Col(int kernelH, int kernelW, int stride, int padding)
+    public void Im2Col(NeuralMatrix colInput, int kernelH, int kernelW, int stride, int padding)
     {
         EnsureNotDisposed();
         int paddedH = Height + 2 * padding;
@@ -186,10 +186,8 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
         int patchSize = Channels * kernelH * kernelW;
         int totalPatches = Batch * outH * outW;
 
-        var colMatrix = NeuralMatrix.GetOrCreate(totalPatches, patchSize);
-        float* colPtr = colMatrix.Pointer;
-        int colStride = colMatrix.ColumnsStride;
-
+        float* colPtr = colInput.Pointer;
+        int colStride = colInput.ColumnsStride;
         bool needsPadding = padding > 0;
         using var padded = needsPadding ? GetOrCreate(Batch, Channels, paddedH, paddedW) : null;
         if (needsPadding) padded.Clear();
@@ -272,8 +270,6 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
                 }
             }
         });
-
-        return colMatrix;
     }
 
     public void Col2Im(NeuralMatrix colGradients, int kernelH, int kernelW, int stride, int padding, float scale = 1.0f)
