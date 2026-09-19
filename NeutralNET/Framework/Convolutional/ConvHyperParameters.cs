@@ -4,6 +4,7 @@ using NeutralNET.Matrices;
 namespace NeutralNET.Framework.Neural.CNN;
 
 public sealed record class ConvHyperParameters(
+    CnnMatrix Input,
     CnnMatrix Weights,
     NeuralMatrix FlattenedWeights,
     CnnMatrix Biases,
@@ -19,6 +20,7 @@ public sealed record class ConvHyperParameters(
 
     public void Dispose()
     {
+        Input.Dispose();
         Weights.Dispose();
         FlattenedWeights.Dispose();
         Biases.Dispose();

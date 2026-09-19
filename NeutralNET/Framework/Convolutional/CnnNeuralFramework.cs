@@ -42,8 +42,6 @@ public sealed unsafe class CnnNeuralFramework
     private readonly List<DerivativeFunction> _denseDerivatives;
     private readonly List<ICnnOptimizer> _convOptimizers;
     private readonly List<ICnnOptimizer> _denseOptimizers;
-
-    private readonly List<CnnMatrix> _convInputs;
     private readonly List<NeuralMatrix> _colInputs;
 
     private readonly List<DenseHyperParameters> _denseHyperParameters = [];
@@ -67,8 +65,6 @@ public sealed unsafe class CnnNeuralFramework
         _convHyperParameters = [with(convCount)];
         _convActivationTypes = new List<ActivationType>(convCount);
         _convOptimizers = new List<ICnnOptimizer>(convCount);
-
-        _convInputs = new List<CnnMatrix>(convCount);
         _colInputs = new List<NeuralMatrix>(convCount);
 
         SetupCnnConvParameters(cnnConfig);
@@ -120,13 +116,14 @@ public sealed unsafe class CnnNeuralFramework
             var convOutSz = GetCnnSize(prevInput.BatchSize, weights.Batch, prevInput.Height, prevInput.Width, layer);
             var preAct = RentCnn(convOutSz);
             var postAct = RentCnn(convOutSz);
+            var input = GetInput(postAct, layer.PoolSize);
 
             var nextH = layer.UseMaxPool ? convOutSz.Height / layer.PoolSize : convOutSz.Height;
             var nextW = layer.UseMaxPool ? convOutSz.Width / layer.PoolSize : convOutSz.Width;
             var nextLayer = new CnnSize(prevInput.BatchSize, weights.Batch, nextH, nextW);
             var poolIndices = GetPoolIndices(postAct, layer.PoolSize);
 
-            _convHyperParameters.Add(new(weights, flattenedWeights, biases, preAct, postAct, poolIndices));
+            _convHyperParameters.Add(new(input, weights, flattenedWeights, biases, preAct, postAct, poolIndices));
             _convActivationTypes.Add(layer.Activation);
 
             var opt = CnnOptimizerFactory.Create(_cnnConfig.OptimizerConfig);
@@ -145,6 +142,19 @@ public sealed unsafe class CnnNeuralFramework
                 int outW = inW / poolSize;
 
                 return RentNeural(batch * channels * outH * outW, 1); 
+            }
+
+            CnnMatrix GetInput(CnnMatrix postAct, int poolSize)
+            {
+                int batch = postAct.Batch;
+                int channels = postAct.Channels;
+                int inH = postAct.Height;
+                int inW = postAct.Width;
+
+                int outH = inH / poolSize;
+                int outW = inW / poolSize;
+
+                return RentCnn(batch, channels, outH, outW);
             }
         }
     }
@@ -191,8 +201,6 @@ public sealed unsafe class CnnNeuralFramework
 
             var opt = CnnOptimizerFactory.Create(cnnConfig.OptimizerConfig);
             _denseOptimizers.Add(opt);
-
-            //actSize = preAct.Rows;
         }
     }
     public CnnMatrix GetConvLayerOutput(CnnMatrix input, int layerIndex)
@@ -600,7 +608,7 @@ public sealed unsafe class CnnNeuralFramework
             var preAct = _convHyperParameters[layerIdx].PreAct;
             var postAct = _convHyperParameters[layerIdx].PostAct;
             var colInput = _colInputs[layerIdx];
-            var inputTensor = _convInputs[layerIdx];
+            var inputTensor = _convHyperParameters[layerIdx].Input;
             var indices = _convHyperParameters[layerIdx].PoolIndices;
 
             currentGrad = ProcessSingleConvLayerBackward(
@@ -942,7 +950,8 @@ public sealed unsafe class CnnNeuralFramework
         for (var layerIdx = 0; layerIdx < _cnnConfig.ConvLayers.Count; layerIdx++)
         {
             var layer = _cnnConfig.ConvLayers[layerIdx];
-            _convInputs.Add(current);
+            var input = _convHyperParameters[layerIdx].Input;
+            input.CopyFrom(current);
 
             var colInput = ConvForward(current, layerIdx);
             _colInputs.Add(colInput);
@@ -953,18 +962,11 @@ public sealed unsafe class CnnNeuralFramework
             postAct.CopyFrom(preAct);
             ApplyActivation(postAct, layer.Activation);
 
-            CnnMatrix pooled = null!;
-
-            if (layer.UseMaxPool)
-            {
-                var poolIndices = _convHyperParameters[layerIdx].PoolIndices;
-                pooled = MaxPoolForward(postAct, poolIndices, layer.PoolSize);
-            }
-
-            current = pooled;
+            var poolIndices = _convHyperParameters[layerIdx].PoolIndices;
+            MaxPoolForward(postAct, poolIndices, input, layer.PoolSize);
+            current = input;
         }
 
-        _convInputs.Add(current);
         _lastPooledOutput = current;
 
         var flat = Flatten(current);
@@ -1171,20 +1173,20 @@ public sealed unsafe class CnnNeuralFramework
         return pooled;
     }
 
-    private CnnMatrix MaxPoolForward(CnnMatrix input, NeuralMatrix indices, int poolSize)
+    private void MaxPoolForward(CnnMatrix postAct, NeuralMatrix indices, CnnMatrix input, int poolSize)
     {
-        int batch = input.Batch;
-        int channels = input.Channels;
-        int inH = input.Height;
-        int inW = input.Width;
+        int batch = postAct.Batch;
+        int channels = postAct.Channels;
+        int inH = postAct.Height;
+        int inW = postAct.Width;
 
         int outH = inH / poolSize;
         int outW = inW / poolSize;
 
-        var pooled = RentCnn(batch, channels, outH, outW);
-        var idxMat = indices; //RentNeural(batch * channels * outH * outW, 1);
+        var pooled = input;//RentCnn(batch, channels, outH, outW);
+        var idxMat = indices;
 
-        float* pIn = input.Pointer;
+        float* pIn = postAct.Pointer;
         float* pOut = pooled.Pointer;
         float* pIdx = idxMat.Pointer;
 
@@ -1235,8 +1237,6 @@ public sealed unsafe class CnnNeuralFramework
                 }
             }
         }
-
-        return pooled;
     }
 
     private CnnMatrix MaxPoolBackward(CnnMatrix gradOutput, CnnMatrix input, NeuralMatrix indices, int poolSize)
@@ -1627,7 +1627,6 @@ public sealed unsafe class CnnNeuralFramework
 
     private void ClearIntermediates()
     {
-        DisposeList(_convInputs, skipFirst: true);
         DisposeList(_colInputs);
 
         if (_flattenedInput?.Pointer != null)
