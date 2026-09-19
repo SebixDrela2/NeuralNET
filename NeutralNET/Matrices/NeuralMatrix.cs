@@ -49,10 +49,7 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
 
     public static NeuralMatrix Create(int rows, int columns, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "")
     {
-        var matrix = new NeuralMatrix(rows, columns, ln, fp)
-        {
-            _isPoolable = false
-        };
+        var matrix = new NeuralMatrix(rows, columns, isPoolable: false, ln, fp);
 
         return matrix;
     }
@@ -61,7 +58,7 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
     {
         if (!_pool.TryTake(out var item))
         {
-            item = new NeuralMatrix(rows, columns, ln, fp);
+            item = new NeuralMatrix(rows, columns, isPoolable :true, ln, fp);
         }
         else
         {
@@ -71,21 +68,31 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
         return item;
     }
 
-    private NeuralMatrix(int rows, int columns, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "")
+    private NeuralMatrix(int rows, int columns, bool isPoolable, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "")
     {
         ColumnsStride = MatrixUtils.GetStride(columns);
         Rows = rows;
         UsedColumns = columns;
 
         LogicalLength = Rows * UsedColumns;
-        _allocatedLength = CommonAllocatedLength;
         UnsafeSize = Rows * ColumnsStride;
-        Locations.Add(SourceLocation.Current(new MatrixInfo([rows, columns], UnsafeSize),ln, fp));
-        if (UnsafeSize > CommonAllocatedLength)
+        _isPoolable = isPoolable;
+
+        if (isPoolable)
         {
-            throw new InvalidOperationException($"Requested size {UnsafeSize} exceeds CommonAllocatedLength buffer.");
+            _allocatedLength = CommonAllocatedLength;
+
+            if (UnsafeSize > CommonAllocatedLength)
+            {
+                throw new InvalidOperationException($"Requested size {UnsafeSize} exceeds CommonAllocatedLength buffer.");
+            }
+        }
+        else
+        {
+            _allocatedLength = UnsafeSize;
         }
 
+        Locations.Add(SourceLocation.Current(new MatrixInfo([rows, columns], UnsafeSize),ln, fp));
         Pointer = (float*)NativeMemory.AlignedAlloc((nuint)_allocatedLength * sizeof(float), (nuint)ByteAlignment);
         StrideMasks = MatrixUtils.GetStrideMask(columns);
         Instances.Add(this);

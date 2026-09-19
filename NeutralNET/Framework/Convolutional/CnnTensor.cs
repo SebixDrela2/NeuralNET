@@ -54,7 +54,7 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
 
     public static CnnMatrix Create(int batch, int channels, int height, int width, bool readOnly = false, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "")
     {
-        var matrix = new CnnMatrix(batch, channels, height, width, ln, fp, readOnly: readOnly)
+        var matrix = new CnnMatrix(batch, channels, height, width, isPoolable:false, ln, fp, readOnly: readOnly)
         {
             _isPoolable = false
         };
@@ -66,14 +66,16 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
     {
         if (!_pool.TryTake(out var item))
         {
-            return new CnnMatrix(batch, channels, height, width, ln, fp, readOnly: readOnly);
+            item = new CnnMatrix(batch, channels, height, width, isPoolable:true, ln, fp, readOnly: readOnly);
+
+            return item;
         }
 
         item.Resize(batch, channels, height, width, ln, fp);
         return item;
     }
 
-    private CnnMatrix(int batch, int channels, int height, int width, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "", bool readOnly = false)
+    private CnnMatrix(int batch, int channels, int height, int width, bool isPoolable, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "", bool readOnly = false)
     {
         Batch = batch;
         Channels = channels;
@@ -81,14 +83,26 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
         Width = width;
         ReadOnly = readOnly;
         UnsafeSize = batch * channels * height * width;
-        Locations.Add(SourceLocation.Current(new MatrixInfo([batch, channels, height, width], UnsafeSize), ln, fp));
+        _isPoolable = isPoolable;
 
-        if (UnsafeSize > CommonAllocatedLength)
+        int allocatedLength;
+
+        if (isPoolable)
         {
-            throw new InvalidOperationException($"Tensor size {UnsafeSize} exceeds pool buffer size {CommonAllocatedLength}.");
+            allocatedLength = CommonAllocatedLength;
+
+            if (UnsafeSize > CommonAllocatedLength)
+            {
+                throw new InvalidOperationException($"Requested size {UnsafeSize} exceeds CommonAllocatedLength buffer.");
+            }
+        }
+        else
+        {
+            allocatedLength = UnsafeSize;
         }
 
-        Pointer = (float*)NativeMemory.AlignedAlloc((nuint)(CommonAllocatedLength * sizeof(float)), (nuint)ByteAlignment);
+        Locations.Add(SourceLocation.Current(new MatrixInfo([batch, channels, height, width], UnsafeSize), ln, fp));
+        Pointer = (float*)NativeMemory.AlignedAlloc((nuint)(allocatedLength * sizeof(float)), (nuint)ByteAlignment);
         _inUse = true;
         Clear();
         Instances.Add(this);
