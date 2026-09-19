@@ -31,7 +31,7 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
     private const int ByteAlignment = Alignment * sizeof(float);
 
     private static readonly ConcurrentBag<CnnMatrix> _pool = [];
-    private static readonly int CommonAllocatedLength = 35684352;
+    private static readonly int CommonAllocatedLength = 67108864;
 
     public static readonly ConcurrentBag<CnnMatrix> Instances = [];
     public float* Pointer;

@@ -29,7 +29,7 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
     public static readonly ConcurrentBag<NeuralMatrix> Instances = [];
 
     private static readonly ConcurrentBag<NeuralMatrix> _pool = [];
-    private static readonly int CommonAllocatedLength = 134217728;
+    private static readonly int CommonAllocatedLength = 268435456;
 
     private readonly int _allocatedLength;
 

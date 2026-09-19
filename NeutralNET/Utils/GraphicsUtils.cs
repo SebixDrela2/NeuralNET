@@ -18,9 +18,6 @@ public static partial class GraphicsUtils
 
     private const int DigitLimit = 10;
     private const int Size = Width * Height;
-    private const int RandomSeed = 0xBEEF;
-
-    private static readonly Random _rng = new(RandomSeed);
 
     public const int Width = 64;
     public const int Height = 64;
@@ -48,7 +45,7 @@ public static partial class GraphicsUtils
         {
             var transformation = applyTransformation
                 ? new(
-                    Angle: float.Lerp(-5, 5, _rng.NextSingle()),
+                    Angle: float.Lerp(-5, 5, Random.Shared.NextSingle()),
                     Scale: (
                         X: float.Lerp(0.95f, 1.05f, Random.Shared.NextSingle()),
                         Y: float.Lerp(0.95f, 1.05f, Random.Shared.NextSingle())
@@ -81,10 +78,12 @@ public static partial class GraphicsUtils
                 (ScaleHeight / 2f) - fontDim.Height / 2f
             );
 
-            g.Clear(Color.Black);
+            var (background, letter) = Color.GetRandomColors();
+
+            g.Clear(background);
             g.TextRenderingHint = TextRenderingHint.AntiAlias;
             g.Transform = transformation.ToMatrix();
-            g.DrawString(str, font, new SolidBrush(Color.FromArgb(Random.Shared.Next(128, 256), Random.Shared.Next(128, 256), Random.Shared.Next(128, 256))), pos);
+            g.DrawString(str, font, new SolidBrush(letter), pos);
             g.Flush();
         }
 
@@ -159,7 +158,7 @@ public static partial class GraphicsUtils
         for (var i = 0; i < DigitLimit; ++i, ++c)
         {
             var transformation = applyTransformation
-                ? new(float.Lerp(-5, 5, _rng.NextSingle()))
+                ? new(float.Lerp(-5, 5, Random.Shared.NextSingle()))
                 : ImageTransformation.None;
 
             result[i] = GenerateCharPixelStructRGB(c, font, transformation);
@@ -180,7 +179,7 @@ public static partial class GraphicsUtils
         for (var i = 0; i < DigitLimit; ++i, ++c)
         {
             var transformation = applyTransformation
-                ? new(float.Lerp(-5, 5, _rng.NextSingle()))
+                ? new(float.Lerp(-5, 5, Random.Shared.NextSingle()))
                 : ImageTransformation.None;
 
             result[i] = GenerateCharPixelStruct(c, font, transformation);
