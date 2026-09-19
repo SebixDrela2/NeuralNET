@@ -285,9 +285,9 @@ namespace NeutralNET.GPU
         }
 
         public void ApplyActivation(NeuralMatrix matrix, ActivationType activation)
-            => new ActivationSelector().GetActivation(activation)(matrix);
+            => new ActivationSelector().GetActivation(activation)(matrix); // ? ActivationFunctions.Resolve(activation).ApplyActivationVectorized(matrix)
 
-        public void Softmax(NeuralMatrix matrix) => ActivationFunctions.ApplySoftmaxVectorized(matrix);
+        public void Softmax(NeuralMatrix matrix) => ActivationFunctions.SoftMax.Instance.ApplyActivationVectorized(matrix);
 
         public void Synchronize() { }
 
