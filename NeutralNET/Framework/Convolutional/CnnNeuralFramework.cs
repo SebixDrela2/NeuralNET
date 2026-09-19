@@ -45,7 +45,6 @@ public sealed unsafe class CnnNeuralFramework
 
     private readonly List<CnnMatrix> _convInputs;
     private readonly List<NeuralMatrix> _colInputs;
-    private readonly List<NeuralMatrix> _poolIndices;
 
     private readonly List<DenseHyperParameters> _denseHyperParameters = [];
     private readonly List<ConvHyperParameters> _convHyperParameters = [];
@@ -71,7 +70,6 @@ public sealed unsafe class CnnNeuralFramework
 
         _convInputs = new List<CnnMatrix>(convCount + 1);
         _colInputs = new List<NeuralMatrix>(convCount);
-        _poolIndices = new List<NeuralMatrix>(convCount);
 
         SetupCnnConvParameters(cnnConfig);
 
@@ -126,14 +124,28 @@ public sealed unsafe class CnnNeuralFramework
             var nextH = layer.UseMaxPool ? convOutSz.Height / layer.PoolSize : convOutSz.Height;
             var nextW = layer.UseMaxPool ? convOutSz.Width / layer.PoolSize : convOutSz.Width;
             var nextLayer = new CnnSize(prevInput.BatchSize, weights.Batch, nextH, nextW);
+            var poolIndices = GetPoolIndices(postAct, layer.PoolSize);
 
-            _convHyperParameters.Add(new(weights, flattenedWeights, biases, preAct, postAct));
+            _convHyperParameters.Add(new(weights, flattenedWeights, biases, preAct, postAct, poolIndices));
             _convActivationTypes.Add(layer.Activation);
 
             var opt = CnnOptimizerFactory.Create(_cnnConfig.OptimizerConfig);
             _convOptimizers.Add(opt);
 
             prevInput = nextLayer;
+
+            NeuralMatrix GetPoolIndices(CnnMatrix postAct, int poolSize)
+            {
+                int batch = postAct.Batch;
+                int channels = postAct.Channels;
+                int inH = postAct.Height;
+                int inW = postAct.Width;
+
+                int outH = inH / poolSize;
+                int outW = inW / poolSize;
+
+                return RentNeural(batch * channels * outH * outW, 1); 
+            }
         }
     }
 
@@ -589,7 +601,7 @@ public sealed unsafe class CnnNeuralFramework
             var postAct = _convHyperParameters[layerIdx].PostAct;
             var colInput = _colInputs[layerIdx];
             var inputTensor = _convInputs[layerIdx];
-            var indices = _poolIndices[layerIdx];
+            var indices = _convHyperParameters[layerIdx].PoolIndices;
 
             currentGrad = ProcessSingleConvLayerBackward(
                 currentGrad,
@@ -941,16 +953,12 @@ public sealed unsafe class CnnNeuralFramework
             postAct.CopyFrom(preAct);
             ApplyActivation(postAct, layer.Activation);
 
-            CnnMatrix pooled;
+            CnnMatrix pooled = null!;
+
             if (layer.UseMaxPool)
             {
-                pooled = MaxPoolForward(postAct, layer.PoolSize, out var indices);
-                _poolIndices.Add(indices);
-            }
-            else
-            {
-                pooled = postAct;
-                _poolIndices.Add(RentNeural(1, 1));
+                var poolIndices = _convHyperParameters[layerIdx].PoolIndices;
+                pooled = MaxPoolForward(postAct, poolIndices, layer.PoolSize);
             }
 
             current = pooled;
@@ -1163,7 +1171,7 @@ public sealed unsafe class CnnNeuralFramework
         return pooled;
     }
 
-    private CnnMatrix MaxPoolForward(CnnMatrix input, int poolSize, out NeuralMatrix indices)
+    private CnnMatrix MaxPoolForward(CnnMatrix input, NeuralMatrix indices, int poolSize)
     {
         int batch = input.Batch;
         int channels = input.Channels;
@@ -1174,7 +1182,7 @@ public sealed unsafe class CnnNeuralFramework
         int outW = inW / poolSize;
 
         var pooled = RentCnn(batch, channels, outH, outW);
-        var idxMat = RentNeural(batch * channels * outH * outW, 1);
+        var idxMat = indices; //RentNeural(batch * channels * outH * outW, 1);
 
         float* pIn = input.Pointer;
         float* pOut = pooled.Pointer;
@@ -1222,7 +1230,7 @@ public sealed unsafe class CnnNeuralFramework
                     }
 
                     sliceOut[outIdx] = maxVal;
-                    sliceIdx[outIdx] = (float)maxIdx;
+                    sliceIdx[outIdx] = maxIdx;
                     outIdx++;
                 }
             }
@@ -1622,7 +1630,6 @@ public sealed unsafe class CnnNeuralFramework
     {
         DisposeList(_convInputs, skipFirst: true);
         DisposeList(_colInputs);
-        DisposeList(_poolIndices);
 
         if (_flattenedInput?.Pointer != null)
         {

@@ -8,7 +8,8 @@ public sealed record class ConvHyperParameters(
     NeuralMatrix FlattenedWeights,
     CnnMatrix Biases,
     CnnMatrix PreAct,
-    CnnMatrix PostAct) : IDisposable
+    CnnMatrix PostAct,
+    NeuralMatrix PoolIndices) : IDisposable
 {
     public void SetBatchLimit(int batchSize)
     {
@@ -23,5 +24,6 @@ public sealed record class ConvHyperParameters(
         Biases.Dispose();
         PreAct.Dispose();
         PostAct.Dispose();
+        PoolIndices.Dispose();
     }
 }
