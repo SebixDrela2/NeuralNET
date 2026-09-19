@@ -1646,17 +1646,6 @@ public sealed unsafe class CnnNeuralFramework
         _lastPooledOutput = null;
     }
 
-    private static void DisposeList<T>(List<T> list, bool skipFirst = false) where T : IDisposable
-    {
-        int startIndex = skipFirst ? 1 : 0;
-        for (int i = startIndex; i < list.Count; i++)
-        {
-            list[i].Dispose();
-        }
-
-        list.Clear();
-    }
-
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static NeuralMatrix RentNeural(int rows, int cols, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "")
         => NeuralMatrix.GetOrCreate(rows, cols, ln, fp);
