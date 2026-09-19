@@ -148,6 +148,15 @@ public class LetterDataLoader : DataLoaderBase
         return (imgMat, displayBmp);
     }
 
+    public static CnnMatrix LoadInputFromScreenshot(Bitmap bitmap, PixelStructRGB pixels)
+    {
+        var imgMat = CnnMatrix.GetOrCreate(1, Channels, bitmap.Width, bitmap.Height);
+
+        PopulateTensorFromPixels(pixels, imgMat, 0, bitmap.Width);
+
+        return imgMat;
+    }
+
     private (List<CnnMatrix> images, List<NeuralMatrix> labels) LoadFlattenedDataSet(DataSetType dataSetType, int batchSize, int maxSamples)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxSamples);

@@ -1,3 +1,5 @@
+using System.Net.NetworkInformation;
+using NeutralNET.Framework.Convolutional;
 using NeutralNET.Framework.Neural.CNN;
 using NeutralNET.Matrices;
 using NeutralNET.Stuff;
@@ -12,20 +14,31 @@ public partial class LetterWindow : Form
     private TabPage realTimeTab;
 
     private FlowLayoutPanel flowPanel;
+    private FlowLayoutPanel realTimeFlowPanel;
+    private FlowLayoutPanel realTimeConvLayersPanel;
     private readonly System.Windows.Forms.Timer _timer;
-    private readonly PictureBox DebugPreview;
+    private readonly PictureBox ScreenshotSim;
 
-    public const int CapturedRefreshRate = 750;
+    public const int CapturedRefreshRate = 2000;
     public const int CapturedWidth = (int)(GraphicsUtils.Width * CapturedZoom);
     public const int CapturedHeight = (int)(GraphicsUtils.Height * CapturedZoom);
     public const float CapturedZoom = 1;
 
-    public const int CapturedSourcePosX = 1545;
+    public const int CapturedSourcePosX = 394;
     public const int CapturedSourcePosY = 270;
 
     private readonly CnnNetwork _network;
     private readonly List<(PictureBox Pic, Label Lbl, char TargetChar)> _letterSlots = [];
+    private readonly Dictionary<char, Label> _realTimeLetterLabels = [];
 
+    // Definiujemy zakres warstw konwolucyjnych od 0 do 2 (łącznie 3 warstwy)
+    private const int MinConvLayerIndex = 0;
+    private const int MaxConvLayerIndex = 2;
+    private const int NumConvLayers = (MaxConvLayerIndex - MinConvLayerIndex) + 1;
+
+    private readonly List<PictureBox>[] _cachedLayerPicBoxes = new List<PictureBox>[NumConvLayers];
+    private readonly List<Bitmap>[] _cachedLayerBitmaps = new List<Bitmap>[NumConvLayers];
+    private readonly bool[] _convLayersInitialized = new bool[NumConvLayers];
 
     static (int Min, int Max) MinMax(int a, int b) => (int.Min(a, b), int.Max(a, b));
 
@@ -33,8 +46,16 @@ public partial class LetterWindow : Form
     {
         _network = network;
 
+        for (int i = 0; i < NumConvLayers; i++)
+        {
+            _cachedLayerPicBoxes[i] = [];
+            _cachedLayerBitmaps[i] = [];
+            _convLayersInitialized[i] = false;
+        }
+
         InitializeComponent();
-        DebugPreview = new PictureBox
+
+        ScreenshotSim = new PictureBox
         {
             Width = CapturedWidth,
             Height = CapturedHeight,
@@ -55,13 +76,13 @@ public partial class LetterWindow : Form
 
     private void InitializeCustomLayout()
     {
-        Width = 1040;
-        Height = 720;
-        Text = "CNN Letter Recognition (All A-Z Grid - Click any letter to inspect Conv Layers)";
+        Width = 1300;
+        Height = 850;
+        Text = "CNN Letter Recognition (All A-Z Grid & Conv Layers 0-2 - Zawsze na wierzchu)";
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(18, 18, 18);
+        TopMost = true;
 
-        // Tworzenie głównego kontenera zakładek
         tabControl = new TabControl
         {
             Dock = DockStyle.Fill,
@@ -92,7 +113,6 @@ public partial class LetterWindow : Form
             BackColor = Color.FromArgb(18, 18, 18)
         };
 
-        // Dodanie siatki liter do zakładki "First time"
         firstTimeTab.Controls.Add(flowPanel);
 
         foreach (char targetChar in GraphicsUtils.DefaultLetters)
@@ -103,7 +123,7 @@ public partial class LetterWindow : Form
                 Height = 175,
                 Margin = new Padding(6),
                 BorderStyle = BorderStyle.FixedSingle,
-                BackColor = Color.FromArgb(28, 28, 30, 30),
+                BackColor = Color.FromArgb(28, 28, 30),
                 Cursor = Cursors.Hand
             };
 
@@ -141,7 +161,82 @@ public partial class LetterWindow : Form
             _letterSlots.Add((pic, lbl, targetChar));
         }
 
-        flowPanel.Controls.Add(DebugPreview);
+        var realTimeMainLayout = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.FromArgb(18, 18, 18)
+        };
+
+        var leftPanel = new Panel
+        {
+            Width = CapturedWidth + 20,
+            Dock = DockStyle.Left,
+            BackColor = Color.FromArgb(18, 18, 18)
+        };
+
+        ScreenshotSim.Location = new Point(10, 20);
+        leftPanel.Controls.Add(ScreenshotSim);
+
+        var rightMainSplitPanel = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.FromArgb(18, 18, 18)
+        };
+
+        realTimeFlowPanel = new FlowLayoutPanel
+        {
+            Height = 220,
+            Dock = DockStyle.Top,
+            AutoScroll = true,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = true,
+            Padding = new Padding(10),
+            BackColor = Color.FromArgb(18, 18, 18)
+        };
+
+        foreach (char targetChar in GraphicsUtils.DefaultLetters)
+        {
+            var slotPanel = new Panel
+            {
+                Width = 100,
+                Height = 50,
+                Margin = new Padding(3),
+                BorderStyle = BorderStyle.FixedSingle,
+                BackColor = Color.FromArgb(28, 28, 30)
+            };
+
+            var slotLbl = new Label
+            {
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = new Font("Segoe UI", 8F, FontStyle.Bold),
+                ForeColor = Color.White,
+                Text = $"{targetChar}: 0.0%"
+            };
+
+            slotPanel.Controls.Add(slotLbl);
+            realTimeFlowPanel.Controls.Add(slotPanel);
+            _realTimeLetterLabels[targetChar] = slotLbl;
+        }
+
+        realTimeConvLayersPanel = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoScroll = true,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            Padding = new Padding(10),
+            BackColor = Color.FromArgb(18, 18, 18)
+        };
+
+        rightMainSplitPanel.Controls.Add(realTimeConvLayersPanel);
+        rightMainSplitPanel.Controls.Add(realTimeFlowPanel);
+
+        realTimeMainLayout.Controls.Add(rightMainSplitPanel);
+        realTimeMainLayout.Controls.Add(leftPanel);
+        realTimeTab.Controls.Add(realTimeMainLayout);
+
+        Task.Run(() => RefreshAllLetters());
     }
 
     private void StartTimer() => _timer.Start();
@@ -153,31 +248,249 @@ public partial class LetterWindow : Form
         base.OnFormClosed(e);
     }
 
-    private void UpdateCapture()
+    private int TickState = 0;
+
+    private async void HandleTick()
     {
-        if (DebugPreview.Image is not Bitmap bmp) throw new InvalidOperationException();
+        if (Interlocked.CompareExchange(ref TickState, 1, 0) != 0) return;
 
-        using (var g = Graphics.FromImage(bmp))
+        try
         {
-            var p1 = new Point(CapturedSourcePosX, CapturedSourcePosY);
-            var p2 = new Point(p1.X - CapturedWidth, p1.Y + CapturedHeight);
+            if (ScreenshotSim.Image is not Bitmap bmp) return;
 
-            (p1.X, p2.X) = MinMax(p1.X, p2.X);
-            (p1.Y, p2.Y) = MinMax(p1.Y, p2.Y);
-            var pDiff = new Size(p2.X - p1.X, p2.Y - p1.Y);
+            using (var g = Graphics.FromImage(bmp))
+            {
+                var p1 = new Point(CapturedSourcePosX, CapturedSourcePosY);
+                var p2 = new Point(p1.X + CapturedWidth, p1.Y + CapturedHeight);
 
-            g.CopyFromScreen(p1, Point.Empty, pDiff, CopyPixelOperation.SourceCopy);
-            g.Flush();
+                (p1.X, p2.X) = MinMax(p1.X, p2.X);
+                (p1.Y, p2.Y) = MinMax(p1.Y, p2.Y);
+                var pDiff = new Size(p2.X - p1.X, p2.Y - p1.Y);
+
+                g.CopyFromScreen(p1, Point.Empty, pDiff, CopyPixelOperation.SourceCopy);
+                g.Flush();
+            }
+
+            ScreenshotSim.Invalidate();
+
+            var px = GraphicsUtils.GetPixels(bmp);
+            using var inputMatrix = LetterDataLoader.LoadInputFromScreenshot(bmp, px);
+
+            await Task.Run(() =>
+            {
+                using var output = _network.Forward(inputMatrix);
+
+                var convOutputs = new CnnMatrix[NumConvLayers];
+                for (int i = 0; i < NumConvLayers; i++)
+                {
+                    convOutputs[i] = _network.GetConvLayerOutput(inputMatrix, layerIndex: MinConvLayerIndex + i);
+                }
+
+                try
+                {
+                    unsafe
+                    {
+                        float* pOutput = output.Pointer;
+                        int outputCols = output.UsedColumns;
+
+                        var scores = new Dictionary<char, float>();
+                        for (int i = 0; i < outputCols && i < GraphicsUtils.DefaultLetters.Length; i++)
+                        {
+                            scores[GraphicsUtils.DefaultLetters[i]] = pOutput[i];
+                        }
+
+                        bool allInitialized = true;
+                        for (int i = 0; i < NumConvLayers; i++)
+                        {
+                            if (!_convLayersInitialized[i]) allInitialized = false;
+                        }
+
+                        if (!allInitialized)
+                        {
+                            BeginInvoke(new Action(() =>
+                            {
+                                for (int i = 0; i < NumConvLayers; i++)
+                                {
+                                    if (!_convLayersInitialized[i])
+                                    {
+                                        InitializeLayerUI(i, convOutputs[i].Channels, convOutputs[i].Width, convOutputs[i].Height);
+                                    }
+                                }
+                            }));
+
+                            while (true)
+                            {
+                                bool check = true;
+                                for (int i = 0; i < NumConvLayers; i++) if (!_convLayersInitialized[i]) check = false;
+                                if (check) break;
+                                Thread.Sleep(10);
+                            }
+                        }
+
+                        for (int i = 0; i < NumConvLayers; i++)
+                        {
+                            ProcessConvLayerData(convOutputs[i], i);
+                        }
+
+                        BeginInvoke(new Action(() =>
+                        {
+                            UpdateUIResults(scores);
+                        }));
+                    }
+                }
+                finally
+                {
+                    for (int i = 0; i < NumConvLayers; i++)
+                    {
+                        convOutputs[i]?.Dispose();
+                    }
+                }
+            });
         }
-
-        var px = GraphicsUtils.GetPixels(bmp); // !! <--- TUTAJ MASZ PIXELE <--- !!
-        DebugPreview.Invalidate();
+        catch (Exception)
+        {
+            // Błędy w tle
+        }
+        finally
+        {
+            Volatile.Write(ref TickState, 0);
+        }
     }
 
-    private void HandleTick()
+    private void ProcessConvLayerData(CnnMatrix convOutput, int arrayIndex)
     {
-        UpdateCapture();
-        RefreshAllLetters();
+        int numFilters = convOutput.Channels;
+        int mapHeight = convOutput.Height;
+        int mapWidth = convOutput.Width;
+
+        for (int f = 0; f < numFilters; f++)
+        {
+            float min = float.MaxValue, max = float.MinValue;
+            for (int y = 0; y < mapHeight; y++)
+            {
+                for (int x = 0; x < mapWidth; x++)
+                {
+                    float val = convOutput[0, f, y, x];
+                    if (val < min) min = val;
+                    if (val > max) max = val;
+                }
+            }
+
+            float range = max - min;
+            if (range == 0) range = 1f;
+
+            var targetBmp = _cachedLayerBitmaps[arrayIndex][f];
+
+            for (int y = 0; y < mapHeight; y++)
+            {
+                for (int x = 0; x < mapWidth; x++)
+                {
+                    float val = convOutput[0, f, y, x];
+                    int normalized = (int)(((val - min) / range) * 255f);
+                    normalized = Math.Max(0, Math.Min(255, normalized));
+
+                    targetBmp.SetPixel(x, y, Color.FromArgb(normalized, normalized, normalized));
+                }
+            }
+        }
+    }
+
+    private void InitializeLayerUI(int arrayIndex, int numFilters, int mapWidth, int mapHeight)
+    {
+        if (_convLayersInitialized[arrayIndex]) return;
+
+        int actualLayerIndex = MinConvLayerIndex + arrayIndex;
+        int maxPerRow = 16;
+        int itemWidthSize = 68;
+        int panelWidth = Math.Min(numFilters, maxPerRow) * itemWidthSize + 30;
+
+        var layerContainer = new Panel
+        {
+            Width = panelWidth,
+            Height = ((numFilters / maxPerRow) + 1) * 76 + 35,
+            BackColor = Color.FromArgb(24, 24, 26),
+            Margin = new Padding(4, 4, 4, 12),
+            BorderStyle = BorderStyle.FixedSingle
+        };
+
+        var titleLbl = new Label
+        {
+            Text = $"Convolutional Layer {actualLayerIndex + 1} Feature Maps (Real-time)",
+            ForeColor = Color.White,
+            Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+            Location = new Point(8, 4),
+            Width = 350,
+            Height = 20
+        };
+        layerContainer.Controls.Add(titleLbl);
+
+        var mapsFlow = new FlowLayoutPanel
+        {
+            Location = new Point(8, 26),
+            Width = panelWidth - 16,
+            Height = layerContainer.Height - 34,
+            FlowDirection = FlowDirection.LeftToRight,
+            AutoScroll = true,
+            WrapContents = true,
+            BackColor = Color.FromArgb(20, 20, 22)
+        };
+        layerContainer.Controls.Add(mapsFlow);
+        realTimeConvLayersPanel.Controls.Add(layerContainer);
+
+        for (int f = 0; f < numFilters; f++)
+        {
+            var mapBmp = new Bitmap(mapWidth, mapHeight, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            _cachedLayerBitmaps[arrayIndex].Add(mapBmp);
+
+            var pic = new PictureBox
+            {
+                Width = 64,
+                Height = 64,
+                SizeMode = PictureBoxSizeMode.Zoom,
+                Image = mapBmp,
+                BackColor = Color.Black,
+                BorderStyle = BorderStyle.FixedSingle,
+                Margin = new Padding(2)
+            };
+            _cachedLayerPicBoxes[arrayIndex].Add(pic);
+            mapsFlow.Controls.Add(pic);
+        }
+
+        _convLayersInitialized[arrayIndex] = true;
+    }
+
+    private void UpdateUIResults(Dictionary<char, float> scores)
+    {
+        foreach (var kvp in scores)
+        {
+            char c = kvp.Key;
+            float val = kvp.Value;
+
+            if (_realTimeLetterLabels.TryGetValue(c, out var lbl))
+            {
+                lbl.Text = $"{c}: {val * 100:F1}%";
+                if (val > 0.5f)
+                {
+                    lbl.ForeColor = Color.LightGreen;
+                }
+                else if (val > 0.2f)
+                {
+                    lbl.ForeColor = Color.Gold;
+                }
+                else
+                {
+                    lbl.ForeColor = Color.Gray;
+                }
+            }
+        }
+
+        foreach (var picList in _cachedLayerPicBoxes)
+        {
+            foreach (var pic in picList)
+            {
+                pic.Invalidate();
+            }
+        }
     }
 
     private unsafe void RefreshAllLetters()
@@ -186,9 +499,6 @@ public partial class LetterWindow : Form
         {
             char targetChar = slot.TargetChar;
             var (inputMatrix, displayBmp) = LetterDataLoader.GenerateSampleForUI(targetChar);
-
-            slot.Pic.Image?.Dispose();
-            slot.Pic.Image = displayBmp;
 
             using NeuralMatrix output = _network.Forward(inputMatrix);
             inputMatrix.Dispose();
@@ -213,21 +523,27 @@ public partial class LetterWindow : Form
                 ? GraphicsUtils.DefaultLetters[predictedClassIndex]
                 : '?';
 
-            if (predictedChar == targetChar && maxConfidence >= 0.7f)
+            BeginInvoke(new Action(() =>
             {
-                slot.Lbl.Text = $"[{targetChar}] Pred: {predictedChar}\n({maxConfidence * 100:F1}%)";
-                slot.Lbl.ForeColor = Color.LightGreen;
-            }
-            else if (predictedChar != targetChar)
-            {
-                slot.Lbl.Text = $"[{targetChar}] Pred: {predictedChar}\n({maxConfidence * 100:F1}%)";
-                slot.Lbl.ForeColor = Color.IndianRed;
-            }
-            else
-            {
-                slot.Lbl.Text = $"[{targetChar}] Pred: {predictedChar}\n({maxConfidence * 100:F1}%)";
-                slot.Lbl.ForeColor = Color.Gold;
-            }
+                slot.Pic.Image?.Dispose();
+                slot.Pic.Image = displayBmp;
+
+                if (predictedChar == targetChar && maxConfidence >= 0.7f)
+                {
+                    slot.Lbl.Text = $"[{targetChar}] Pred: {predictedChar}\n({maxConfidence * 100:F1}%)";
+                    slot.Lbl.ForeColor = Color.LightGreen;
+                }
+                else if (predictedChar != targetChar)
+                {
+                    slot.Lbl.Text = $"[{targetChar}] Pred: {predictedChar}\n({maxConfidence * 100:F1}%)";
+                    slot.Lbl.ForeColor = Color.IndianRed;
+                }
+                else
+                {
+                    slot.Lbl.Text = $"[{targetChar}] Pred: {predictedChar}\n({maxConfidence * 100:F1}%)";
+                    slot.Lbl.ForeColor = Color.Gold;
+                }
+            }));
         }
     }
 
@@ -249,7 +565,8 @@ public partial class LetterWindow : Form
                 Height = 540,
                 Text = $"Convolutional Layer 1 Feature Maps for '{targetChar}'",
                 StartPosition = FormStartPosition.CenterParent,
-                BackColor = Color.FromArgb(18, 18, 18)
+                BackColor = Color.FromArgb(18, 18, 18),
+                TopMost = true
             };
 
             FlowLayoutPanel mapPanel = new FlowLayoutPanel
@@ -309,8 +626,8 @@ public partial class LetterWindow : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Could not retrieve convolutional layer activations: {ex.Message}",
-                "Feature Map Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show($"Nie można pobrać aktywacji warstwy konwolucyjnej: {ex.Message}",
+                "Błąd mapy cech", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally
         {
