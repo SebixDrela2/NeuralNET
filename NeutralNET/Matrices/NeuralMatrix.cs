@@ -112,6 +112,13 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
         Clear();
     }
 
+    public void SetRowSize(int limit)
+    {
+        Rows = limit;
+        LogicalLength = Rows * UsedColumns;
+        UnsafeSize = Rows * ColumnsStride;
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void DotVectorized(NeuralMatrix other, NeuralMatrix result)
     {
