@@ -1,4 +1,5 @@
 using System.Data;
+using System.Runtime.Versioning;
 using NeutralNET.Framework.Convolutional;
 using NeutralNET.Matrices;
 using NeutralTest;
@@ -25,7 +26,7 @@ public abstract class DataLoaderBase
     /// <summary>
     /// Loads the complete dataset
     /// </summary>
-    /// 
+    ///
     public NeuralDataset LoadCompleteDataset(int batchSize = 64, int maxTrainSamples = int.MaxValue, int maxTestSamples = int.MaxValue)
     {
         var (trainImages, trainLabels, testImages, testLabels) = LoadBatches(batchSize, maxTrainSamples, maxTestSamples);
@@ -71,50 +72,39 @@ public abstract class DataLoaderBase
     // SHARED HELPER METHODS
     // ============================================================================
 
-    protected int[] ExtractActualLabels(List<NeuralMatrix> labelBatches)
+    protected static int[] ExtractActualLabels(List<NeuralMatrix> labelBatches)
     {
-        if (labelBatches == null || labelBatches.Count == 0)
-            return Array.Empty<int>();
+        if (labelBatches is not [_, ..]) return [];
 
-        int totalSamples = labelBatches.Sum(l => l?.Rows ?? 0);
+        int totalSamples = labelBatches.Sum(l => l.Rows);
         int[] actualLabels = new int[totalSamples];
-        int offset = 0;
 
+        int offset = 0;
         foreach (var lbl in labelBatches)
         {
-            if (lbl == null) continue;
-            for (int i = 0; i < lbl.Rows; i++)
-                actualLabels[offset + i] = ArgMax(lbl.GetRowSpan(i));
+            for (int i = 0; i < lbl.Rows; i++) actualLabels[offset + i] = ArgMax(lbl.GetRowSpan(i));
             offset += lbl.Rows;
         }
 
         return actualLabels;
     }
 
-    protected int ArgMax(Span<float> row)
+    protected static int ArgMax(Span<float> row)
     {
-        int maxIdx = 0;
-        float maxVal = row[0];
+        var max = (Index: 0, Value: row[0]);
         for (int i = 1; i < row.Length; i++)
         {
-            if (row[i] > maxVal)
-            {
-                maxVal = row[i];
-                maxIdx = i;
-            }
+            if (row[i] > max.Value) max = (i, row[i]);
         }
-        return maxIdx;
+        return max.Index;
     }
 
     protected CnnMatrix CombineCnnMatrices(List<CnnMatrix> matrices)
     {
-        if (matrices == null || matrices.Count == 0)
-            return null;
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(matrices.Count);
+        if (matrices is [var single]) return single;
 
-        if (matrices.Count == 1)
-            return matrices[0];
-
-        int totalBatch = matrices.Sum(m => m?.Batch ?? 0);
+        int totalBatch = matrices.Sum(m => m.Batch);
         var combined = CnnMatrix.GetOrCreate(totalBatch, Channels, ImageScale, ImageScale);
 
         int offset = 0;
@@ -142,19 +132,15 @@ public abstract class DataLoaderBase
 
     protected NeuralMatrix CombineNeuralMatrices(List<NeuralMatrix> matrices)
     {
-        if (matrices == null || matrices.Count == 0)
-            return null;
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(matrices.Count);
+        if (matrices is [var single]) return single;
 
-        if (matrices.Count == 1)
-            return matrices[0];
-
-        int totalRows = matrices.Sum(m => m?.Rows ?? 0);
+        int totalRows = matrices.Sum(m => m.Rows);
         var combined = NeuralMatrix.GetOrCreate(totalRows, NumClasses);
 
         int offset = 0;
         foreach (var mat in matrices)
         {
-            if (mat == null) continue;
             for (int i = 0; i < mat.Rows; i++)
             {
                 for (int j = 0; j < NumClasses; j++)
