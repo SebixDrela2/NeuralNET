@@ -68,7 +68,7 @@ public sealed unsafe class CnnNeuralFramework
         _convActivationTypes = new List<ActivationType>(convCount);
         _convOptimizers = new List<ICnnOptimizer>(convCount);
 
-        _convInputs = new List<CnnMatrix>(convCount + 1);
+        _convInputs = new List<CnnMatrix>(convCount);
         _colInputs = new List<NeuralMatrix>(convCount);
 
         SetupCnnConvParameters(cnnConfig);
@@ -1236,7 +1236,6 @@ public sealed unsafe class CnnNeuralFramework
             }
         }
 
-        indices = idxMat;
         return pooled;
     }
 
