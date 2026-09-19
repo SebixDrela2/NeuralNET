@@ -7,6 +7,10 @@ namespace NeutralNET.ImageEpochViewer;
 
 public partial class LetterWindow : Form
 {
+    private TabControl tabControl;
+    private TabPage firstTimeTab;
+    private TabPage realTimeTab;
+
     private FlowLayoutPanel flowPanel;
     private System.Windows.Forms.Timer _timer;
 
@@ -31,6 +35,27 @@ public partial class LetterWindow : Form
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(18, 18, 18);
 
+        // Tworzenie głównego kontenera zakładek
+        tabControl = new TabControl
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.FromArgb(18, 18, 18)
+        };
+
+        firstTimeTab = new TabPage("First time")
+        {
+            BackColor = Color.FromArgb(18, 18, 18)
+        };
+
+        realTimeTab = new TabPage("Real time")
+        {
+            BackColor = Color.FromArgb(18, 18, 18)
+        };
+
+        tabControl.Controls.Add(firstTimeTab);
+        tabControl.Controls.Add(realTimeTab);
+        Controls.Add(tabControl);
+
         flowPanel = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -41,7 +66,8 @@ public partial class LetterWindow : Form
             BackColor = Color.FromArgb(18, 18, 18)
         };
 
-        Controls.Add(flowPanel);
+        // Dodanie siatki liter do zakładki "First time"
+        firstTimeTab.Controls.Add(flowPanel);
 
         foreach (char targetChar in GraphicsUtils.DefaultLetters)
         {
@@ -77,7 +103,6 @@ public partial class LetterWindow : Form
                 Cursor = Cursors.Hand
             };
 
-            // Wire up click events so clicking the card, picture, or label triggers feature map preview
             EventHandler clickHandler = (s, e) => ShowFeatureMaps(targetChar);
             itemPanel.Click += clickHandler;
             pic.Click += clickHandler;

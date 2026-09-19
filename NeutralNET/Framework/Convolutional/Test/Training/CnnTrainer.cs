@@ -97,12 +97,42 @@ public class CnnTrainer
             using var pred = _network.Forward(sampleBatch);
 
             var numSamples = Math.Min(numClasses, sampleBatch.Batch);
-            for (int i = 0; i < numSamples; i++)
+
+            var orderedSamples = Enumerable
+                .Range(0, sampleBatch.Batch)
+                .Select(i =>
+                {
+                    var actual = GetActualLabelFromRow(sampleLabels, i, numClasses);
+                    var pred2 = pred.GetRowSpan(i);
+                    var maxError = 0f;
+
+                    for (var j = 0; j < pred2.Length; ++j)
+                    {
+                        if (j == actual)
+                        {
+                            var error = 1 - pred2[j];
+                            maxError = float.Max(maxError, error);
+                        }
+                        else
+                        {
+                            var error = pred2[j];
+                            maxError = float.Max(maxError, error);
+                        }
+                    }
+                    return (Index: i, Letter: actual, Error: maxError);
+                })
+                .OrderBy(x => x.Letter)
+                .ThenByDescending(x => x.Error)
+                .ToArray();
+            var distinctOrderedSamples = orderedSamples.DistinctBy(x => x.Letter).ToArray();
+
+            for (int i = 0; i < distinctOrderedSamples.Length; i++)
             {
-                results[offset++] = GetActualLabelFromRow(sampleLabels, i, numClasses);
+                var distinctOrderedSample = distinctOrderedSamples[i];
+                results[offset++] = distinctOrderedSample.Letter;
 
                 var probs = results[offset..(offset += numClasses)];
-                pred.GetRowSpan(i).CopyTo(probs);
+                pred.GetRowSpan(distinctOrderedSample.Index).CopyTo(probs);
             }
         }
 
