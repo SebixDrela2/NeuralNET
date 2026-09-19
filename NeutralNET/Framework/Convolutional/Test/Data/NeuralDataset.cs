@@ -17,6 +17,7 @@ public class NeuralDataset
 
     public void Dispose()
     {
+        //? TrainImages.ClearAndDispose();
         TrainLabels.ClearAndDispose();
         TestImages.ClearAndDispose();
         TestLabels.ClearAndDispose();

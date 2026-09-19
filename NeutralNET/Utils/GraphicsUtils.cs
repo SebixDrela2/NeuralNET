@@ -34,59 +34,39 @@ public static partial class GraphicsUtils
 
     public static readonly char[] DefaultLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".ToCharArray();
 
-    public static PixelStructRGB[] GetLettersDataSetRGB(
-        string fontName,
-        bool applyTransformation = true,
-        FontStyle style = FontStyle.Regular)
+    public static PixelStructRGB[] GetLettersDataSetRGB(string fontName, bool applyTransformation, FontStyle style = default)
         => GetLettersDataSetRGB(fontName, DefaultLetters, applyTransformation, style);
 
-    public static PixelStructRGB[] GetLettersDataSetRGB(
-        string fontName,
-        char[] characters,
-        bool applyTransformation = true,
-        FontStyle style = FontStyle.Regular)
+    public static PixelStructRGB[] GetLettersDataSetRGB(string fontName, char[] characters, bool applyTransformation, FontStyle style = default)
     {
-        if (!IsSupported)
-        {
-            throw new NotSupportedException();
-        }
+        if (!IsSupported) throw new NotSupportedException();
 
         var result = new PixelStructRGB[characters.Length];
         using var font = new Font(fontName, FontSize * UpScale, style);
 
         Parallel.For(0, characters.Length, i =>
         {
-            Matrix? transformation;
-
-            if (applyTransformation)
-            {
-                var angle = float.Lerp(-5, 5, Random.Shared.NextSingle());
-                var scaleX = float.Lerp(0.95f, 1.05f, Random.Shared.NextSingle());
-                var scaleY = float.Lerp(0.95f, 1.05f, Random.Shared.NextSingle());
-
-                transformation = CreateTranformationMatrix(angle, scaleX, scaleY);
-            }
-            else
-            {
-                transformation = CreateTranformationMatrix(0, 1, 1);
-            }
+            var transformation = applyTransformation
+                ? new(
+                    Angle: float.Lerp(-5, 5, _rng.NextSingle()),
+                    Scale: (
+                        X: float.Lerp(0.95f, 1.05f, Random.Shared.NextSingle()),
+                        Y: float.Lerp(0.95f, 1.05f, Random.Shared.NextSingle())
+                    )
+                )
+                : ImageTransformation.None;
 
             // Index 'i' (0-25) is used as the class label
             result[i] = GenerateCharPixelStructRGB(characters[i], font, i, transformation);
-            transformation?.Dispose();
         });
 
         return result;
     }
 
-    public static PixelStructRGB GenerateCharPixelStructRGB(char @char, Font font, int classLabel, Matrix? transformation = null)
+    public static PixelStructRGB GenerateCharPixelStructRGB(char @char, Font font, int classLabel) => GenerateCharPixelStructRGB(@char, font, classLabel, ImageTransformation.None);
+    public static PixelStructRGB GenerateCharPixelStructRGB(char @char, Font font, int classLabel, ImageTransformation transformation)
     {
-        if (!IsSupported)
-        {
-            throw new NotSupportedException();
-        }
-
-        transformation ??= new Matrix();
+        if (!IsSupported) throw new NotSupportedException();
 
         using var bitMap = new Bitmap(ScaleWidth, ScaleHeight, PixelFormat.Format32bppArgb);
         using var trueBitMap = new Bitmap(Width, Height, PixelFormat.Format32bppArgb);
@@ -103,7 +83,7 @@ public static partial class GraphicsUtils
 
             g.Clear(Color.Black);
             g.TextRenderingHint = TextRenderingHint.AntiAlias;
-            g.Transform = transformation;
+            g.Transform = transformation.ToMatrix();
             g.DrawString(str, font, new SolidBrush(Color.FromArgb(Random.Shared.Next(128, 256), Random.Shared.Next(128, 256), Random.Shared.Next(128, 256))), pos);
             g.Flush();
         }
@@ -147,7 +127,7 @@ public static partial class GraphicsUtils
                     byte g = buffer[pixelOffset + 1];
                     byte r = buffer[pixelOffset + 2];
 
-                    pixels.Values[index] = (r/255.0f, g/255.0f, b/255.0f);
+                    pixels.Values[index] = (r / 255.0f, g / 255.0f, b / 255.0f);
                 }
             }
         }
@@ -163,10 +143,8 @@ public static partial class GraphicsUtils
 
     #region Original Digit Data Generation (PRESERVED)
 
-    public static PixelStructRGB[] GetDigitsDataSetRGB(
-        string fontName,
-        bool applyTransformation = true,
-        FontStyle style = FontStyle.Regular)
+    public static PixelStructRGB[] GetDigitsDataSetRGB(string fontName) => GetDigitsDataSetRGB(fontName, true, default);
+    public static PixelStructRGB[] GetDigitsDataSetRGB(string fontName, bool applyTransformation, FontStyle style = default)
     {
         if (!IsSupported)
         {
@@ -180,35 +158,19 @@ public static partial class GraphicsUtils
 
         for (var i = 0; i < DigitLimit; ++i, ++c)
         {
-            Matrix? transformation;
-
-            if (applyTransformation)
-            {
-                var angle = float.Lerp(-5, 5, _rng.NextSingle());
-                var scaleX = float.Lerp(0.95f, 1.05f, _rng.NextSingle());
-                var scaleY = float.Lerp(0.95f, 1.05f, _rng.NextSingle());
-
-                transformation = CreateTranformationMatrix(angle, 1, 1);
-            }
-            else
-            {
-                transformation = CreateTranformationMatrix(0, 1, 1);
-            }
+            var transformation = applyTransformation
+                ? new(float.Lerp(-5, 5, _rng.NextSingle()))
+                : ImageTransformation.None;
 
             result[i] = GenerateCharPixelStructRGB(c, font, transformation);
         }
         return result;
     }
 
-    public static PixelStruct[] GetDigitsDataSet(
-        string fontName,
-        bool applyTransformation = true,
-        FontStyle style = FontStyle.Regular)
+    public static PixelStruct[] GetDigitsDataSet(string fontName) => GetDigitsDataSet(fontName, true, default);
+    public static PixelStruct[] GetDigitsDataSet(string fontName, bool applyTransformation, FontStyle style = default)
     {
-        if (!IsSupported)
-        {
-            throw new NotSupportedException();
-        }
+        if (!IsSupported) throw new NotSupportedException();
 
         var result = new PixelStruct[DigitLimit];
         var c = '0';
@@ -217,49 +179,26 @@ public static partial class GraphicsUtils
 
         for (var i = 0; i < DigitLimit; ++i, ++c)
         {
-            Matrix? transformation = null;
-
-            if (applyTransformation)
-            {
-                var angle = float.Lerp(-5, 5, _rng.NextSingle());
-                var scaleX = float.Lerp(0.95f, 1.05f, _rng.NextSingle());
-                var scaleY = float.Lerp(0.95f, 1.05f, _rng.NextSingle());
-
-                transformation = CreateTranformationMatrix(angle, 1, 1);
-            }
-            else
-            {
-                transformation = CreateTranformationMatrix(0, 1, 1);
-            }
+            var transformation = applyTransformation
+                ? new(float.Lerp(-5, 5, _rng.NextSingle()))
+                : ImageTransformation.None;
 
             result[i] = GenerateCharPixelStruct(c, font, transformation);
         }
         return result;
     }
 
-    public static PixelStruct GenerateCharPixelStruct(
-        char @char,
-        string fontName,
-        Matrix? transformation = null,
-        FontStyle style = FontStyle.Regular)
+    public static PixelStruct GenerateCharPixelStruct(char @char, string fontName, ImageTransformation transformation, FontStyle style = default)
     {
-        if (!IsSupported)
-        {
-            throw new NotSupportedException();
-        }
+        if (!IsSupported) throw new NotSupportedException();
 
         using var font = new Font(fontName, FontSize * UpScale, style);
         return GenerateCharPixelStruct(@char, font, transformation);
     }
 
-    public static PixelStructRGB GenerateCharPixelStructRGB(char @char, Font font, Matrix? transformation = null)
+    public static PixelStructRGB GenerateCharPixelStructRGB(char @char, Font font, ImageTransformation transformation)
     {
-        if (!IsSupported)
-        {
-            throw new NotSupportedException();
-        }
-
-        transformation ??= new Matrix();
+        if (!IsSupported) throw new NotSupportedException();
 
         using var bitMap = new Bitmap(ScaleWidth, ScaleHeight, PixelFormat.Format32bppArgb);
         using var trueBitMap = new Bitmap(Width, Height, PixelFormat.Format32bppArgb);
@@ -276,7 +215,7 @@ public static partial class GraphicsUtils
 
             g.Clear(Color.Black);
             g.TextRenderingHint = TextRenderingHint.AntiAlias;
-            g.Transform = transformation;
+            g.Transform = transformation.ToMatrix();
             g.DrawString(str, font, Brushes.White, pos);
             g.Flush();
         }
@@ -310,14 +249,17 @@ public static partial class GraphicsUtils
         return pixels;
     }
 
-    public static PixelStruct GenerateCharPixelStruct(char @char, Font font, Matrix? transformation = null)
+    public static PixelStruct GenerateCharPixelStruct(char @char, string fontName, FontStyle style = default)
     {
-        if (!IsSupported)
-        {
-            throw new NotSupportedException();
-        }
+        if (!IsSupported) throw new NotSupportedException();
 
-        transformation ??= new Matrix();
+        using var font = new Font(fontName, FontSize * UpScale, style);
+        return GenerateCharPixelStruct(@char, font);
+    }
+    public static PixelStruct GenerateCharPixelStruct(char @char, Font font) => GenerateCharPixelStruct(@char, font, ImageTransformation.None);
+    public static PixelStruct GenerateCharPixelStruct(char @char, Font font, ImageTransformation transformation)
+    {
+        if (!IsSupported) throw new NotSupportedException();
 
         using var bitMap = new Bitmap(ScaleWidth, ScaleHeight, PixelFormat.Format32bppArgb);
         using var trueBitMap = new Bitmap(Width, Height, PixelFormat.Format32bppArgb);
@@ -334,7 +276,7 @@ public static partial class GraphicsUtils
 
             g.Clear(Color.Black);
             g.TextRenderingHint = TextRenderingHint.AntiAlias;
-            g.Transform = transformation;
+            g.Transform = transformation.ToMatrix();
             g.DrawString(str, font, Brushes.White, pos);
             g.Flush();
         }
@@ -414,10 +356,7 @@ public static partial class GraphicsUtils
 
     private static float[] ProcessImagePixels(Bitmap bmp, Func<byte, byte, byte, float[]> pixelConverter, int channels)
     {
-        if (!IsSupported)
-        {
-            throw new NotImplementedException();
-        }
+        if (!IsSupported) throw new NotImplementedException();
 
         var pixels = new float[Width * Height * channels];
 
@@ -458,12 +397,9 @@ public static partial class GraphicsUtils
 
     private static Matrix CreateTranformationMatrix(float angle, float scaleX, float scaleY)
     {
-        if (!IsSupported)
-        {
-            throw new NotSupportedException();
-        }
+        if (!IsSupported) throw new NotSupportedException();
 
-        var (cx, cy) = (ScaleWidth / 2f, ScaleHeight / 2f);
+        var (cx, cy) = (ScaleWidth * 0.5f, ScaleHeight * 0.5f);
         var m = new Matrix();
 
         m.Translate(-cx, -cy);
@@ -472,6 +408,33 @@ public static partial class GraphicsUtils
         m.Translate(cx, cy);
 
         return m;
+    }
+
+    public record struct ImageTransformation(float Angle, (float X, float Y) Scale)
+    {
+        public static ImageTransformation None => new(0, (1, 1));
+
+        public ImageTransformation(float angle) : this(angle, (1, 1)) { }
+        public readonly Matrix ToMatrix()
+        {
+            if (!IsSupported) throw new NotSupportedException();
+            var (cx, cy) = (ScaleWidth * 0.5f, ScaleHeight * 0.5f);
+            var m = new Matrix();
+            try
+            {
+                m.Translate(-cx, -cy);
+                m.Rotate(Angle);
+                m.Scale(Scale.X, Scale.Y);
+                m.Translate(cx, cy);
+
+                return m;
+            }
+            catch
+            {
+                m.Dispose();
+                throw;
+            }
+        }
     }
 
     #endregion

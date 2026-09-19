@@ -25,7 +25,7 @@ internal class XorModels
 
 public unsafe class XorAdvanced
 {
-    public readonly float[] TrainingData = 
+    public readonly float[] TrainingData =
     [
         0, 0, 0,
         1, 0, 1,
@@ -50,11 +50,11 @@ public unsafe class XorAdvanced
     {
         var A1 = A0.Dot(W1);
         A1.SumVectorized(B1);
-        ActivationFunctions.ApplyReLUVectorized(A1);
+        ActivationFunctions.ReLU.Instance.ApplyActivationVectorized(A1);
 
         var A2 = A1.Dot(W2);
         A2.SumVectorized(B2);
-        ActivationFunctions.ApplySigmoidVectorized(A2);
+        ActivationFunctions.Sigmoid.Instance.ApplyActivationVectorized(A2);
 
         return A2.Pointer[0];
     }
@@ -149,8 +149,8 @@ public unsafe class XorAdvanced
     }
 
     private void CalculateGradient(
-        NeuralMatrix matrix, 
-        NeuralMatrix gradient, 
+        NeuralMatrix matrix,
+        NeuralMatrix gradient,
         float epsillon,
         float cost,
         NeuralMatrix trainingInput,

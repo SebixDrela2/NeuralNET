@@ -59,7 +59,7 @@ public class CpuBackend : IGpuBackend
         act(matrix);
     }
 
-    public void Softmax(NeuralMatrix matrix) => ActivationFunctions.ApplySoftmaxVectorized(matrix);
+    public void Softmax(NeuralMatrix matrix) => ActivationFunctions.SoftMax.Instance.ApplyActivationVectorized(matrix);
 
     public void CopyToDevice(NeuralMatrix matrix) { }
     public void CopyToHost(NeuralMatrix matrix) { }

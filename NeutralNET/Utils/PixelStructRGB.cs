@@ -6,7 +6,9 @@ namespace NeutralNET.Utils;
 public struct PixelStructRGB(int label, int size)
 {
     public int Label = label;
-    public ColorRGB[] Values = new ColorRGB[size];
+    public readonly ColorRGB[] Values = new ColorRGB[size];
+
+    public readonly bool IsEmpty => size is 0;
     public readonly Span<ColorRGB> Pixels => Values;
     public readonly Span<float> Flat => MemoryMarshal.Cast<ColorRGB, float>(Pixels);
 }
