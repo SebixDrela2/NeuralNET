@@ -21,17 +21,44 @@ partial class ActivationFunctions
             int allocatedLength = size.Stride * size.Rows;
             float* end = ptr + allocatedLength;
 
-            Vector512<float> zero = Vector512<float>.Zero;
-            Vector512<float> alpha = Vector512.Create(Alpha);
-
-            for (; ptr != end; ptr += NeuralMatrix.Alignment)
+            if (Avx512F.IsSupported)
             {
-                var vec = Vector512.LoadAligned(ptr);
-                var mask = Avx512F.CompareLessThan(vec, zero);
-                var negPart = Avx512F.Multiply(vec, alpha);
-                var posPart = Avx512F.Max(vec, zero);
-                vec = Avx512F.BlendVariable(posPart, negPart, mask);
-                vec.StoreAligned(ptr);
+                Vector512<float> zero = Vector512<float>.Zero;
+                Vector512<float> alpha = Vector512.Create(Alpha);
+
+                for (; ptr != end; ptr += Vector512<float>.Count)
+                {
+                    var vec = Vector512.LoadAligned(ptr);
+                    var mask = Avx512F.CompareLessThan(vec, zero);
+                    var negPart = Avx512F.Multiply(vec, alpha);
+                    var posPart = Avx512F.Max(vec, zero);
+                    vec = Avx512F.BlendVariable(posPart, negPart, mask);
+                    vec.StoreAligned(ptr);
+                }
+            }
+            else if (Avx2.IsSupported)
+            {
+                Vector256<float> zero = Vector256<float>.Zero;
+                Vector256<float> alpha = Vector256.Create(Alpha);
+                int vectorSize = Vector256<float>.Count; // 8 floats
+
+                for (; ptr != end; ptr += vectorSize)
+                {
+                    var vec = Vector256.Load(ptr);
+                    var mask = Vector256.LessThan(vec, zero);
+                    var negPart = Vector256.Multiply(vec, alpha);
+                    var posPart = Vector256.Max(vec, zero);
+                    var result = Vector256.ConditionalSelect(mask, negPart, posPart);
+                    result.Store(ptr);
+                }
+            }
+            else
+            {
+                for (; ptr != end; ptr++)
+                {
+                    float val = *ptr;
+                    *ptr = val < 0f ? val * Alpha : val;
+                }
             }
         }
 

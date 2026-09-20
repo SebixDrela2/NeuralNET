@@ -22,7 +22,6 @@ public class ActivationSelector
         };
     }
 
-
     [MethodImpl(Inline)]
     public DerivativeFunction GetDerivative(ActivationType type)
     {

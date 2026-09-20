@@ -19,16 +19,30 @@ partial class ActivationFunctions
             int allocatedLength = size.Stride * size.Rows;
             float* end = ptr + allocatedLength;
 
-            if (Avx2.IsSupported) // ?
+            if (Vector512.IsHardwareAccelerated && Avx512F.IsSupported)
             {
-                Vector512<float> one = Vector512.Create(1.0f);
-                Vector512<float> two = Vector512.Create(2.0f);
+                var one = Vector512.Create(1.0f);
+                var two = Vector512.Create(2.0f);
 
-                for (; ptr != end; ptr += NeuralMatrix.Alignment)
+                for (; ptr != end; ptr += Vector512<float>.Count)
                 {
                     var x = Vector512.LoadAligned(ptr);
-                    var exp2x = Vector512.Exp(Avx512F.Multiply(x, two));
-                    var tanh = Avx512F.Divide(Avx512F.Subtract(exp2x, one), Avx512F.Add(exp2x, one));
+                    var exp2x = Vector512.Exp(Vector512.Multiply(x, two));
+                    var tanh = Vector512.Divide(Vector512.Subtract(exp2x, one), Vector512.Add(exp2x, one));
+                    tanh.StoreAligned(ptr);
+                }
+            }
+            else if (Vector256.IsHardwareAccelerated && Avx2.IsSupported)
+            {
+                var one = Vector256.Create(1.0f);
+                var two = Vector256.Create(2.0f);
+                int vectorSize = Vector256<float>.Count; // 8 floats
+
+                for (; ptr != end; ptr += vectorSize)
+                {
+                    var x = Vector256.LoadAligned(ptr);
+                    var exp2x = Vector256.Exp(Vector256.Multiply(x, two));
+                    var tanh = Vector256.Divide(Vector256.Subtract(exp2x, one), Vector256.Add(exp2x, one));
                     tanh.StoreAligned(ptr);
                 }
             }

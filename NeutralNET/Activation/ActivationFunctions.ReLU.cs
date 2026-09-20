@@ -17,15 +17,38 @@ partial class ActivationFunctions
         public static unsafe void Activation(float* ptr, (int Rows, int Cols, int Stride) size)
         {
             int allocatedLength = size.Stride * size.Rows;
-
             float* end = ptr + allocatedLength;
-            Vector512<float> zero = Vector512<float>.Zero;
 
-            for (; ptr != end; ptr += NeuralMatrix.Alignment)
+            if (Avx512F.IsSupported)
             {
-                var vec = Vector512.LoadAligned(ptr);
-                vec = Avx512F.Max(vec, zero);
-                vec.StoreAligned(ptr);
+                Vector512<float> zero = Vector512<float>.Zero;
+
+                for (; ptr != end; ptr += Vector512<float>.Count)
+                {
+                    var vec = Vector512.LoadAligned(ptr);
+                    vec = Avx512F.Max(vec, zero);
+                    vec.StoreAligned(ptr);
+                }
+            }
+            else if (Avx2.IsSupported)
+            {
+                Vector256<float> zero = Vector256<float>.Zero;
+                int vectorSize = Vector256<float>.Count; // 8 floats
+
+                for (; ptr != end; ptr += vectorSize)
+                {
+                    var vec = Vector256.LoadAligned(ptr);
+                    vec = Vector256.Max(vec, zero);
+                    vec.StoreAligned(ptr);
+                }
+            }
+            else
+            {
+                for (; ptr != end; ptr++)
+                {
+                    float val = *ptr;
+                    *ptr = val < 0f ? 0f : val;
+                }
             }
         }
 

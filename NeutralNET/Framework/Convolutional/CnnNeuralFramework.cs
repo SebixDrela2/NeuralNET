@@ -1,31 +1,14 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
-using System.Text.RegularExpressions;
-using System.Threading.Channels;
 using NeutralNET.Activation;
-using NeutralNET.Framework.Connected;
 using NeutralNET.Framework.Connected.Neural;
 using NeutralNET.Framework.Convolutional;
 using NeutralNET.GPU;
 using NeutralNET.Matrices;
-using static System.Runtime.InteropServices.JavaScript.JSType;
 using static NeutralNET.Activation.ActivationSelector;
 
 namespace NeutralNET.Framework.Neural.CNN;
-
-
-/// <summary>
-/// Zero‑GC CNN framework with full object and buffer pooling, pluggable optimizers,
-/// and low-latency P/Invoke CUDA/cuBLAS GPU matrix acceleration.
-/// </summary>
-///
-
-internal record struct CnnSize(int BatchSize, int Channels, int Height, int Width);
 
 public sealed unsafe class CnnNeuralFramework
 {
