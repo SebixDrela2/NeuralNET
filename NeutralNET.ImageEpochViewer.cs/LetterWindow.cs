@@ -1,4 +1,4 @@
-using System.Net.NetworkInformation;
+using System.Drawing.Drawing2D;
 using NeutralNET.Framework.Convolutional;
 using NeutralNET.Framework.Neural.CNN;
 using NeutralNET.Matrices;
@@ -31,7 +31,6 @@ public partial class LetterWindow : Form
     private readonly List<(PictureBox Pic, Label Lbl, char TargetChar)> _letterSlots = [];
     private readonly Dictionary<char, Label> _realTimeLetterLabels = [];
 
-    // Definiujemy zakres warstw konwolucyjnych od 0 do 2 (łącznie 3 warstwy)
     private const int MinConvLayerIndex = 0;
     private const int MaxConvLayerIndex = 2;
     private const int NumConvLayers = (MaxConvLayerIndex - MinConvLayerIndex) + 1;
@@ -74,11 +73,48 @@ public partial class LetterWindow : Form
         StartTimer();
     }
 
+    private static Color GetHeatmapColor(float v)
+    {
+        v = Math.Clamp(v, 0f, 1f);
+        Color[] colors = [
+            Color.FromArgb(0, 0, 0),
+            Color.FromArgb(128, 0, 0),
+            Color.FromArgb(255, 0, 0),
+            Color.FromArgb(255, 128, 0),
+            Color.FromArgb(255, 255, 0),
+            Color.FromArgb(255, 255, 255)
+        ];
+
+        float scaled = v * (colors.Length - 1);
+        int idx = (int)scaled;
+        if (idx >= colors.Length - 1) return colors[^1];
+
+        float frac = scaled - idx;
+        Color c1 = colors[idx];
+        Color c2 = colors[idx + 1];
+
+        int r = (int)(c1.R + (c2.R - c1.R) * frac);
+        int g = (int)(c1.G + (c2.G - c1.G) * frac);
+        int b = (int)(c1.B + (c2.B - c1.B) * frac);
+
+        return Color.FromArgb(r, g, b);
+    }
+
+    private static Bitmap CreateNearestNeighborImage(Bitmap src, int targetWidth, int targetHeight)
+    {
+        var result = new Bitmap(targetWidth, targetHeight, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        using var g = Graphics.FromImage(result);
+        g.InterpolationMode = InterpolationMode.NearestNeighbor;
+        g.PixelOffsetMode = PixelOffsetMode.Half;
+        g.DrawImage(src, new Rectangle(0, 0, targetWidth, targetHeight), new Rectangle(0, 0, src.Width, src.Height), GraphicsUnit.Pixel);
+        return result;
+    }
+
     private void InitializeCustomLayout()
     {
         Width = 1300;
         Height = 850;
-        Text = "CNN Letter Recognition (All A-Z Grid & Conv Layers 0-2 - Zawsze na wierzchu)";
+        Text = "CNN Letter Recognition (All A-Z Grid & Conv Layers 0-2)";
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(18, 18, 18);
         TopMost = true;
@@ -236,7 +272,8 @@ public partial class LetterWindow : Form
         realTimeMainLayout.Controls.Add(leftPanel);
         realTimeTab.Controls.Add(realTimeMainLayout);
 
-        Task.Run(() => RefreshAllLetters());
+        // Modern async initialization (fires concurrently, updates UI cleanly on completion)
+        _ = InitializeLettersAsync();
     }
 
     private void StartTimer() => _timer.Start();
@@ -258,15 +295,15 @@ public partial class LetterWindow : Form
         {
             if (ScreenshotSim.Image is not Bitmap bmp) return;
 
+            var p1 = new Point(CapturedSourcePosX, CapturedSourcePosY);
+            var p2 = new Point(p1.X + CapturedWidth, p1.Y + CapturedHeight);
+
+            (p1.X, p2.X) = MinMax(p1.X, p2.X);
+            (p1.Y, p2.Y) = MinMax(p1.Y, p2.Y);
+            var pDiff = new Size(p2.X - p1.X, p2.Y - p1.Y);
+
             using (var g = Graphics.FromImage(bmp))
             {
-                var p1 = new Point(CapturedSourcePosX, CapturedSourcePosY);
-                var p2 = new Point(p1.X + CapturedWidth, p1.Y + CapturedHeight);
-
-                (p1.X, p2.X) = MinMax(p1.X, p2.X);
-                (p1.Y, p2.Y) = MinMax(p1.Y, p2.Y);
-                var pDiff = new Size(p2.X - p1.X, p2.Y - p1.Y);
-
                 g.CopyFromScreen(p1, Point.Empty, pDiff, CopyPixelOperation.SourceCopy);
                 g.Flush();
             }
@@ -276,6 +313,7 @@ public partial class LetterWindow : Form
             var px = GraphicsUtils.GetPixels(bmp);
             using var inputMatrix = LetterDataLoader.LoadInputFromScreenshot(bmp, px);
 
+            // Execute heavy network calculations asynchronously on thread pool
             await Task.Run(() =>
             {
                 using var output = _network.Forward(inputMatrix);
@@ -307,7 +345,7 @@ public partial class LetterWindow : Form
 
                         if (!allInitialized)
                         {
-                            BeginInvoke(new Action(() =>
+                            Invoke(new Action(() =>
                             {
                                 for (int i = 0; i < NumConvLayers; i++)
                                 {
@@ -323,7 +361,7 @@ public partial class LetterWindow : Form
                                 bool check = true;
                                 for (int i = 0; i < NumConvLayers; i++) if (!_convLayersInitialized[i]) check = false;
                                 if (check) break;
-                                Thread.Sleep(10);
+                                Thread.Sleep(5);
                             }
                         }
 
@@ -332,7 +370,8 @@ public partial class LetterWindow : Form
                             ProcessConvLayerData(convOutputs[i], i);
                         }
 
-                        BeginInvoke(new Action(() =>
+                        // Automatically resumes back on UI thread without BeginInvoke
+                        Invoke(new Action(() =>
                         {
                             UpdateUIResults(scores);
                         }));
@@ -349,7 +388,7 @@ public partial class LetterWindow : Form
         }
         catch (Exception)
         {
-            // Błędy w tle
+            // Suppress background thread telemetry errors
         }
         finally
         {
@@ -386,10 +425,8 @@ public partial class LetterWindow : Form
                 for (int x = 0; x < mapWidth; x++)
                 {
                     float val = convOutput[0, f, y, x];
-                    int normalized = (int)(((val - min) / range) * 255f);
-                    normalized = Math.Max(0, Math.Min(255, normalized));
-
-                    targetBmp.SetPixel(x, y, Color.FromArgb(normalized, normalized, normalized));
+                    float normalized = (val - min) / range;
+                    targetBmp.SetPixel(x, y, GetHeatmapColor(normalized));
                 }
             }
         }
@@ -439,15 +476,17 @@ public partial class LetterWindow : Form
 
         for (int f = 0; f < numFilters; f++)
         {
-            var mapBmp = new Bitmap(mapWidth, mapHeight, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-            _cachedLayerBitmaps[arrayIndex].Add(mapBmp);
+            var rawBmp = new Bitmap(mapWidth, mapHeight, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            _cachedLayerBitmaps[arrayIndex].Add(rawBmp);
+
+            var scaledBmp = CreateNearestNeighborImage(rawBmp, 64, 64);
 
             var pic = new PictureBox
             {
                 Width = 64,
                 Height = 64,
-                SizeMode = PictureBoxSizeMode.Zoom,
-                Image = mapBmp,
+                SizeMode = PictureBoxSizeMode.Normal,
+                Image = scaledBmp,
                 BackColor = Color.Black,
                 BorderStyle = BorderStyle.FixedSingle,
                 Margin = new Padding(2)
@@ -484,66 +523,92 @@ public partial class LetterWindow : Form
             }
         }
 
-        foreach (var picList in _cachedLayerPicBoxes)
+        for (int i = 0; i < NumConvLayers; i++)
         {
-            foreach (var pic in picList)
+            for (int f = 0; f < _cachedLayerBitmaps[i].Count; f++)
             {
-                pic.Invalidate();
+                var rawBmp = _cachedLayerBitmaps[i][f];
+                var pic = _cachedLayerPicBoxes[i][f];
+
+                var oldImg = pic.Image;
+                pic.Image = CreateNearestNeighborImage(rawBmp, pic.Width, pic.Height);
+                oldImg?.Dispose();
             }
         }
     }
 
-    private unsafe void RefreshAllLetters()
+    private async Task InitializeLettersAsync()
     {
-        foreach (var slot in _letterSlots)
+        // 1. Process all network inferences concurrently in the ThreadPool
+        var results = await Task.Run(() =>
         {
-            char targetChar = slot.TargetChar;
-            var (inputMatrix, displayBmp) = LetterDataLoader.GenerateSampleForUI(targetChar);
+            var buffer = new (PictureBox Pic, Label Lbl, char TargetChar, Bitmap Bmp, char PredChar, float Conf)[_letterSlots.Count];
 
-            using NeuralMatrix output = _network.Forward(inputMatrix);
-            inputMatrix.Dispose();
-
-            int predictedClassIndex = 0;
-            float maxConfidence = float.MinValue;
-
-            float* pOutput = output.Pointer;
-            int outputCols = output.UsedColumns;
-
-            for (int i = 0; i < outputCols; i++)
+            Parallel.For(0, _letterSlots.Count, i =>
             {
-                float val = pOutput[i];
-                if (val > maxConfidence)
+                var slot = _letterSlots[i];
+                char targetChar = slot.TargetChar;
+                var (inputMatrix, displayBmp) = LetterDataLoader.GenerateSampleForUI(targetChar);
+
+                try
                 {
-                    maxConfidence = val;
-                    predictedClassIndex = i;
+                    using NeuralMatrix output = _network.Forward(inputMatrix);
+
+                    unsafe
+                    {
+                        int predictedClassIndex = 0;
+                        float maxConfidence = float.MinValue;
+
+                        float* pOutput = output.Pointer;
+                        int outputCols = output.UsedColumns;
+
+                        for (int c = 0; c < outputCols; c++)
+                        {
+                            float val = pOutput[c];
+                            if (val > maxConfidence)
+                            {
+                                maxConfidence = val;
+                                predictedClassIndex = c;
+                            }
+                        }
+
+                        char predictedChar = (predictedClassIndex >= 0 && predictedClassIndex < GraphicsUtils.DefaultLetters.Length)
+                            ? GraphicsUtils.DefaultLetters[predictedClassIndex]
+                            : '?';
+
+                        buffer[i] = (slot.Pic, slot.Lbl, targetChar, displayBmp, predictedChar, maxConfidence);
+                    }
                 }
+                finally
+                {
+                    inputMatrix.Dispose();
+                }
+            });
+
+            return buffer;
+        });
+
+        // 2. Automatically resumes on UI thread via SynchronizationContext - update UI all at once
+        foreach (var res in results)
+        {
+            res.Pic.Image?.Dispose();
+            res.Pic.Image = res.Bmp;
+
+            if (res.PredChar == res.TargetChar && res.Conf >= 0.7f)
+            {
+                res.Lbl.Text = $"[{res.TargetChar}] Pred: {res.PredChar}\n({res.Conf * 100:F1}%)";
+                res.Lbl.ForeColor = Color.LightGreen;
             }
-
-            char predictedChar = (predictedClassIndex >= 0 && predictedClassIndex < GraphicsUtils.DefaultLetters.Length)
-                ? GraphicsUtils.DefaultLetters[predictedClassIndex]
-                : '?';
-
-            BeginInvoke(new Action(() =>
+            else if (res.PredChar != res.TargetChar)
             {
-                slot.Pic.Image?.Dispose();
-                slot.Pic.Image = displayBmp;
-
-                if (predictedChar == targetChar && maxConfidence >= 0.7f)
-                {
-                    slot.Lbl.Text = $"[{targetChar}] Pred: {predictedChar}\n({maxConfidence * 100:F1}%)";
-                    slot.Lbl.ForeColor = Color.LightGreen;
-                }
-                else if (predictedChar != targetChar)
-                {
-                    slot.Lbl.Text = $"[{targetChar}] Pred: {predictedChar}\n({maxConfidence * 100:F1}%)";
-                    slot.Lbl.ForeColor = Color.IndianRed;
-                }
-                else
-                {
-                    slot.Lbl.Text = $"[{targetChar}] Pred: {predictedChar}\n({maxConfidence * 100:F1}%)";
-                    slot.Lbl.ForeColor = Color.Gold;
-                }
-            }));
+                res.Lbl.Text = $"[{res.TargetChar}] Pred: {res.PredChar}\n({res.Conf * 100:F1}%)";
+                res.Lbl.ForeColor = Color.IndianRed;
+            }
+            else
+            {
+                res.Lbl.Text = $"[{res.TargetChar}] Pred: {res.PredChar}\n({res.Conf * 100:F1}%)";
+                res.Lbl.ForeColor = Color.Gold;
+            }
         }
     }
 
@@ -581,7 +646,7 @@ public partial class LetterWindow : Form
 
             for (int f = 0; f < numFilters; f++)
             {
-                Bitmap mapBmp = new Bitmap(mapWidth, mapHeight, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                Bitmap rawBmp = new Bitmap(mapWidth, mapHeight, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
 
                 float min = float.MaxValue, max = float.MinValue;
                 for (int y = 0; y < mapHeight; y++)
@@ -602,19 +667,20 @@ public partial class LetterWindow : Form
                     for (int x = 0; x < mapWidth; x++)
                     {
                         float val = convOutput[0, f, y, x];
-                        int normalized = (int)(((val - min) / range) * 255f);
-                        normalized = Math.Max(0, Math.Min(255, normalized));
-
-                        mapBmp.SetPixel(x, y, Color.FromArgb(normalized, normalized, normalized));
+                        float normalized = (val - min) / range;
+                        rawBmp.SetPixel(x, y, GetHeatmapColor(normalized));
                     }
                 }
+
+                var sharpBmp = CreateNearestNeighborImage(rawBmp, 80, 80);
+                rawBmp.Dispose();
 
                 PictureBox pic = new PictureBox
                 {
                     Width = 80,
                     Height = 80,
-                    SizeMode = PictureBoxSizeMode.Zoom,
-                    Image = mapBmp,
+                    SizeMode = PictureBoxSizeMode.Normal,
+                    Image = sharpBmp,
                     BackColor = Color.Black,
                     BorderStyle = BorderStyle.FixedSingle,
                     Margin = new Padding(4)

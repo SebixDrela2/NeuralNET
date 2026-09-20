@@ -49,7 +49,7 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
 
     public static NeuralMatrix Create(int rows, int columns, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "")
     {
-        var matrix = new NeuralMatrix(rows, columns, isPoolable: false, ln, fp);
+        var matrix = new NeuralMatrix(rows, columns, isPoolable: true, ln, fp);
 
         return matrix;
     }

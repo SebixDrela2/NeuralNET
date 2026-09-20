@@ -54,10 +54,7 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
 
     public static CnnMatrix Create(int batch, int channels, int height, int width, bool readOnly = false, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "")
     {
-        var matrix = new CnnMatrix(batch, channels, height, width, isPoolable:false, ln, fp, readOnly: readOnly)
-        {
-            _isPoolable = false
-        };
+        var matrix = new CnnMatrix(batch, channels, height, width, isPoolable: true, ln, fp, readOnly: readOnly);
 
         return matrix;
     }
