@@ -1,15 +1,11 @@
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
-using System.Linq;
 using System.Runtime.Versioning;
 using NeutralNET.Framework.Convolutional;
 using NeutralNET.Matrices;
 using NeutralNET.Stuff;
 using NeutralNET.Utils;
-using Tensorflow;
 
 namespace NeutralNET.Test.Data;
 
