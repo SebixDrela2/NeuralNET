@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
+using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
@@ -23,6 +24,8 @@ public static partial class GraphicsUtils
     public const int Height = 64;
 
     public const int PixelCount = Width * Height;
+
+    private static SizeF ScaleSize { [MethodImpl(Inline)] get => new(ScaleWidth, ScaleHeight); }
 
     [SupportedOSPlatformGuard("windows6.1")]
     public static bool IsSupported => OperatingSystem.IsWindowsVersionAtLeast(6, 1);
@@ -53,7 +56,6 @@ public static partial class GraphicsUtils
                 )
                 : ImageTransformation.None;
 
-            // Index 'i' (0-25) is used as the class label
             result[i] = GenerateCharPixelStructRGB(characters[i], font, i, transformation);
         });
 
@@ -69,20 +71,15 @@ public static partial class GraphicsUtils
 
         using (var g = Graphics.FromImage(bitMap))
         {
-            var str = @char.ToString();
-            var fontDim = g.MeasureString(str, font);
+            var pos = ((g.MeasureString([@char], font) - ScaleSize) * 0.5f).ToPointF();
 
-            var pos = new PointF(
-                (ScaleWidth / 2f) - fontDim.Width / 2f,
-                (ScaleHeight / 2f) - fontDim.Height / 2f
-            );
-
-            var (background, letter) = Color.GetRandomColors();
+            // var (background, letter) = Color.GetRandomColors();
+            var (background, letter) = (Color.Black, Color.White);
 
             g.Clear(background);
             g.TextRenderingHint = TextRenderingHint.AntiAlias;
             g.Transform = transformation.ToMatrix();
-            g.DrawString(str, font, new SolidBrush(letter), pos);
+            g.DrawString([@char], font, new SolidBrush(letter), pos);
             g.Flush();
         }
 
@@ -104,10 +101,11 @@ public static partial class GraphicsUtils
         var pixels = new PixelStructRGB(classLabel, Size);
 
         // Lock bitmap bits for fast memory extraction instead of calling GetPixel
-        BitmapData data = trueBitMap.LockBits(
+        var data = trueBitMap.LockBits(
             new Rectangle(0, 0, Width, Height),
             ImageLockMode.ReadOnly,
-            PixelFormat.Format32bppArgb);
+            PixelFormat.Format32bppArgb
+        );
 
         try
         {
@@ -186,7 +184,7 @@ public static partial class GraphicsUtils
         return result;
     }
 
-    public static PixelStructRGB GenerateCharPixelStructRGB(char @char, Font font, ImageTransformation transformation)
+    public static PixelStructRGB GenerateCharPixelStructRGB(char ch, Font font, ImageTransformation transformation)
     {
         if (!IsSupported) throw new NotSupportedException();
 
@@ -195,18 +193,12 @@ public static partial class GraphicsUtils
 
         using (var g = Graphics.FromImage(bitMap))
         {
-            var str = @char.ToString();
-            var fontDim = g.MeasureString(str, font);
-
-            var pos = new PointF(
-                (ScaleWidth / 2f) - fontDim.Width / 2f,
-                (ScaleHeight / 2f) - fontDim.Height / 2f
-            );
+            var pos = ((g.MeasureString([ch], font) - ScaleSize) * 0.5f).ToPointF();
 
             g.Clear(Color.Black);
             g.TextRenderingHint = TextRenderingHint.AntiAlias;
             g.Transform = transformation.ToMatrix();
-            g.DrawString(str, font, Brushes.White, pos);
+            g.DrawString([ch], font, Brushes.White, pos);
             g.Flush();
         }
 
@@ -225,7 +217,7 @@ public static partial class GraphicsUtils
         }
 
         var index = 0;
-        var pixels = new PixelStructRGB(@char - '0', Size);
+        var pixels = new PixelStructRGB(ch - '0', Size);
 
         for (int y = 0; y < Height; y++)
         {
@@ -247,7 +239,7 @@ public static partial class GraphicsUtils
         return GenerateCharPixelStruct(@char, font);
     }
     public static PixelStruct GenerateCharPixelStruct(char @char, Font font) => GenerateCharPixelStruct(@char, font, ImageTransformation.None);
-    public static PixelStruct GenerateCharPixelStruct(char @char, Font font, ImageTransformation transformation)
+    public static PixelStruct GenerateCharPixelStruct(char ch, Font font, ImageTransformation transformation)
     {
         if (!IsSupported) throw new NotSupportedException();
 
@@ -256,18 +248,12 @@ public static partial class GraphicsUtils
 
         using (var g = Graphics.FromImage(bitMap))
         {
-            var str = @char.ToString();
-            var fontDim = g.MeasureString(str, font);
-
-            var pos = new PointF(
-                (ScaleWidth / 2f) - fontDim.Width / 2f,
-                (ScaleHeight / 2f) - fontDim.Height / 2f
-            );
+            var pos = ((g.MeasureString([ch], font) - ScaleSize) * 0.5f).ToPointF();
 
             g.Clear(Color.Black);
             g.TextRenderingHint = TextRenderingHint.AntiAlias;
             g.Transform = transformation.ToMatrix();
-            g.DrawString(str, font, Brushes.White, pos);
+            g.DrawString([ch], font, Brushes.White, pos);
             g.Flush();
         }
 
@@ -286,7 +272,7 @@ public static partial class GraphicsUtils
         }
 
         var index = 0;
-        var brightStruct = new PixelStruct(@char - '0', Size);
+        var brightStruct = new PixelStruct(ch - '0', Size);
 
         for (int y = 0; y < Height; y++)
         {
@@ -302,6 +288,8 @@ public static partial class GraphicsUtils
         return brightStruct;
     }
 
+    #region SLOW AF / DEPRECATED / WEIRD
+
     public static float[] LoadPixels(string path, PixelType type = PixelType.RGB)
     {
         var image = LoadImage(path);
@@ -316,12 +304,8 @@ public static partial class GraphicsUtils
 
     public static Bitmap LoadImage(string path)
     {
-        if (!IsSupported)
-        {
-            throw new NotImplementedException();
-        }
-
-        return new Bitmap(Image.FromFile(path), Width, Height);
+        if (!IsSupported) throw new NotImplementedException();
+        return new Bitmap(Image.FromFile(path), Width, Height);  // Dispose Image?
     }
 
     public static float[] ImageToFloatRGB(Bitmap bmp, bool normalize = true)
@@ -353,7 +337,8 @@ public static partial class GraphicsUtils
         BitmapData data = bmp.LockBits(
             new Rectangle(0, 0, Width, Height),
             ImageLockMode.ReadOnly,
-            PixelFormat.Format32bppArgb);
+            PixelFormat.Format32bppArgb
+        );
 
         try
         {
@@ -384,21 +369,7 @@ public static partial class GraphicsUtils
 
         return pixels;
     }
-
-    private static Matrix CreateTranformationMatrix(float angle, float scaleX, float scaleY)
-    {
-        if (!IsSupported) throw new NotSupportedException();
-
-        var (cx, cy) = (ScaleWidth * 0.5f, ScaleHeight * 0.5f);
-        var m = new Matrix();
-
-        m.Translate(-cx, -cy);
-        m.Rotate(angle);
-        m.Scale(scaleX, scaleY);
-        m.Translate(cx, cy);
-
-        return m;
-    }
+    #endregion
 
     public record struct ImageTransformation(float Angle, (float X, float Y) Scale)
     {
@@ -408,8 +379,10 @@ public static partial class GraphicsUtils
         public readonly Matrix ToMatrix()
         {
             if (!IsSupported) throw new NotSupportedException();
+
             var (cx, cy) = (ScaleWidth * 0.5f, ScaleHeight * 0.5f);
             var m = new Matrix();
+
             try
             {
                 m.Translate(-cx, -cy);

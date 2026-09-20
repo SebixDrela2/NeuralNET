@@ -276,14 +276,16 @@ public sealed unsafe class CnnNeuralFramework
         SaveData(key, stream);
     }
 
-    public void LoadData<TEnum>(TEnum key, Stream stream) where TEnum : struct, Enum
+    public bool LoadData<TEnum>(TEnum key, Stream stream)
+        where TEnum : struct, Enum
     {
         using var reader = new BinaryReader(stream, System.Text.Encoding.UTF8, leaveOpen: true);
 
         var savedEnumKey = reader.ReadInt32();
-        if (!int.Equals(savedEnumKey, Convert.ToInt32(key)))
+        if (savedEnumKey != Convert.ToInt32(key))
         {
-            throw new InvalidOperationException($"Mismatch enum key in model file. Expected: '{key}', Found: '{savedEnumKey}'.");
+            Console.WriteLine($"Mismatch enum key in model file. Expected: '{key}', Found: '{savedEnumKey}'.");
+            return false;
         }
 
         int convCount = reader.ReadInt32();
@@ -291,7 +293,8 @@ public sealed unsafe class CnnNeuralFramework
 
         if (convCount != _convHyperParameters.Count || denseCount != _denseHyperParameters.Count)
         {
-            throw new InvalidOperationException("Layer count mismatch between framework and checkpoint file.");
+            Console.WriteLine($"Layer count mismatch between framework and checkpoint file.");
+            return false;
         }
 
         for (int i = 0; i < _convHyperParameters.Count; i++)
@@ -305,21 +308,35 @@ public sealed unsafe class CnnNeuralFramework
             LoadNeuralMatrix(reader, _denseHyperParameters[i].Weights);
             LoadNeuralMatrix(reader, _denseHyperParameters[i].Biases);
         }
+
+        return true;
     }
 
     public bool LoadData<TEnum>(TEnum key, string directoryPath) where TEnum : struct, Enum
     {
         var filePath = Path.Combine(directoryPath, $"{typeof(TEnum).Name}_{key}.bin");
 
-        if (!File.Exists(filePath))
+        if (!File.Exists(filePath)) return false;
+
+        using (var stream = File.OpenRead(filePath))
         {
-            return false;
+            if (LoadData(key, stream)) return true;
         }
 
-        using var stream = File.OpenRead(filePath);
-        LoadData(key, stream);
-
-        return true;
+        Console.Write($"Override exsisting file? \e[s");
+        while (true)
+        {
+            Console.Write("\e[u (y/n)\e[K\e[u");
+            switch (Console.ReadLine()?.Trim().ToLower())
+            {
+                case "y":
+                    File.Delete(filePath);
+                    Console.WriteLine("\e[u\r\e[K");
+                    return false;
+                case "n":
+                    throw new InvalidOperationException();
+            }
+        }
     }
 
     private static void SaveCnnMatrix(BinaryWriter writer, CnnMatrix matrix)
@@ -425,8 +442,8 @@ public sealed unsafe class CnnNeuralFramework
 
         foreach (var layer in config.ConvLayers)
         {
-            int paddedH = h + 2 * layer.Padding;
-            int paddedW = w + 2 * layer.Padding;
+            int paddedH = h + (2 * layer.Padding);
+            int paddedW = w + (2 * layer.Padding);
 
             h = (paddedH - layer.KernelHeight) / layer.Stride + 1;
             w = (paddedW - layer.KernelWidth) / layer.Stride + 1;
@@ -644,6 +661,7 @@ public sealed unsafe class CnnNeuralFramework
         var dW = ComputeWeightGradient(colInput, preGradMatrix, patches, filters, inDim);
         var dB = ComputeBiasGradient(preGradMatrix, patches, filters);
 
+        var w = _convHyperParameters[layerIdx].Weights;
         _convOptimizers[layerIdx].UpdateConvWeights(_convHyperParameters[layerIdx].Weights, _convHyperParameters[layerIdx].Biases, dW, dB);
 
         var flattenedWeights = _convHyperParameters[layerIdx].FlattenedWeights;
@@ -661,24 +679,72 @@ public sealed unsafe class CnnNeuralFramework
         return inputGrad;
     }
 
-    private static NeuralMatrix ComputeGradientWithRespectToInput(
-         NeuralMatrix flattenedWeights,
-         NeuralMatrix preGradMatrix,
-         int patches,
-         int filters,
-         int inDim)
+    private static NeuralMatrix ComputeGradientWithRespectToInput(NeuralMatrix weightMat, NeuralMatrix preGradMatrix, int patches, int filters, int inDim)
     {
         var gradPatchMat = RentNeural(patches, inDim);
+        var pGradPatch = gradPatchMat.Pointer;
+        var pPreGradMat = preGradMatrix.Pointer;
+        var pWeightMat = weightMat.Pointer;
 
-        GpuMatrixOps.RowMajorSgemmHostStaged(
-            GpuMatrixOps.CublasOperation.NonTranspose,
-            GpuMatrixOps.CublasOperation.NonTranspose,
-            patches, inDim, filters,
-            1.0f,
-            preGradMatrix.Pointer, preGradMatrix.ColumnsStride,
-            flattenedWeights.Pointer, flattenedWeights.ColumnsStride,
-            0.0f,
-            gradPatchMat.Pointer, gradPatchMat.ColumnsStride);
+        int gradPatchStride = gradPatchMat.ColumnsStride;
+        int weightMatStride = weightMat.ColumnsStride;
+        int preGradMatStride = preGradMatrix.ColumnsStride;
+
+        for (int patch = 0; patch < patches; patch++)
+        {
+            float* rowPreGradMat = pPreGradMat + patch * preGradMatStride;
+            float* rowGradPatch = pGradPatch + patch * gradPatchStride;
+
+            for (int inner = 0; inner < inDim; inner++)
+            {
+                float sum = 0f;
+                int f = 0;
+
+                if (Avx512F.IsSupported)
+                {
+                    Vector512<float> sumVec = Vector512<float>.Zero;
+                    int vecLimit = filters - (filters % Avx512Size);
+
+                    for (; f < vecLimit; f += Avx512Size)
+                    {
+                        var vGrad = Vector512.Load(rowPreGradMat + f);
+                        var vW = Vector512.Load(pWeightMat + f * weightMatStride + inner);
+                        sumVec = Avx512F.FusedMultiplyAdd(vGrad, vW, sumVec);
+                    }
+                    sum = Vector512.Sum(sumVec);
+                }
+                else if (Avx2.IsSupported)
+                {
+                    Vector256<float> sumVec = Vector256<float>.Zero;
+                    int vecLimit = filters - (filters % Avx256Size);
+
+                    for (; f < vecLimit; f += Avx256Size)
+                    {
+                        var vGrad = Avx2.LoadVector256(rowPreGradMat + f);
+                        var vW = Avx2.LoadVector256(pWeightMat + f * weightMatStride + inner);
+                        sumVec = Fma.MultiplyAdd(vGrad, vW, sumVec);
+                    }
+                    sum = Vector256.Sum(sumVec);
+                }
+
+                for (; f < filters; f++)
+                {
+                    sum += rowPreGradMat[f] * pWeightMat[f * weightMatStride + inner];
+                }
+
+                rowGradPatch[inner] = sum;
+            }
+        }
+
+        // GpuMatrixOps.RowMajorSgemmHostStaged(
+        //     GpuMatrixOps.CublasOperation.NonTranspose,
+        //     GpuMatrixOps.CublasOperation.NonTranspose,
+        //     patches, inDim, filters,
+        //     1.0f,
+        //     preGradMatrix.Pointer, preGradMatrix.ColumnsStride,
+        //     flattenedWeights.Pointer, flattenedWeights.ColumnsStride,
+        //     0.0f,
+        //     gradPatchMat.Pointer, gradPatchMat.ColumnsStride);
 
         return gradPatchMat;
     }
@@ -692,15 +758,68 @@ public sealed unsafe class CnnNeuralFramework
     {
         var dW = RentNeural(filters, inDim);
 
-        GpuMatrixOps.RowMajorSgemmHostStaged(
-            GpuMatrixOps.CublasOperation.Transpose,
-            GpuMatrixOps.CublasOperation.NonTranspose,
-            filters, inDim, patches,
-            1.0f,
-            preGradMatrix.Pointer, preGradMatrix.ColumnsStride,
-            colInput.Pointer, colInput.ColumnsStride,
-            0.0f,
-            dW.Pointer, dW.ColumnsStride);
+        // GpuMatrixOps.RowMajorSgemmHostStaged(
+        //     GpuMatrixOps.CublasOperation.Transpose,
+        //     GpuMatrixOps.CublasOperation.NonTranspose,
+        //     filters, inDim, patches,
+        //     1.0f,
+        //     preGradMatrix.Pointer, preGradMatrix.ColumnsStride,
+        //     colInput.Pointer, colInput.ColumnsStride,
+        //     0.0f,
+        //     dW.Pointer, dW.ColumnsStride);
+
+        float* pdW = dW.Pointer;
+        int dWStride = dW.ColumnsStride;
+        new Span<float>(pdW, inDim * dWStride).Clear();
+
+        float* pColIn = colInput.Pointer;
+        int colInStride = colInput.ColumnsStride;
+        float* pPreGradMat = preGradMatrix.Pointer;
+        int preGradMatStride = preGradMatrix.ColumnsStride;
+        for (int patch = 0; patch < patches; patch++)
+        {
+            float* rowColIn = pColIn + patch * colInStride;
+            float* rowPreGradMat = pPreGradMat + patch * preGradMatStride;
+
+            for (int inner = 0; inner < inDim; inner++)
+            {
+                float valIn = rowColIn[inner];
+                if (valIn == 0f) continue;
+
+                float* rowDW = pdW + inner * dWStride;
+
+                int f = 0;
+                if (Avx512F.IsSupported)
+                {
+                    Vector512<float> vIn512 = Vector512.Create(valIn);
+                    int vecLimit = filters - (filters % Avx512Size);
+                    for (; f < vecLimit; f += Avx512Size)
+                    {
+                        var vDW = Vector512.Load(rowDW + f);
+                        var vGrad = Vector512.Load(rowPreGradMat + f);
+                        vDW = Avx512F.FusedMultiplyAdd(vIn512, vGrad, vDW);
+                        vDW.Store(rowDW + f);
+                    }
+                }
+                else if (Avx2.IsSupported)
+                {
+                    Vector256<float> vIn256 = Vector256.Create(valIn);
+                    int vecLimit = filters - (filters % Avx256Size);
+                    for (; f < vecLimit; f += Avx256Size)
+                    {
+                        var vDW = Avx.LoadVector256(rowDW + f);
+                        var vGrad = Avx.LoadVector256(rowPreGradMat + f);
+                        vDW = Fma.MultiplyAdd(vIn256, vGrad, vDW);
+                        vDW.Store(rowDW + f);
+                    }
+                }
+
+                for (; f < filters; f++)
+                {
+                    rowDW[f] += valIn * rowPreGradMat[f];
+                }
+            }
+        }
 
         return dW;
     }
@@ -1964,25 +2083,25 @@ public sealed unsafe class CnnNeuralFramework
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static NeuralMatrix RentNeural(int rows, int cols, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "")
-        => NeuralMatrix.GetOrCreate(rows, cols, ln, fp);
+    private static NeuralMatrix RentNeural(int rows, int cols, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
+        => NeuralMatrix.GetOrCreate(rows, cols, fp, ln);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static CnnMatrix RentCnn(int batch, int channels, int h, int w, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "")
-        => CnnMatrix.GetOrCreate(batch, channels, h, w, readOnly: false, ln, fp);
+    private static CnnMatrix RentCnn(int batch, int channels, int h, int w, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
+        => CnnMatrix.GetOrCreate(batch, channels, h, w, readOnly: false, fp, ln);
 
-    private static CnnMatrix RentCnn(CnnSize cnnSize, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "")
-        => CnnMatrix.GetOrCreate(cnnSize.BatchSize, cnnSize.Channels, cnnSize.Height, cnnSize.Width, readOnly: false, ln, fp);
+    private static CnnMatrix RentCnn(CnnSize cnnSize, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
+        => CnnMatrix.GetOrCreate(cnnSize.BatchSize, cnnSize.Channels, cnnSize.Height, cnnSize.Width, readOnly: false, fp, ln);
 
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static NeuralMatrix NewNeural(int rows, int cols, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "")
-        => NeuralMatrix.Create(rows, cols, ln, fp);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static CnnMatrix NewCnn(int batch, int channels, int h, int w, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "")
-        => CnnMatrix.Create(batch, channels, h, w, readOnly: false, ln, fp);
+    private static NeuralMatrix NewNeural(int rows, int cols, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
+        => NeuralMatrix.Create(rows, cols, fp, ln);
 
-    private static CnnMatrix NewCnn(CnnSize cnnSize, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "")
-        => CnnMatrix.Create(cnnSize.BatchSize, cnnSize.Channels, cnnSize.Height, cnnSize.Width, readOnly: false, ln, fp);
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static CnnMatrix NewCnn(int batch, int channels, int h, int w, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
+        => CnnMatrix.Create(batch, channels, h, w, readOnly: false, fp, ln);
+
+    private static CnnMatrix NewCnn(CnnSize cnnSize, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
+        => CnnMatrix.Create(cnnSize.BatchSize, cnnSize.Channels, cnnSize.Height, cnnSize.Width, readOnly: false, fp, ln);
 }

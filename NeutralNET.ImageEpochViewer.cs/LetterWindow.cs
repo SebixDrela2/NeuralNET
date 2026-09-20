@@ -1,9 +1,11 @@
+using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using NeutralNET.Framework.Convolutional;
 using NeutralNET.Framework.Neural.CNN;
 using NeutralNET.Matrices;
 using NeutralNET.Stuff;
 using NeutralNET.Test.Data;
+using NeutralNET.Utils;
 
 namespace NeutralNET.ImageEpochViewer;
 
@@ -19,7 +21,7 @@ public partial class LetterWindow : Form
     private readonly System.Windows.Forms.Timer _timer;
     private readonly PictureBox ScreenshotSim;
 
-    public const int CapturedRefreshRate = 2000;
+    public const int CapturedRefreshRate = 150;
     public const int CapturedWidth = (int)(GraphicsUtils.Width * CapturedZoom);
     public const int CapturedHeight = (int)(GraphicsUtils.Height * CapturedZoom);
     public const float CapturedZoom = 1;
@@ -43,6 +45,7 @@ public partial class LetterWindow : Form
 
     public LetterWindow(CnnNetwork network)
     {
+        // Console.WriteLine($"{Stopwatch.GetTimestamp()} [ctor; {Thread.CurrentThread.ManagedThreadId}]");
         _network = network;
 
         for (int i = 0; i < NumConvLayers; i++)
@@ -68,37 +71,39 @@ public partial class LetterWindow : Form
         InitializeCustomLayout();
 
         _timer = new() { Interval = CapturedRefreshRate };
-        _timer.Tick += (_, _) => HandleTick();
+        _timer.Tick += (_, _) => Task.Run(HandleTick);
 
         StartTimer();
     }
 
-    private static Color GetHeatmapColor(float v)
-    {
-        v = Math.Clamp(v, 0f, 1f);
-        Color[] colors = [
-            Color.FromArgb(0, 0, 0),
-            Color.FromArgb(128, 0, 0),
-            Color.FromArgb(255, 0, 0),
-            Color.FromArgb(255, 128, 0),
-            Color.FromArgb(255, 255, 0),
-            Color.FromArgb(255, 255, 255)
-        ];
 
-        float scaled = v * (colors.Length - 1);
-        int idx = (int)scaled;
-        if (idx >= colors.Length - 1) return colors[^1];
 
-        float frac = scaled - idx;
-        Color c1 = colors[idx];
-        Color c2 = colors[idx + 1];
+    // private static Color GetHeatmapColor(float v)
+    // {
+    //     v = Math.Clamp(v, 0f, 1f);
+    //     Color[] colors = [
+    //         Color.FromArgb(0, 0, 0),
+    //         Color.FromArgb(128, 0, 0),
+    //         Color.FromArgb(255, 0, 0),
+    //         Color.FromArgb(255, 128, 0),
+    //         Color.FromArgb(255, 255, 0),
+    //         Color.FromArgb(255, 255, 255)
+    //     ];
 
-        int r = (int)(c1.R + (c2.R - c1.R) * frac);
-        int g = (int)(c1.G + (c2.G - c1.G) * frac);
-        int b = (int)(c1.B + (c2.B - c1.B) * frac);
+    //     float scaled = v * (colors.Length - 1);
+    //     int idx = (int)scaled;
+    //     if (idx >= colors.Length - 1) return colors[^1];
 
-        return Color.FromArgb(r, g, b);
-    }
+    //     float frac = scaled - idx;
+    //     Color c1 = colors[idx];
+    //     Color c2 = colors[idx + 1];
+
+    //     int r = (int)(c1.R + (c2.R - c1.R) * frac);
+    //     int g = (int)(c1.G + (c2.G - c1.G) * frac);
+    //     int b = (int)(c1.B + (c2.B - c1.B) * frac);
+
+    //     return Color.FromArgb(r, g, b);
+    // }
 
     private static Bitmap CreateNearestNeighborImage(Bitmap src, int targetWidth, int targetHeight)
     {
@@ -135,8 +140,8 @@ public partial class LetterWindow : Form
             BackColor = Color.FromArgb(18, 18, 18)
         };
 
-        tabControl.Controls.Add(firstTimeTab);
         tabControl.Controls.Add(realTimeTab);
+        tabControl.Controls.Add(firstTimeTab);
         Controls.Add(tabControl);
 
         flowPanel = new FlowLayoutPanel
@@ -157,7 +162,7 @@ public partial class LetterWindow : Form
             {
                 Width = 145,
                 Height = 175,
-                Margin = new Padding(6),
+                Margin = new Padding(1),
                 BorderStyle = BorderStyle.FixedSingle,
                 BackColor = Color.FromArgb(28, 28, 30),
                 Cursor = Cursors.Hand
@@ -200,7 +205,8 @@ public partial class LetterWindow : Form
         var realTimeMainLayout = new Panel
         {
             Dock = DockStyle.Fill,
-            BackColor = Color.FromArgb(18, 18, 18)
+            BackColor = Color.FromArgb(18, 18, 18),
+            // AutoSize = true,
         };
 
         var leftPanel = new Panel
@@ -213,15 +219,8 @@ public partial class LetterWindow : Form
         ScreenshotSim.Location = new Point(10, 20);
         leftPanel.Controls.Add(ScreenshotSim);
 
-        var rightMainSplitPanel = new Panel
-        {
-            Dock = DockStyle.Fill,
-            BackColor = Color.FromArgb(18, 18, 18)
-        };
-
         realTimeFlowPanel = new FlowLayoutPanel
         {
-            Height = 220,
             Dock = DockStyle.Top,
             AutoScroll = true,
             FlowDirection = FlowDirection.LeftToRight,
@@ -232,41 +231,52 @@ public partial class LetterWindow : Form
 
         foreach (char targetChar in GraphicsUtils.DefaultLetters)
         {
-            var slotPanel = new Panel
-            {
-                Width = 100,
-                Height = 50,
-                Margin = new Padding(3),
-                BorderStyle = BorderStyle.FixedSingle,
-                BackColor = Color.FromArgb(28, 28, 30)
-            };
-
             var slotLbl = new Label
             {
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleCenter,
-                Font = new Font("Segoe UI", 8F, FontStyle.Bold),
+                Font = new Font("Consolas", 8F, FontStyle.Bold),
                 ForeColor = Color.White,
                 Text = $"{targetChar}: 0.0%"
             };
+            var slotPanel = new Panel
+            {
+                Width = (int)(float.Round((slotLbl.PreferredWidth + 24) / 16.0f) * 16),
+                Height = (int)(float.Round((slotLbl.PreferredHeight + 16) / 16.0f) * 16),
+                Margin = new Padding(3),
+                BorderStyle = BorderStyle.FixedSingle,
+                BackColor = Color.FromArgb(28, 28, 30),
+                Controls = { slotLbl }
+            };
 
-            slotPanel.Controls.Add(slotLbl);
             realTimeFlowPanel.Controls.Add(slotPanel);
             _realTimeLetterLabels[targetChar] = slotLbl;
         }
 
-        realTimeConvLayersPanel = new FlowLayoutPanel
+        realTimeConvLayersPanel = new FlowLayoutPanel()
         {
-            Dock = DockStyle.Fill,
-            AutoScroll = true,
+            Dock = DockStyle.Top,
             FlowDirection = FlowDirection.TopDown,
+            // AutoScroll = true,
             WrapContents = false,
-            Padding = new Padding(10),
-            BackColor = Color.FromArgb(18, 18, 18)
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowOnly,
+            // WrapContents = false,
+            // AutoScroll = true,
+
+            // Padding = new Padding(10),
+            // BackColor = Color.FromArgb(0xee, 0xee, 0x22),
+            // BackColor = Color.FromArgb(50, 50, 51),
         };
 
-        rightMainSplitPanel.Controls.Add(realTimeConvLayersPanel);
-        rightMainSplitPanel.Controls.Add(realTimeFlowPanel);
+        var rightMainSplitPanel = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.FromArgb(18, 18, 18),
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowOnly,
+            Controls = { realTimeConvLayersPanel, realTimeFlowPanel },
+        };
 
         realTimeMainLayout.Controls.Add(rightMainSplitPanel);
         realTimeMainLayout.Controls.Add(leftPanel);
@@ -287,8 +297,9 @@ public partial class LetterWindow : Form
 
     private int TickState = 0;
 
-    private async void HandleTick()
+    private void HandleTick()
     {
+        // Console.WriteLine($"{Stopwatch.GetTimestamp()} [HandleTick; {Thread.CurrentThread.ManagedThreadId}]");
         if (Interlocked.CompareExchange(ref TickState, 1, 0) != 0) return;
 
         try
@@ -314,7 +325,7 @@ public partial class LetterWindow : Form
             using var inputMatrix = LetterDataLoader.LoadInputFromScreenshot(bmp, px);
 
             // Execute heavy network calculations asynchronously on thread pool
-            await Task.Run(() =>
+
             {
                 using var output = _network.Forward(inputMatrix);
 
@@ -345,16 +356,16 @@ public partial class LetterWindow : Form
 
                         if (!allInitialized)
                         {
-                            Invoke(new Action(() =>
+                            Invoke(() =>
                             {
-                                for (int i = 0; i < NumConvLayers; i++)
+                                for (int i = 0; i < NumConvLayers; ++i)
                                 {
                                     if (!_convLayersInitialized[i])
                                     {
                                         InitializeLayerUI(i, convOutputs[i].Channels, convOutputs[i].Width, convOutputs[i].Height);
                                     }
                                 }
-                            }));
+                            });
 
                             while (true)
                             {
@@ -371,10 +382,7 @@ public partial class LetterWindow : Form
                         }
 
                         // Automatically resumes back on UI thread without BeginInvoke
-                        Invoke(new Action(() =>
-                        {
-                            UpdateUIResults(scores);
-                        }));
+                        Invoke(() => UpdateUIResults(scores));
                     }
                 }
                 finally
@@ -384,7 +392,7 @@ public partial class LetterWindow : Form
                         convOutputs[i]?.Dispose();
                     }
                 }
-            });
+            }
         }
         catch (Exception)
         {
@@ -396,110 +404,148 @@ public partial class LetterWindow : Form
         }
     }
 
+    private unsafe static void ApplyColorScale(CnnMatrix input, int channel, Bitmap output)
+    {
+        var size = (input.Width, input.Height);
+        Debug.Assert((output.Width, output.Height) == size);
+
+        var range = (Min: float.MaxValue, Max: float.MinValue);
+        for (int y = 0; y < size.Height; ++y)
+        {
+            for (int x = 0; x < size.Width; ++x)
+            {
+                float v = input[0, channel, y, x];
+                range = (float.Min(range.Min, v), float.Max(range.Max, v));
+            }
+        }
+        var fr = ((range.Max - range.Min) is var diff and not 0)
+            ? float.ReciprocalEstimate(diff)
+            : 1;
+
+        // var targetBmp = _cachedLayerBitmaps[arrayIndex][i];
+        // Debug.Assert((targetBmp.Width, targetBmp.Height) == (mapWidth, mapHeight));
+
+        var data = output.LockBits(
+            new Rectangle(0, 0, size.Width, size.Height),
+            System.Drawing.Imaging.ImageLockMode.WriteOnly,
+            System.Drawing.Imaging.PixelFormat.Format32bppArgb
+        );
+
+        try
+        {
+            var ptr = (Color32bppArgb*)(void*)data.Scan0;
+            for (int y = 0; y < size.Height; ++y, ptr = (Color32bppArgb*)(((byte*)ptr) + data.Stride))
+            {
+                for (int x = 0; x < size.Width; ++x)
+                {
+                    ptr[x] = ColorScale.Turbo((input[0, channel, y, x] - range.Min) * fr);
+                }
+            }
+
+        }
+        finally
+        {
+            output.UnlockBits(data);
+        }
+    }
+
     private void ProcessConvLayerData(CnnMatrix convOutput, int arrayIndex)
     {
-        int numFilters = convOutput.Channels;
-        int mapHeight = convOutput.Height;
-        int mapWidth = convOutput.Width;
+        // Console.WriteLine($"{Stopwatch.GetTimestamp()} [ProcessConvLayerData; {Thread.CurrentThread.ManagedThreadId}]");
+        int n = convOutput.Channels;
 
-        for (int f = 0; f < numFilters; f++)
+        for (int i = 0; i < n; ++i)
         {
-            float min = float.MaxValue, max = float.MinValue;
-            for (int y = 0; y < mapHeight; y++)
-            {
-                for (int x = 0; x < mapWidth; x++)
-                {
-                    float val = convOutput[0, f, y, x];
-                    if (val < min) min = val;
-                    if (val > max) max = val;
-                }
-            }
-
-            float range = max - min;
-            if (range == 0) range = 1f;
-
-            var targetBmp = _cachedLayerBitmaps[arrayIndex][f];
-
-            for (int y = 0; y < mapHeight; y++)
-            {
-                for (int x = 0; x < mapWidth; x++)
-                {
-                    float val = convOutput[0, f, y, x];
-                    float normalized = (val - min) / range;
-                    targetBmp.SetPixel(x, y, GetHeatmapColor(normalized));
-                }
-            }
+            ApplyColorScale(convOutput, i, _cachedLayerBitmaps[arrayIndex][i]);
         }
     }
 
     private void InitializeLayerUI(int arrayIndex, int numFilters, int mapWidth, int mapHeight)
     {
+        // Console.WriteLine($"{Stopwatch.GetTimestamp()} [InitializeLayerUI; {Thread.CurrentThread.ManagedThreadId}]");
         if (_convLayersInitialized[arrayIndex]) return;
 
         int actualLayerIndex = MinConvLayerIndex + arrayIndex;
-        int maxPerRow = 16;
-        int itemWidthSize = 68;
-        int panelWidth = Math.Min(numFilters, maxPerRow) * itemWidthSize + 30;
+        // int maxPerRow = 16;
+        // int itemWidthSize = 68;
+        // int panelWidth = (int.Min(numFilters, maxPerRow) * itemWidthSize) + 30;
+        const int picBoxMargin = 2;
+        const int pxStackPadding = 2;
+        const int picBoxGap = picBoxMargin * 2;
+        const int picBoxSize = 64;
 
-        var layerContainer = new Panel
+        var hstackPanel = new FlowLayoutPanel()
         {
-            Width = panelWidth,
-            Height = ((numFilters / maxPerRow) + 1) * 76 + 35,
-            BackColor = Color.FromArgb(24, 24, 26),
-            Margin = new Padding(4, 4, 4, 12),
-            BorderStyle = BorderStyle.FixedSingle
-        };
-
-        var titleLbl = new Label
-        {
-            Text = $"Convolutional Layer {actualLayerIndex + 1} Feature Maps (Real-time)",
-            ForeColor = Color.White,
-            Font = new Font("Segoe UI", 9F, FontStyle.Bold),
-            Location = new Point(8, 4),
-            Width = 350,
-            Height = 20
-        };
-        layerContainer.Controls.Add(titleLbl);
-
-        var mapsFlow = new FlowLayoutPanel
-        {
-            Location = new Point(8, 26),
-            Width = panelWidth - 16,
-            Height = layerContainer.Height - 34,
+            Dock = DockStyle.Fill,
+            // BackColor = Color.FromArgb(0x33, 0x33, 0xFF),
             FlowDirection = FlowDirection.LeftToRight,
-            AutoScroll = true,
-            WrapContents = true,
-            BackColor = Color.FromArgb(20, 20, 22)
-        };
-        layerContainer.Controls.Add(mapsFlow);
-        realTimeConvLayersPanel.Controls.Add(layerContainer);
 
+            AutoSize = true,
+            WrapContents = true,
+            AutoSizeMode = AutoSizeMode.GrowOnly,
+            // WrapContents = true,
+            // AutoSizeMode = AutoSizeMode.GrowAndShrink,
+
+            MinimumSize = new()
+            {
+                Width = (16 * picBoxSize) + (15 * picBoxGap) + (2 * pxStackPadding),
+                Height = (1 * picBoxSize) + (0 * picBoxGap),
+            },
+            MaximumSize = new()
+            {
+                Width = (16 * picBoxSize) + (15 * picBoxGap) + (2 * pxStackPadding),
+                Height = (4 * picBoxSize) + (3 * picBoxGap),
+            },
+        };
         for (int f = 0; f < numFilters; f++)
         {
             var rawBmp = new Bitmap(mapWidth, mapHeight, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
             _cachedLayerBitmaps[arrayIndex].Add(rawBmp);
 
-            var scaledBmp = CreateNearestNeighborImage(rawBmp, 64, 64);
+            var scaledBmp = CreateNearestNeighborImage(rawBmp, picBoxSize, picBoxSize);
 
             var pic = new PictureBox
             {
-                Width = 64,
-                Height = 64,
+                Width = picBoxSize,
+                Height = picBoxSize,
                 SizeMode = PictureBoxSizeMode.Normal,
                 Image = scaledBmp,
                 BackColor = Color.Black,
                 BorderStyle = BorderStyle.FixedSingle,
-                Margin = new Padding(2)
+                Margin = new Padding(picBoxMargin),
             };
+            //if (f != 0 && ((f & 0b111) == 0))
             _cachedLayerPicBoxes[arrayIndex].Add(pic);
-            mapsFlow.Controls.Add(pic);
+            hstackPanel.Controls.Add(pic);
         }
 
+        var gBox = new GroupBox()
+        {
+            Dock = DockStyle.Bottom,
+            Text = $"Convolutional Layer {actualLayerIndex + 1}",
+            Font = new Font("Consolas", 8, FontStyle.Bold),
+
+            ForeColor = Color.White,
+            // BackColor = Color.FromArgb(0x33, 0xFF, 0x33),
+            BackColor = Color.FromArgb(50, 50, 51),
+
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            // Anchor = AnchorStyles.Left | AnchorStyles.Right,
+
+            // Dock = DockStyle.Fill,
+            // Width = (16 * 64) + (15 * 2),
+            Controls = { hstackPanel },
+        };
+
+
+        realTimeConvLayersPanel.Controls.Add(gBox);
         _convLayersInitialized[arrayIndex] = true;
     }
 
     private void UpdateUIResults(Dictionary<char, float> scores)
     {
+        // Console.WriteLine($"{Stopwatch.GetTimestamp()} [UpdateUIResults; {Thread.CurrentThread.ManagedThreadId}]");
         foreach (var kvp in scores)
         {
             char c = kvp.Key;
@@ -542,79 +588,79 @@ public partial class LetterWindow : Form
         // 1. Process all network inferences concurrently in the ThreadPool
         var results = await Task.Run(() =>
         {
-            var buffer = new (PictureBox Pic, Label Lbl, char TargetChar, Bitmap Bmp, char PredChar, float Conf)[_letterSlots.Count];
+            // Console.WriteLine($"{Stopwatch.GetTimestamp()} [InitializeLettersAsync->Task.Run; {Thread.CurrentThread.ManagedThreadId}]");
+            var buffer = new (PictureBox Pic, Label Lbl, char TargetChar, char PredChar, float Conf)[_letterSlots.Count];
 
-            Parallel.For(0, _letterSlots.Count, i =>
+            unsafe void LoopBody(int i)
             {
+                // Console.WriteLine($"{Stopwatch.GetTimestamp()} [InitializeLettersAsync->LoopBody]; {Thread.CurrentThread.ManagedThreadId}]");
                 var slot = _letterSlots[i];
-                char targetChar = slot.TargetChar;
-                var (inputMatrix, displayBmp) = LetterDataLoader.GenerateSampleForUI(targetChar);
+                if (slot.Pic.Image is not Bitmap bmp) throw new InvalidOperationException();
+                using var inputMatrix = LetterDataLoader.GenerateSampleForUI(slot.TargetChar, bmp);
 
-                try
                 {
                     using NeuralMatrix output = _network.Forward(inputMatrix);
+                    int predictedClassIndex = 0;
+                    float maxConfidence = float.MinValue;
 
-                    unsafe
+                    float* pOutput = output.Pointer;
+                    int outputCols = output.UsedColumns;
+
+                    for (int c = 0; c < outputCols; c++)
                     {
-                        int predictedClassIndex = 0;
-                        float maxConfidence = float.MinValue;
-
-                        float* pOutput = output.Pointer;
-                        int outputCols = output.UsedColumns;
-
-                        for (int c = 0; c < outputCols; c++)
+                        float val = pOutput[c];
+                        if (val > maxConfidence)
                         {
-                            float val = pOutput[c];
-                            if (val > maxConfidence)
-                            {
-                                maxConfidence = val;
-                                predictedClassIndex = c;
-                            }
+                            maxConfidence = val;
+                            predictedClassIndex = c;
                         }
-
-                        char predictedChar = (predictedClassIndex >= 0 && predictedClassIndex < GraphicsUtils.DefaultLetters.Length)
-                            ? GraphicsUtils.DefaultLetters[predictedClassIndex]
-                            : '?';
-
-                        buffer[i] = (slot.Pic, slot.Lbl, targetChar, displayBmp, predictedChar, maxConfidence);
                     }
+
+                    char predictedChar = (predictedClassIndex >= 0 && predictedClassIndex < GraphicsUtils.DefaultLetters.Length)
+                        ? GraphicsUtils.DefaultLetters[predictedClassIndex]
+                        : '?';
+
+                    buffer[i] = (slot.Pic, slot.Lbl, slot.TargetChar, predictedChar, maxConfidence);
                 }
-                finally
-                {
-                    inputMatrix.Dispose();
-                }
-            });
+            }
+            Parallel.For(0, _letterSlots.Count, LoopBody);
 
             return buffer;
         });
 
-        // 2. Automatically resumes on UI thread via SynchronizationContext - update UI all at once
-        foreach (var res in results)
+        Invoke(() =>
         {
-            res.Pic.Image?.Dispose();
-            res.Pic.Image = res.Bmp;
+            // Console.WriteLine($"{Stopwatch.GetTimestamp()} [InitializeLettersAsync->Invoke; {Thread.CurrentThread.ManagedThreadId}]");
+            foreach (var res in results)
+            {
+                // res.Pic.Image?.Dispose();
+                // res.Pic.Image = res.Bmp;
+                res.Pic.Invalidate();
 
-            if (res.PredChar == res.TargetChar && res.Conf >= 0.7f)
-            {
-                res.Lbl.Text = $"[{res.TargetChar}] Pred: {res.PredChar}\n({res.Conf * 100:F1}%)";
-                res.Lbl.ForeColor = Color.LightGreen;
+                if (res.PredChar == res.TargetChar && res.Conf >= 0.7f)
+                {
+                    res.Lbl.Text = $"[{res.TargetChar}] Pred: {res.PredChar}\n({res.Conf * 100:F1}%)";
+                    res.Lbl.ForeColor = Color.LightGreen;
+                }
+                else if (res.PredChar != res.TargetChar)
+                {
+                    res.Lbl.Text = $"[{res.TargetChar}] Pred: {res.PredChar}\n({res.Conf * 100:F1}%)";
+                    res.Lbl.ForeColor = Color.IndianRed;
+                }
+                else
+                {
+                    res.Lbl.Text = $"[{res.TargetChar}] Pred: {res.PredChar}\n({res.Conf * 100:F1}%)";
+                    res.Lbl.ForeColor = Color.Gold;
+                }
             }
-            else if (res.PredChar != res.TargetChar)
-            {
-                res.Lbl.Text = $"[{res.TargetChar}] Pred: {res.PredChar}\n({res.Conf * 100:F1}%)";
-                res.Lbl.ForeColor = Color.IndianRed;
-            }
-            else
-            {
-                res.Lbl.Text = $"[{res.TargetChar}] Pred: {res.PredChar}\n({res.Conf * 100:F1}%)";
-                res.Lbl.ForeColor = Color.Gold;
-            }
-        }
+        });
     }
 
     private void ShowFeatureMaps(char targetChar)
     {
-        var (inputMatrix, _) = LetterDataLoader.GenerateSampleForUI(targetChar);
+        // Console.WriteLine($"{Stopwatch.GetTimestamp()} [ShowFeatureMaps; {Thread.CurrentThread.ManagedThreadId}]");
+        var (inputMatrix, bmp) = LetterDataLoader.GenerateSampleForUI(targetChar);
+        bmp.Dispose();
 
         try
         {
@@ -646,58 +692,55 @@ public partial class LetterWindow : Form
 
             for (int f = 0; f < numFilters; f++)
             {
-                Bitmap rawBmp = new Bitmap(mapWidth, mapHeight, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                using Bitmap rawBmp = new Bitmap(mapWidth, mapHeight, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                ApplyColorScale(convOutput, f, rawBmp);
 
-                float min = float.MaxValue, max = float.MinValue;
-                for (int y = 0; y < mapHeight; y++)
-                {
-                    for (int x = 0; x < mapWidth; x++)
-                    {
-                        float val = convOutput[0, f, y, x];
-                        if (val < min) min = val;
-                        if (val > max) max = val;
-                    }
-                }
-
-                float range = max - min;
-                if (range == 0) range = 1f;
-
-                for (int y = 0; y < mapHeight; y++)
-                {
-                    for (int x = 0; x < mapWidth; x++)
-                    {
-                        float val = convOutput[0, f, y, x];
-                        float normalized = (val - min) / range;
-                        rawBmp.SetPixel(x, y, GetHeatmapColor(normalized));
-                    }
-                }
-
-                var sharpBmp = CreateNearestNeighborImage(rawBmp, 80, 80);
-                rawBmp.Dispose();
-
-                PictureBox pic = new PictureBox
+                mapPanel.Controls.Add(new PictureBox
                 {
                     Width = 80,
                     Height = 80,
                     SizeMode = PictureBoxSizeMode.Normal,
-                    Image = sharpBmp,
+                    Image = CreateNearestNeighborImage(rawBmp, 80, 80),
                     BackColor = Color.Black,
                     BorderStyle = BorderStyle.FixedSingle,
                     Margin = new Padding(4)
-                };
-                mapPanel.Controls.Add(pic);
+                });
             }
 
             mapForm.ShowDialog();
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Nie można pobrać aktywacji warstwy konwolucyjnej: {ex.Message}",
-                "Błąd mapy cech", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show($"Something is no yes: {ex.Message}", "Yesn't", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally
         {
             inputMatrix.Dispose();
         }
+    }
+}
+
+public static class ColorScale
+{
+    public static (byte R, byte G, byte B) Turbo(float value)
+    {
+        ReadOnlySpan<float> r = stackalloc float[] { 0.13572138f * 0xFF, 4.615392600f * 0xFF, -42.66032258f * 0xFF, 132.13108234f * 0xFF, -152.94239396f * 0xFF, 59.28637943f * 0xFF, 0, 0 };
+        ReadOnlySpan<float> g = stackalloc float[] { 0.09140261f * 0xFF, 2.194188390f * 0xFF, 4.8429665800f * 0xFF, -14.18503333f * 0xFF, 4.27729857000f * 0xFF, 2.829566040f * 0xFF, 0, 0 };
+        ReadOnlySpan<float> b = stackalloc float[] { 0.10667330f * 0xFF, 12.64194608f * 0xFF, -60.58204836f * 0xFF, 110.36276771f * 0xFF, -89.903109120f * 0xFF, 27.34824973f * 0xFF, 0, 0 };
+        Span<float> x = stackalloc float[8];
+        x.Clear();
+
+        x[0] = 1;
+        x[1] = float.Clamp(value, 0, 1);
+        x[2] = x[1] * x[1];
+        x[3] = x[2] * x[1];
+        x[4] = x[2] * x[2];
+        x[5] = x[1] * x[4];
+
+        return (
+            byte.CreateSaturating((r[0] * x[0]) + (r[1] * x[1]) + (r[2] * x[2]) + (r[3] * x[3]) + (r[4] * x[4]) + (r[5] * x[5]) + 0.5f),
+            byte.CreateSaturating((g[0] * x[0]) + (g[1] * x[1]) + (g[2] * x[2]) + (g[3] * x[3]) + (g[4] * x[4]) + (g[5] * x[5]) + 0.5f),
+            byte.CreateSaturating((b[0] * x[0]) + (b[1] * x[1]) + (b[2] * x[2]) + (b[3] * x[3]) + (b[4] * x[4]) + (b[5] * x[5]) + 0.5f)
+        );
     }
 }

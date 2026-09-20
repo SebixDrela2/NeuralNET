@@ -25,3 +25,18 @@ public struct ColorRGB
 
     public static implicit operator ColorRGB((float R, float G, float B) color) => new() { R = color.R, G = color.G, B = color.B };
 }
+
+[InlineArray(4)]
+public struct Color32bppArgb
+{
+    private byte _elem;
+
+    public ref byte A { [MethodImpl(Inline), UnscopedRef] get => ref this[3]; }
+    public ref byte R { [MethodImpl(Inline), UnscopedRef] get => ref this[2]; }
+    public ref byte G { [MethodImpl(Inline), UnscopedRef] get => ref this[1]; }
+    public ref byte B { [MethodImpl(Inline), UnscopedRef] get => ref this[0]; }
+    public Span<byte> Span { [MethodImpl(Inline), UnscopedRef] get => this; }
+
+    public static implicit operator Color32bppArgb((byte R, byte G, byte B) color) => new() { R = color.R, G = color.G, B = color.B, A = 0xFF };
+    public static implicit operator Color32bppArgb((byte R, byte G, byte B, byte A) color) => new() { R = color.R, G = color.G, B = color.B, A = color.A };
+}

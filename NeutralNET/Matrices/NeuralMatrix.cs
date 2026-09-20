@@ -1,7 +1,9 @@
 using System;
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Numerics;
 using System.Runtime.ConstrainedExecution;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
@@ -18,22 +20,14 @@ namespace NeutralNET.Matrices;
 /// </summary>
 public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
 {
-    ~NeuralMatrix()
-    {
-        Console.WriteLine(Locations[^1]);
-        NativeMemory.AlignedFree(Pointer);
-    }
-
     public const int Alignment = 16;
     private const int ByteAlignment = Alignment * sizeof(float);
     public static readonly ConcurrentBag<NeuralMatrix> Instances = [];
 
-    private static readonly ConcurrentBag<NeuralMatrix> _pool = [];
-    private static readonly int CommonAllocatedLength = 268435456;
+    // private static readonly ConcurrentBag<NeuralMatrix> _pool = [];
+    // private static readonly int CommonAllocatedLength = 536_870_912;
 
-    private readonly int _allocatedLength;
-
-    public float* Pointer;
+    public AllocationHandle MemoryHandle;
     public int Rows;
     public int ColumnsStride;
     public int UsedColumns;
@@ -43,32 +37,36 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
     public List<SourceLocation> Locations = [];
 
     private bool _inUse = true;
-    private bool _isPoolable = true;
+    private readonly bool _isPoolable = true;
 
+    public float* Pointer { [MethodImpl(Inline)] get => (float*)MemoryHandle.Pointer; }
     public Span<float> SpanWithGarbage => new(Pointer, UnsafeSize);
 
-    public static NeuralMatrix Create(int rows, int columns, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "")
+    public static NeuralMatrix Create(int rows, int columns, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
     {
-        var matrix = new NeuralMatrix(rows, columns, isPoolable: true, ln, fp);
+        var matrix = new NeuralMatrix(rows, columns, isPoolable: true, fp, ln);
 
         return matrix;
     }
 
-    public static NeuralMatrix GetOrCreate(int rows, int columns, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "")
+    public static NeuralMatrix GetOrCreate(int rows, int columns, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
     {
-        if (!_pool.TryTake(out var item))
-        {
-            item = new NeuralMatrix(rows, columns, isPoolable :true, ln, fp);
-        }
-        else
-        {
-            item.Resize(rows, columns, ln, fp);
-        }
+        //NeuralMemoryPool.Rent()
+        var matrix = new NeuralMatrix(rows, columns, isPoolable: true, fp, ln);
 
-        return item;
+        // if (!_pool.TryTake(out var matrix))
+        // {
+        //     matrix = new NeuralMatrix(rows, columns, isPoolable: true, fp, ln);
+        // }
+        // else
+        // {
+        //     matrix.Resize(rows, columns, fp, ln);
+        // }
+
+        return matrix;
     }
 
-    private NeuralMatrix(int rows, int columns, bool isPoolable, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "")
+    private NeuralMatrix(int rows, int columns, bool isPoolable, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
     {
         ColumnsStride = MatrixUtils.GetStride(columns);
         Rows = rows;
@@ -78,46 +76,34 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
         UnsafeSize = Rows * ColumnsStride;
         _isPoolable = isPoolable;
 
-        if (isPoolable)
-        {
-            _allocatedLength = CommonAllocatedLength;
+        MemoryHandle = NeuralMemoryPool.Rent<float>(UnsafeSize);
 
-            if (UnsafeSize > CommonAllocatedLength)
-            {
-                throw new InvalidOperationException($"Requested size {UnsafeSize} exceeds CommonAllocatedLength buffer.");
-            }
-        }
-        else
-        {
-            _allocatedLength = UnsafeSize;
-        }
-
-        Locations.Add(SourceLocation.Current(new MatrixInfo([rows, columns], UnsafeSize),ln, fp));
-        Pointer = (float*)NativeMemory.AlignedAlloc((nuint)_allocatedLength * sizeof(float), (nuint)ByteAlignment);
+        Locations.Add(SourceLocation.Current(new MatrixInfo([rows, columns], UnsafeSize), fp, ln));
+        // Pointer = (float*)NativeMemory.AlignedAlloc((nuint)allocLength * sizeof(float), (nuint)ByteAlignment);
         StrideMasks = MatrixUtils.GetStrideMask(columns);
         Instances.Add(this);
         Clear();
     }
 
-    private void Resize(int rows, int columns, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "")
-    {
-        ColumnsStride = MatrixUtils.GetStride(columns);
-        Rows = rows;
-        UsedColumns = columns;
+    // private void Resize(int rows, int columns, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
+    // {
+    //     ColumnsStride = MatrixUtils.GetStride(columns);
+    //     Rows = rows;
+    //     UsedColumns = columns;
 
-        LogicalLength = Rows * UsedColumns;
-        UnsafeSize = Rows * ColumnsStride;
+    //     LogicalLength = Rows * UsedColumns;
+    //     UnsafeSize = Rows * ColumnsStride;
 
-        if (UnsafeSize > CommonAllocatedLength)
-        {
-            throw new InvalidOperationException($"Requested size {UnsafeSize} exceeds CommonAllocatedLength buffer.");
-        }
+    //     if (UnsafeSize > CommonAllocatedLength)
+    //     {
+    //         throw new InvalidOperationException($"Requested size {UnsafeSize} exceeds {CommonAllocatedLength} buffer.");
+    //     }
 
-        Locations.Add(SourceLocation.Current(new MatrixInfo([rows, columns], UnsafeSize), ln, fp));
-        _inUse = true;
-        StrideMasks = MatrixUtils.GetStrideMask(columns);
-        Clear();
-    }
+    //     Locations.Add(SourceLocation.Current(new MatrixInfo([rows, columns], UnsafeSize), fp, ln));
+    //     _inUse = true;
+    //     StrideMasks = MatrixUtils.GetStrideMask(columns);
+    //     Clear();
+    // }
 
     public void SetRowSize(int limit)
     {
@@ -208,15 +194,21 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
 
     public void CopyRowFrom(NeuralMatrix other, int row) => other.GetRowSpan(row).CopyTo(GetRowSpan(row));
 
-    public void CopyFrom(NeuralMatrix other)
+    [Conditional("DEBUG")]
+    public static void AssertSameSize(NeuralMatrix lhs, NeuralMatrix rhs, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
     {
-        NativeMemory.Copy(other.Pointer, Pointer, (nuint)UnsafeSize * sizeof(float));
+        AllocationHandle.AssertSameSize(lhs.MemoryHandle, rhs.MemoryHandle, fp, ln);
+    }
+    public void CopyFrom(NeuralMatrix other, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
+    {
+        AssertSameSize(this, other, fp, ln);
+        NativeMemory.Copy(other.Pointer, Pointer, nuint.Min(MemoryHandle.ByteSize, other.MemoryHandle.ByteSize));
     }
 
-    public NeuralMatrix Copy()
+    public NeuralMatrix Copy([CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
     {
-        var matrix = GetOrCreate(Rows, UsedColumns);
-        matrix.CopyFrom(this);
+        var matrix = GetOrCreate(Rows, UsedColumns, fp, ln);
+        matrix.CopyFrom(this, fp, ln);
         return matrix;
     }
 
@@ -271,7 +263,7 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
 
     public void Clear()
     {
-        NativeMemory.Clear(Pointer, (nuint)UnsafeSize * sizeof(float));
+        NativeMemory.Clear(Pointer, MemoryHandle.ByteSize);
     }
 
     public override string ToString() => $"{Rows}x{UsedColumns}";
@@ -428,23 +420,16 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
 
     public void Dispose()
     {
-        if (!_inUse)
-        {
-            throw new NotImplementedException();
-        }
+        ObjectDisposedException.ThrowIf(!_inUse, this);
 
-        if (_isPoolable)
-        {
-            _pool.Add(this);
-        }
-        else
-        {
-            NativeMemory.AlignedFree(Pointer);
-            GC.SuppressFinalize(this);
-            Pointer = null;
-        }
-
+        MemoryHandle.Take().Dispose();
+        GC.SuppressFinalize(this);
         _inUse = false;
     }
 
+    ~NeuralMatrix()
+    {
+        Console.WriteLine(Locations[^1]);
+        MemoryHandle.Free();
+    }
 }

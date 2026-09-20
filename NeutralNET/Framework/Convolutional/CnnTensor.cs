@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.ConstrainedExecution;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
@@ -11,15 +12,9 @@ namespace NeutralNET.Framework.Convolutional;
 /// <summary>
 /// Superoptimized 4D tensor (Batch, Channels, Height, Width) with zero-alloc L1-cached memory pooling.
 /// </summary>
-/// 
+///
 public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
 {
-    ~CnnMatrix()
-    {
-        Console.WriteLine(string.Join('\n', Locations));
-        NativeMemory.AlignedFree(Pointer);
-    }
-
     public List<SourceLocation> Locations = [];
     public List<SourceLocation> DisposeLocations = [];
 
@@ -31,11 +26,12 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
     public const int Alignment = 16;
     private const int ByteAlignment = Alignment * sizeof(float);
 
-    private static readonly ConcurrentBag<CnnMatrix> _pool = [];
-    private static readonly int CommonAllocatedLength = 67108864;
+    // private static readonly ConcurrentBag<CnnMatrix> _pool = [];
+    // private static readonly int CommonAllocatedLength = 134_217_728;
 
     public static readonly ConcurrentBag<CnnMatrix> Instances = [];
-    public float* Pointer;
+    public AllocationHandle MemoryHandle;
+    public float* Pointer { [MethodImpl(Inline)] get => (float*)MemoryHandle.Pointer; }
     public int Batch { get; set; }
     public int Channels;
     public int Height;
@@ -51,29 +47,30 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
     private bool _inUse = true;
     private bool _isInit = false;
 
-    private bool _isPoolable = true;
+    private readonly bool _isPoolable = true;
 
-    public static CnnMatrix Create(int batch, int channels, int height, int width, bool readOnly = false, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "")
+    public static CnnMatrix Create(int batch, int channels, int height, int width, bool readOnly = false, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
     {
-        var matrix = new CnnMatrix(batch, channels, height, width, isPoolable: true, ln, fp, readOnly: readOnly);
+        var matrix = new CnnMatrix(batch, channels, height, width, isPoolable: true, fp, ln, readOnly: readOnly);
 
         return matrix;
     }
 
-    public static CnnMatrix GetOrCreate(int batch, int channels, int height, int width, bool readOnly = false, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "")
+    public static CnnMatrix GetOrCreate(int batch, int channels, int height, int width, bool readOnly = false, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
     {
-        if (!_pool.TryTake(out var item))
-        {
-            item = new CnnMatrix(batch, channels, height, width, isPoolable:true, ln, fp, readOnly: readOnly);
+        var matrix = new CnnMatrix(batch, channels, height, width, isPoolable: true, fp, ln, readOnly: readOnly);
+        // if (!_pool.TryTake(out var matrix))
+        // {
+        //     matrix = new CnnMatrix(batch, channels, height, width, isPoolable: true, fp, ln, readOnly: readOnly);
 
-            return item;
-        }
+        //     return matrix;
+        // }
 
-        item.Resize(batch, channels, height, width, ln, fp);
-        return item;
+        // matrix.Resize(batch, channels, height, width, fp, ln);
+        return matrix;
     }
 
-    private CnnMatrix(int batch, int channels, int height, int width, bool isPoolable, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "", bool readOnly = false)
+    private CnnMatrix(int batch, int channels, int height, int width, bool isPoolable, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0, bool readOnly = false)
     {
         Batch = batch;
         Channels = channels;
@@ -83,58 +80,44 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
         UnsafeSize = batch * channels * height * width;
         _isPoolable = isPoolable;
 
-        int allocatedLength;
+        MemoryHandle = NeuralMemoryPool.Rent<float>(UnsafeSize);
 
-        if (isPoolable)
-        {
-            allocatedLength = CommonAllocatedLength;
-
-            if (UnsafeSize > CommonAllocatedLength)
-            {
-                throw new InvalidOperationException($"Requested size {UnsafeSize} exceeds CommonAllocatedLength buffer.");
-            }
-        }
-        else
-        {
-            allocatedLength = UnsafeSize;
-        }
-
-        Locations.Add(SourceLocation.Current(new MatrixInfo([batch, channels, height, width], UnsafeSize), ln, fp));
-        Pointer = (float*)NativeMemory.AlignedAlloc((nuint)(allocatedLength * sizeof(float)), (nuint)ByteAlignment);
+        Locations.Add(SourceLocation.Current(new MatrixInfo([batch, channels, height, width], UnsafeSize), fp, ln));
+        // Pointer = (float*)NativeMemory.AlignedAlloc((nuint)(allocatedLength * sizeof(float)), (nuint)ByteAlignment);
         _inUse = true;
         Clear();
         Instances.Add(this);
     }
 
-    private void Resize(int batch, int channels, int height, int width, [CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "")
-    {
-        if (_inUse)
-        {
-            throw new InvalidOperationException("cheeky");
-        }
+    // private void Resize(int batch, int channels, int height, int width, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
+    // {
+    //     if (_inUse)
+    //     {
+    //         throw new InvalidOperationException("cheeky");
+    //     }
 
-        if (_isDisposing || _isInit)
-        {
-            throw new InvalidOperationException("ooga init");
-        }
+    //     if (_isDisposing || _isInit)
+    //     {
+    //         throw new InvalidOperationException("ooga init");
+    //     }
 
-        _isInit = true;
-        int newSize = batch * channels * height * width;
+    //     _isInit = true;
+    //     int newSize = batch * channels * height * width;
 
-        if (newSize > CommonAllocatedLength)
-        {
-            throw new InvalidOperationException($"Tensor size {newSize} exceeds pool buffer size {CommonAllocatedLength}.");
-        }
+    //     if (newSize > CommonAllocatedLength)
+    //     {
+    //         throw new InvalidOperationException($"Tensor size {newSize} exceeds pool buffer size {CommonAllocatedLength}.");
+    //     }
 
-        Locations.Add(SourceLocation.Current(new MatrixInfo([batch, channels, height, width], newSize), ln, fp));
-        Batch = batch;
-        Channels = channels;
-        Height = height;
-        Width = width;
-        UnsafeSize = newSize;
-        _inUse = true;
-        _isInit = false;
-    }
+    //     Locations.Add(SourceLocation.Current(new MatrixInfo([batch, channels, height, width], newSize), fp, ln));
+    //     Batch = batch;
+    //     Channels = channels;
+    //     Height = height;
+    //     Width = width;
+    //     UnsafeSize = newSize;
+    //     _inUse = true;
+    //     _isInit = false;
+    // }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public int GetIndex(int batch, int channel, int y, int x)
@@ -171,7 +154,7 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
     public void Clear()
     {
         EnsureNotDisposed();
-        NativeMemory.Clear(Pointer, (nuint)UnsafeSize * sizeof(float));
+        NativeMemory.Clear(Pointer, MemoryHandle.ByteSize);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -181,11 +164,18 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
         new Span<float>(Pointer, UnsafeSize).Fill(value);
     }
 
+    [Conditional("DEBUG")]
+    public static void AssertSameSize(CnnMatrix lhs, CnnMatrix rhs, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
+    {
+        AllocationHandle.AssertSameSize(lhs.MemoryHandle, rhs.MemoryHandle, fp, ln);
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void CopyFrom(CnnMatrix other)
+    public void CopyFrom(CnnMatrix other, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
     {
         EnsureNotDisposed();
-        NativeMemory.Copy(other.Pointer, Pointer, (nuint)UnsafeSize * sizeof(float));
+        AssertSameSize(this, other, fp, ln);
+        NativeMemory.Copy(other.Pointer, Pointer, nuint.Min(MemoryHandle.ByteSize, other.MemoryHandle.ByteSize));
     }
 
     public void Im2Col(NeuralMatrix colInput, int kernelH, int kernelW, int stride, int padding)
@@ -387,21 +377,21 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
         paddedGrad.Dispose();
     }
 
-    public static void ClearPool()
-    {
-        while (_pool.TryTake(out var item))
-        {
-            if (item.Pointer != null)
-            {
-                NativeMemory.AlignedFree(item.Pointer);
-                item.Pointer = null;
-            }
-        }
-    }
+    // public static void ClearPool()
+    // {
+    //     while (_pool.TryTake(out var item))
+    //     {
+    //         if (item.Pointer != null)
+    //         {
+    //             NativeMemory.AlignedFree(item.Pointer);
+    //             item.Pointer = null;
+    //         }
+    //     }
+    // }
 
     private bool _isDisposing = false;
     [OverloadResolutionPriority(1)]
-    public void Dispose([CallerLineNumber] int ln = 0, [CallerFilePath] string fp = "")
+    public void Dispose([CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
     {
         try
         {
@@ -413,19 +403,22 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
             _isDisposing = true;
             EnsureNotDisposed();
 
-            DisposeLocations.Add(SourceLocation.Current(new MatrixInfo([Batch, Channels, Height, Width], UnsafeSize), ln, fp));
+            DisposeLocations.Add(SourceLocation.Current(new MatrixInfo([Batch, Channels, Height, Width], UnsafeSize), fp, ln));
             _inUse = false;
 
-            if (_isPoolable)
-            {
-                _pool.Add(this);
-            }
-            else
-            {
-                NativeMemory.AlignedFree(Pointer);
-                GC.SuppressFinalize(this);
-                Pointer = null;
-            }
+            MemoryHandle.Take().Dispose();
+            GC.SuppressFinalize(this);
+
+            // if (_isPoolable)
+            // {
+            //     _pool.Add(this);
+            // }
+            // else
+            // {
+            //     NativeMemory.AlignedFree(Pointer);
+            //     GC.SuppressFinalize(this);
+            //     Pointer = null;
+            // }
 
             _isDisposing = false;
         }
@@ -444,6 +437,11 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
         }
     }
 
-    public void Dispose() => Dispose(-1);
+    public void Dispose() => Dispose(ln: -1);
 
+    ~CnnMatrix()
+    {
+        Console.WriteLine(Locations[^1]);
+        MemoryHandle.Free();
+    }
 }

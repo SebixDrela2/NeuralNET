@@ -55,7 +55,8 @@ public class CnnNetwork
     /// </summary>
     public CnnNetwork LoadData<TEnum>(TEnum key, Stream stream) where TEnum : struct, Enum
     {
-        _framework.LoadData(key, stream);
+        if (!_framework.LoadData(key, stream)) throw new InvalidOperationException();
+
         return this;
     }
 

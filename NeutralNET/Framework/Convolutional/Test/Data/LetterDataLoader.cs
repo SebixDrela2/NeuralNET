@@ -110,6 +110,17 @@ public class LetterDataLoader : DataLoaderBase
     /// </summary>
     public static (CnnMatrix ImageTensor, Bitmap DisplayBitmap) GenerateSampleForUI(char targetChar)
     {
+        var displayBmp = new Bitmap(GraphicsUtils.Width, GraphicsUtils.Height, PixelFormat.Format32bppArgb);
+        var mat = GenerateSampleForUI(targetChar, displayBmp);
+        return (mat, displayBmp);
+    }
+
+    /// <summary>
+    /// Static helper method for Windows Forms to generate a single sample using the exact
+    /// same generation pipeline as the training dataset, returning both the network tensor and UI bitmap.
+    /// </summary>
+    public static CnnMatrix GenerateSampleForUI(char targetChar, Bitmap output)
+    {
         var rng = Random.Shared;
         string fontName = FontFamilies[rng.Next(FontFamilies.Length)];
         var style = SupportedStyles[rng.Next(SupportedStyles.Length)];
@@ -128,7 +139,9 @@ public class LetterDataLoader : DataLoaderBase
 
         PopulateTensorFromPixels(sample.Flat.ToArray(), imgMat, 0, scale);
 
-        var displayBmp = new Bitmap(GraphicsUtils.Width, GraphicsUtils.Height, PixelFormat.Format32bppArgb);
+        // var displayBmp = new Bitmap(GraphicsUtils.Width, GraphicsUtils.Height, PixelFormat.Format32bppArgb);
+        Debug.Assert(output.Width == GraphicsUtils.Width);
+        Debug.Assert(output.Height == GraphicsUtils.Height);
         for (int y = 0; y < GraphicsUtils.Height; ++y)
         {
             for (int x = 0; x < GraphicsUtils.Width; ++x)
@@ -137,11 +150,11 @@ public class LetterDataLoader : DataLoaderBase
                 int g = (int)(imgMat[0, 1, y, x] * 0xFF);
                 int b = (int)(imgMat[0, 2, y, x] * 0xFF);
 
-                displayBmp.SetPixel(x, y, Color.FromArgb(byte.CreateSaturating(r), byte.CreateSaturating(g), byte.CreateSaturating(b)));
+                output.SetPixel(x, y, Color.FromArgb(byte.CreateSaturating(r), byte.CreateSaturating(g), byte.CreateSaturating(b)));
             }
         }
 
-        return (imgMat, displayBmp);
+        return imgMat;
     }
 
     public static CnnMatrix LoadInputFromScreenshot(Bitmap bitmap, PixelStructRGB pixels)

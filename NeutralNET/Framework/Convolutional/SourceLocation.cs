@@ -4,14 +4,15 @@ namespace NeutralNET.Framework.Convolutional;
 
 public class SourceLocation(
     MatrixInfo info,
-    [CallerLineNumber] int ln = 0,
-    [CallerFilePath] string fp = "")
+    [CallerFilePath] string fp = "",
+    [CallerLineNumber] int ln = 0)
 {
     public static SourceLocation Current(
         MatrixInfo info,
-        [CallerLineNumber] int ln = 0,
-        [CallerFilePath] string fp = "") => new SourceLocation(info, ln, fp);
-    public StackTrace Trace {get; } = new StackTrace();
+        [CallerFilePath] string fp = "",
+        [CallerLineNumber] int ln = 0
+    ) => new SourceLocation(info, fp, ln);
+    public StackTrace Trace { get; } = new StackTrace();
 
     public int ThreadID = Environment.CurrentManagedThreadId;
     public long TimeStamp = Stopwatch.GetTimestamp();
