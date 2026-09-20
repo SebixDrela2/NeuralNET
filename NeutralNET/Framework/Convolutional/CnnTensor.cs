@@ -326,7 +326,7 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
                             float* srcCol = colRow + channelOffsetCol + ky * kernelW;
 
                             int kx = 0;
-                            if (Vector512.IsHardwareAccelerated && Avx512F.IsSupported)
+                            if (Avx512F.IsSupported)
                             {
                                 var vScale512 = Vector512.Create(scale);
                                 int vecLimit = kernelW - (kernelW % 16);
@@ -338,7 +338,7 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
                                     vDst.Store(dstGrad + kx);
                                 }
                             }
-                            else if (Vector256.IsHardwareAccelerated && Avx2.IsSupported)
+                            else if (Avx2.IsSupported)
                             {
                                 var vScale256 = Vector256.Create(scale);
                                 int vecLimit = kernelW - (kernelW % 8);
