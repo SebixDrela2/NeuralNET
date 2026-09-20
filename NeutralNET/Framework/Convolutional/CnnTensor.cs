@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Runtime.ConstrainedExecution;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 using NeutralNET.Matrices;
 
 namespace NeutralNET.Framework.Convolutional;
@@ -325,7 +326,7 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
                             float* srcCol = colRow + channelOffsetCol + ky * kernelW;
 
                             int kx = 0;
-                            if (Vector512.IsHardwareAccelerated)
+                            if (Vector512.IsHardwareAccelerated && Avx512F.IsSupported)
                             {
                                 var vScale512 = Vector512.Create(scale);
                                 int vecLimit = kernelW - (kernelW % 16);
@@ -334,6 +335,18 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
                                     var vDst = Vector512.Load(dstGrad + kx);
                                     var vSrc = Vector512.Load(srcCol + kx);
                                     vDst = Vector512.FusedMultiplyAdd(vSrc, vScale512, vDst);
+                                    vDst.Store(dstGrad + kx);
+                                }
+                            }
+                            else if (Vector256.IsHardwareAccelerated && Avx2.IsSupported)
+                            {
+                                var vScale256 = Vector256.Create(scale);
+                                int vecLimit = kernelW - (kernelW % 8);
+                                for (; kx < vecLimit; kx += 8)
+                                {
+                                    var vDst = Vector256.Load(dstGrad + kx);
+                                    var vSrc = Vector256.Load(srcCol + kx);
+                                    vDst = Vector256.FusedMultiplyAdd(vSrc, vScale256, vDst);
                                     vDst.Store(dstGrad + kx);
                                 }
                             }
