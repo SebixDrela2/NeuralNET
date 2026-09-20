@@ -60,7 +60,6 @@ public static partial class GraphicsUtils
         return result;
     }
 
-    public static PixelStructRGB GenerateCharPixelStructRGB(char @char, Font font, int classLabel) => GenerateCharPixelStructRGB(@char, font, classLabel, ImageTransformation.None);
     public static PixelStructRGB GenerateCharPixelStructRGB(char @char, Font font, int classLabel, ImageTransformation transformation)
     {
         if (!IsSupported) throw new NotSupportedException();
@@ -185,14 +184,6 @@ public static partial class GraphicsUtils
             result[i] = GenerateCharPixelStruct(c, font, transformation);
         }
         return result;
-    }
-
-    public static PixelStruct GenerateCharPixelStruct(char @char, string fontName, ImageTransformation transformation, FontStyle style = default)
-    {
-        if (!IsSupported) throw new NotSupportedException();
-
-        using var font = new Font(fontName, FontSize * UpScale, style);
-        return GenerateCharPixelStruct(@char, font, transformation);
     }
 
     public static PixelStructRGB GenerateCharPixelStructRGB(char @char, Font font, ImageTransformation transformation)
