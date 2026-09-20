@@ -18,12 +18,12 @@ public class CnnTrainingConfig
     public float TargetAccuracy { get; set; } = 1f;
     public float TargetLoss { get; set; } = 0.0001f;
     public int EarlyStopPatience { get; set; } = 300;
-    public string CheckpointDir { get; set; } = @"C:\Users\Sebastian\source\repos\NeutralNET\NeutralTest\bin\Release\net10.0\checkpoints";
+    public string CheckpointDir { get; set; } = Path.Join(BuildDirectory, "checkpoints");
 
     public CnnArchitectureConfig CnnArchitecture { get; set; } = new();
     public NeuralNetworkConfig DenseConfig { get; set; } = new();
 
-    public static CnnTrainingConfig CreateDefault(int numClasses = 26)
+    public static CnnTrainingConfig CreateDefault(int numClasses)
     {
         return new CnnTrainingConfig
         {

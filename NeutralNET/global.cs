@@ -10,7 +10,9 @@ using System.Diagnostics.CodeAnalysis;
 public static partial class GlobalScope
 {
     public const MethodImplOptions Inline = MethodImplOptions.AggressiveInlining;
-
+    public static string ProjectDirectory => field ??= GetCallerDirectory();
+    public static string SolutionDirectory => field ??= Path.GetFullPath(Path.GetDirectoryName(ProjectDirectory) ?? throw new InvalidOperationException());
+    public static string BuildDirectory => field ??= Path.GetFullPath(Path.Join(SolutionDirectory, "Build"));
 
     [return: NotNullIfNotNull(nameof(target))]
     public static ref T DisposeReplace<T>([NotNullIfNotNull(nameof(value))] ref T target, T value)
@@ -28,6 +30,8 @@ public static partial class GlobalScope
         target = value;
         return prev;
     }
+
+    public static string GetCallerDirectory([CallerFilePath] string path = "") => Path.GetFullPath(Path.GetDirectoryName(path) ?? throw new InvalidOperationException());
 }
 
 public static partial class Extensions;
@@ -60,4 +64,5 @@ partial class Extensions
         }
 
     }
+
 }
