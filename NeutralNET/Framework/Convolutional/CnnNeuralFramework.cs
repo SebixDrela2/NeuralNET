@@ -16,7 +16,7 @@ namespace NeutralNET.Framework.Neural.CNN;
 /// </summary>
 public sealed unsafe class CnnNeuralFramework
 {
-    private const bool EnableGpu = true;
+    private const bool EnableGpu = false;
     private const int Avx256Size = 8;
     private const int Avx512Size = 16;
 
