@@ -177,6 +177,7 @@ public partial class LetterWindow : Form
                 BackColor = Color.Black,
                 BorderStyle = BorderStyle.FixedSingle,
                 Cursor = Cursors.Hand,
+                Image = new Bitmap(GraphicsUtils.Width, GraphicsUtils.Height),
             };
 
             var lbl = new Label
