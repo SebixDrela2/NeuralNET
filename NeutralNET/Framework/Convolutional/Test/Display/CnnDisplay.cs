@@ -6,7 +6,7 @@ namespace NeutralTest;
 
 public class CnnDisplayWriter(char[] items, int dataSetSize)
 {
-    private const int LabelColSize = 5;
+    private const int LabelColSize = 3;
     private const int LabelPadL = (LabelColSize - 1) / 2;
     private const int LabelPadR = LabelColSize / 2;
 
@@ -125,14 +125,17 @@ public class CnnDisplayWriter(char[] items, int dataSetSize)
         Span<char> xs = stackalloc char[LabelColSize];
         xs.Fill(Chars.Zero);
 
-        var scaled = x * LabelColSize;
-        var maxEnd = int.Clamp((int)scaled, 0, LabelColSize);
-        xs[..maxEnd].Fill(Chars.Max);
-
-        if (maxEnd != LabelColSize)
+        if (x >= 1e-12f)
         {
-            int frame = int.Clamp((int)((8 * (scaled - maxEnd)) + 0.5f), 0, 7);
-            xs[maxEnd] = (char)(Chars.Max + (7 - frame));
+            var scaled = x * LabelColSize;
+            var maxEnd = int.Clamp((int)scaled, 0, LabelColSize);
+            xs[..maxEnd].Fill(Chars.Max);
+
+            if (maxEnd != LabelColSize)
+            {
+                int frame = int.Clamp((int)((8 * (scaled - maxEnd)) + 0.5f), 0, 7);
+                xs[maxEnd] = (char)(Chars.Max + (7 - frame));
+            }
         }
 
         if (!hl) return $"\e[48;2;35;35;35;38;2;{fg}m{xs}\e[39;49m";
