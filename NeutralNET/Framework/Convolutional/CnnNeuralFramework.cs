@@ -780,10 +780,10 @@ public sealed unsafe class CnnNeuralFramework
         int filters,
         int inDim)
     {
-        var dW = RentNeural(filters, inDim);
 
         if (EnableGpu)
         {
+            var dW = RentNeural(filters, inDim);
             GpuMatrixOps.RowMajorSgemmHostStaged(
                 GpuMatrixOps.CublasOperation.Transpose,
                 GpuMatrixOps.CublasOperation.NonTranspose,
@@ -792,13 +792,15 @@ public sealed unsafe class CnnNeuralFramework
                 preGradMatrix.Pointer, preGradMatrix.ColumnsStride,
                 colInput.Pointer, colInput.ColumnsStride,
                 0.0f,
-                dW.Pointer, dW.ColumnsStride);
+                dW.Pointer, dW.ColumnsStride
+            );
+            return dW;
         }
         else
         {
+            var dW = RentNeural(inDim, filters);
             float* pdW = dW.Pointer;
             int dWStride = dW.ColumnsStride;
-            new Span<float>(pdW, inDim * dWStride).Clear();
 
             float* pColIn = colInput.Pointer;
             int colInStride = colInput.ColumnsStride;
@@ -848,9 +850,9 @@ public sealed unsafe class CnnNeuralFramework
                     }
                 }
             }
-        }
 
-        return dW;
+            return dW;
+        }
     }
 
     private static NeuralMatrix ComputeBiasGradient(NeuralMatrix preGradMatrix, int patches, int filters)
@@ -859,7 +861,6 @@ public sealed unsafe class CnnNeuralFramework
         var pdB = dB.Pointer;
         var pPreGradMat = preGradMatrix.Pointer;
         var preGradMatStride = preGradMatrix.ColumnsStride;
-        new Span<float>(pdB, filters).Clear();
 
         for (int patch = 0; patch < patches; patch++)
         {
@@ -1499,7 +1500,6 @@ public sealed unsafe class CnnNeuralFramework
         var gradInput = RentCnn(batch, channels, inH, inW);
 
         int totalInputElements = batch * channels * inH * inW;
-        new Span<float>(gradInput.Pointer, totalInputElements).Clear();
 
         float* pGradOut = gradOutput.Pointer;
         float* pGradIn = gradInput.Pointer;
@@ -1862,7 +1862,6 @@ public sealed unsafe class CnnNeuralFramework
             }
 
             var dB = RentNeural(1, outDim);
-            dB.Clear();
             float* pDB = dB.Pointer;
 
             for (int r = 0; r < batch; r++)
