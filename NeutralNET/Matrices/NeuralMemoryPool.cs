@@ -18,16 +18,22 @@ public static class NeuralMemoryPool
     [MethodImpl(Inline)]
     public static AllocationHandle RentBytes(nint size) => RentBytes((nuint)size);
     [MethodImpl(Inline)]
-    public static AllocationHandle RentBytes(nuint size) => BitWidth(size) switch
+    public static AllocationHandle RentBytes(nuint size) => BitWidth(size - 1) switch
     {
         <= 0 => throw new InvalidOperationException(),
-        < MaxAllowedSize_Pow2 and var bw when TryTake(bw, out var x) => x,
+        < MaxAllowedSize_Pow2 and var bw when TryTake(size, bw, out var x) => x,
         _ => AllocationHandle.Alloc(size),
     };
 
-    private static bool TryTake(int bw, out AllocationHandle handle)
+    private static bool TryTake(nuint size, int bw, out AllocationHandle handle)
     {
         if (!_pools[bw].TryTake(out handle)) return false;
+        var allocLen = BitOperations.RoundUpToPowerOf2(handle.ByteSize);
+        if (size > allocLen)
+        {
+            throw new InvalidOperationException();
+        }
+        handle.ByteSize = size;
         Interlocked.Add(ref CurrentCacheSize, -(long)handle.ByteSize);
         return true;
     }
@@ -42,7 +48,7 @@ public static class NeuralMemoryPool
     {
         if (handle.IsNull) return;
 
-        switch (BitWidth(handle.ByteSize))
+        switch (BitWidth(handle.ByteSize - 1))
         {
             case <= 0: throw new InvalidOperationException();
             case >= MaxAllowedSize_Pow2:

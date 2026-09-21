@@ -277,117 +277,181 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
     public void Col2Im(NeuralMatrix colGradients, int kernelH, int kernelW, int stride, int padding, float scale = 1.0f)
     {
         EnsureNotDisposed();
-        int paddedH = Height + 2 * padding;
-        int paddedW = Width + 2 * padding;
-        int outH = (paddedH - kernelH) / stride + 1;
-        int outW = (paddedW - kernelW) / stride + 1;
 
-        var paddedGrad = GetOrCreate(Batch, Channels, paddedH, paddedW);
-        paddedGrad.Clear();
+        if (colGradients == null) throw new ArgumentNullException(nameof(colGradients));
 
-        float* colPtr = colGradients.Pointer;
+        // ---- geometry (all long) ----
+        long paddedH = Height + 2L * padding;
+        long paddedW = Width + 2L * padding;
+        long outH = (paddedH - kernelH) / stride + 1;
+        long outW = (paddedW - kernelW) / stride + 1;
+
+        if (outH <= 0 || outW <= 0)
+            throw new InvalidOperationException($"Col2Im: bad out dims outH={outH} outW={outW}");
+
+        long expectedColRows = (long)Batch * outH * outW;
+        long expectedColCols = (long)Channels * kernelH * kernelW;
+
+        if (colGradients.Rows < expectedColRows)
+            throw new InvalidOperationException(
+                $"Col2Im: colGradients.Rows={colGradients.Rows} < required {expectedColRows}");
+        if (colGradients.ColumnsStride < expectedColCols)
+            throw new InvalidOperationException(
+                $"Col2Im: colGradients.ColumnsStride={colGradients.ColumnsStride} < required {expectedColCols}");
+
+        long colTotalFloats = (long)colGradients.Rows * colGradients.ColumnsStride;
+        long dstTotalFloats = (long)Batch * Channels * Height * Width;
+        long padTotalFloats = (long)Batch * Channels * paddedH * paddedW;
+
+        long padStrideN = paddedH * paddedW * Channels;
+        long padStrideC = paddedH * paddedW;
+        long padStrideH = paddedW;
         int colStride = colGradients.ColumnsStride;
-        float* gradPtr = paddedGrad.Pointer;
-        int kernelSpatial = kernelH * kernelW;
+        long kernelSpatial = (long)kernelH * kernelW;
 
-        Parallel.For(0, Batch, b =>
+        // ---- allocate scratch ----
+        var paddedGrad = GetOrCreate(Batch, Channels, (int)paddedH, (int)paddedW);
+
+        // Sanity: the pool must have given us at least as many bytes as we asked for.
+        if (paddedGrad.UnsafeSize * sizeof(float) > (int)paddedGrad.MemoryHandle.ByteSize)
+            throw new InvalidOperationException(
+                $"Col2Im: paddedGrad under-allocated. need={paddedGrad.UnsafeSize * sizeof(float)} bytes, " +
+                $"handle={paddedGrad.MemoryHandle.ByteSize} bytes");
+
+        try
         {
-            long batchOffsetGrad = b * paddedGrad.StrideN;
-            int batchPatchBase = b * outH * outW;
+            // Clear via the exact float count — never rely on ByteSize, which is in bytes.
+            NativeMemory.Clear(paddedGrad.Pointer, (nuint)paddedGrad.UnsafeSize * sizeof(float));
 
-            for (int oh = 0; oh < outH; oh++)
+            float* colPtr = colGradients.Pointer;
+            float* gradPtr = paddedGrad.Pointer;
+
+            // ============================================================
+            // Scatter loop
+            // ============================================================
+            Parallel.For(0, Batch, b =>
             {
-                int startY = oh * stride;
-                int patchRowBase = (b * outH + oh) * outW;
+                long batchOffsetGrad = (long)b * padStrideN;
 
-                for (int ow = 0; ow < outW; ow++)
+                for (long oh = 0; oh < outH; oh++)
                 {
-                    int startX = ow * stride;
-                    float* colRow = colPtr + (patchRowBase + ow) * colStride;
+                    long startY = oh * stride;
 
-                    for (int c = 0; c < Channels; c++)
+                    for (long ow = 0; ow < outW; ow++)
                     {
-                        long channelOffsetGrad = batchOffsetGrad + c * paddedGrad.StrideC;
-                        int channelOffsetCol = c * kernelSpatial;
+                        long startX = ow * stride;
 
-                        for (int ky = 0; ky < kernelH; ky++)
+                        long patchIdx = ((long)b * outH + oh) * outW + ow;
+                        long colRowOff = patchIdx * colStride;
+
+                        if (colRowOff < 0 || colRowOff + expectedColCols > colTotalFloats)
+                            throw new InvalidOperationException(
+                                $"Col2Im colRow OOB b={b} oh={oh} ow={ow} " +
+                                $"off={colRowOff} total={colTotalFloats}");
+
+                        float* colRow = colPtr + colRowOff;
+
+                        for (long c = 0; c < Channels; c++)
                         {
-                            float* dstGrad = gradPtr + channelOffsetGrad + (startY + ky) * paddedGrad.StrideH + startX;
-                            float* srcCol = colRow + channelOffsetCol + ky * kernelW;
+                            long channelOffsetGrad = batchOffsetGrad + c * padStrideC;
+                            long channelOffsetCol = c * kernelSpatial;
 
-                            int kx = 0;
-                            if (Avx512F.IsSupported)
+                            for (long ky = 0; ky < kernelH; ky++)
                             {
-                                var vScale512 = Vector512.Create(scale);
-                                int vecLimit = kernelW - (kernelW % 16);
-                                for (; kx < vecLimit; kx += 16)
-                                {
-                                    var vDst = Vector512.Load(dstGrad + kx);
-                                    var vSrc = Vector512.Load(srcCol + kx);
-                                    vDst = Vector512.FusedMultiplyAdd(vSrc, vScale512, vDst);
-                                    vDst.Store(dstGrad + kx);
-                                }
-                            }
-                            else if (Avx2.IsSupported)
-                            {
-                                var vScale256 = Vector256.Create(scale);
-                                int vecLimit = kernelW - (kernelW % 8);
-                                for (; kx < vecLimit; kx += 8)
-                                {
-                                    var vDst = Vector256.Load(dstGrad + kx);
-                                    var vSrc = Vector256.Load(srcCol + kx);
-                                    vDst = Vector256.FusedMultiplyAdd(vSrc, vScale256, vDst);
-                                    vDst.Store(dstGrad + kx);
-                                }
-                            }
+                                long dstOff = channelOffsetGrad + (startY + ky) * padStrideH + startX;
+                                if (dstOff < 0 || dstOff + kernelW > padTotalFloats)
+                                    throw new InvalidOperationException(
+                                        $"Col2Im dst OOB b={b} c={c} oh={oh} ow={ow} ky={ky} " +
+                                        $"off={dstOff} total={padTotalFloats}");
 
-                            for (; kx < kernelW; kx++)
-                            {
-                                dstGrad[kx] += srcCol[kx] * scale;
+                                long srcOff = colRowOff + channelOffsetCol + ky * kernelW;
+                                if (srcOff < 0 || srcOff + kernelW > colTotalFloats)
+                                    throw new InvalidOperationException(
+                                        $"Col2Im src OOB b={b} c={c} oh={oh} ow={ow} ky={ky} " +
+                                        $"off={srcOff} total={colTotalFloats}");
+
+                                float* dstGrad = gradPtr + dstOff;
+                                float* srcCol = colPtr + srcOff;
+
+                                long kx = 0;
+
+                                // AVX512 (unaligned-safe)
+                                if (Avx512F.IsSupported)
+                                {
+                                    var vScale = Vector512.Create(scale);
+                                    long vecLimit = kernelW - (kernelW % 16);
+                                    for (; kx < vecLimit; kx += 16)
+                                    {
+                                        var vDst = Vector512.Load(dstGrad + kx);
+                                        var vSrc = Vector512.Load(srcCol + kx);
+                                        vDst = Vector512.FusedMultiplyAdd(vSrc, vScale, vDst);
+                                        Vector512.Store(vDst, dstGrad + kx);
+                                    }
+                                }
+                                else if (Avx2.IsSupported)
+                                {
+                                    var vScale = Vector256.Create(scale);
+                                    long vecLimit = kernelW - (kernelW % 8);
+                                    for (; kx < vecLimit; kx += 8)
+                                    {
+                                        var vDst = Avx.LoadVector256(dstGrad + kx);
+                                        var vSrc = Avx.LoadVector256(srcCol + kx);
+                                        vDst = Fma.IsSupported
+                                            ? Fma.MultiplyAdd(vSrc, vScale, vDst)
+                                            : Avx.Add(vDst, Avx.Multiply(vSrc, vScale));
+                                        Avx.Store(dstGrad + kx, vDst);
+                                    }
+                                }
+
+                                for (; kx < kernelW; kx++)
+                                    dstGrad[kx] += srcCol[kx] * scale;
                             }
                         }
                     }
                 }
-            }
-        });
+            });
 
-        nuint rowBytes = (nuint)Width * sizeof(float);
-        float* baseDstPtr = Pointer;
-        float* basePaddedGradPtr = paddedGrad.Pointer;
+            // ============================================================
+            // Crop-back pass: copy the padded interior into `this`
+            // ============================================================
+            long rowFloats = Width;
+            nuint rowBytes = (nuint)(rowFloats * sizeof(float));
 
-        Parallel.For(0, Batch, b =>
-        {
-            long batchSrcOffset = b * paddedGrad.StrideN;
-            long batchDstOffset = (long)b * Channels * Height * Width;
+            float* baseDst = Pointer;
+            float* baseSrc = paddedGrad.Pointer;
 
-            for (int c = 0; c < Channels; c++)
+            Parallel.For(0, Batch, b =>
             {
-                float* srcChannel = basePaddedGradPtr + batchSrcOffset + c * paddedGrad.StrideC;
-                float* dstChannel = baseDstPtr + batchDstOffset + c * Height * Width;
+                long batchSrcOff = (long)b * padStrideN;
+                long batchDstOff = (long)b * Channels * Height * Width;
 
-                for (int y = 0; y < Height; y++)
+                for (long c = 0; c < Channels; c++)
                 {
-                    float* srcPtr = srcChannel + (y + padding) * paddedW + padding;
-                    float* dstPtr = dstChannel + y * Width;
-                    NativeMemory.Copy(srcPtr, dstPtr, rowBytes);
+                    long srcBase = batchSrcOff + c * padStrideC;
+                    long dstBase = batchDstOff + c * Height * Width;
+
+                    for (long y = 0; y < Height; y++)
+                    {
+                        long srcOff = srcBase + (y + padding) * padStrideH + padding;
+                        long dstOff = dstBase + y * Width;
+
+                        if (srcOff < 0 || srcOff + rowFloats > padTotalFloats)
+                            throw new InvalidOperationException(
+                                $"Col2Im copyback src OOB b={b} c={c} y={y} off={srcOff}");
+                        if (dstOff < 0 || dstOff + rowFloats > dstTotalFloats)
+                            throw new InvalidOperationException(
+                                $"Col2Im copyback dst OOB b={b} c={c} y={y} off={dstOff}");
+
+                        NativeMemory.Copy(baseSrc + srcOff, baseDst + dstOff, rowBytes);
+                    }
                 }
-            }
-        });
-
-        paddedGrad.Dispose();
+            });
+        }
+        finally
+        {
+            paddedGrad.Dispose();
+        }
     }
-
-    // public static void ClearPool()
-    // {
-    //     while (_pool.TryTake(out var item))
-    //     {
-    //         if (item.Pointer != null)
-    //         {
-    //             NativeMemory.AlignedFree(item.Pointer);
-    //             item.Pointer = null;
-    //         }
-    //     }
-    // }
 
     private bool _isDisposing = false;
     [OverloadResolutionPriority(1)]
