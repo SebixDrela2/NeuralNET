@@ -9,7 +9,7 @@ namespace NeutralTest;
 public class CnnTrainingConfig
 {
     public DataSourceType DatasetKey { get; set; } = DataSourceType.Letters;
-    public int MaxTrainSamples { get; set; } = 30000;
+    public int MaxTrainSamples { get; set; } = 10000;
     public int MaxTestSamples { get; set; } = 1000;
 
     public int BatchSize { get; set; } = 1024;
