@@ -71,15 +71,20 @@ public static partial class GraphicsUtils
 
         using (var g = Graphics.FromImage(bitMap))
         {
-            var pos = ((g.MeasureString([@char], font) - ScaleSize) * 0.5f).ToPointF();
+            var str = @char.ToString();
+            var fontDim = g.MeasureString(str, font);
 
-            // var (background, letter) = Color.GetRandomColors();
-            var (background, letter) = (Color.Black, Color.White);
+            var pos = new PointF(
+                (ScaleWidth / 2f) - fontDim.Width / 2f,
+                (ScaleHeight / 2f) - fontDim.Height / 2f
+            );
+
+            var (background, letter) = Color.GetRandomColors();
 
             g.Clear(background);
             g.TextRenderingHint = TextRenderingHint.AntiAlias;
             g.Transform = transformation.ToMatrix();
-            g.DrawString([@char], font, new SolidBrush(letter), pos);
+            g.DrawString(str, font, new SolidBrush(letter), pos);
             g.Flush();
         }
 

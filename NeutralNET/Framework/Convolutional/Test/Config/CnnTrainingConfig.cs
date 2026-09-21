@@ -9,8 +9,8 @@ namespace NeutralTest;
 public class CnnTrainingConfig
 {
     public DataSourceType DatasetKey { get; set; } = DataSourceType.Letters;
-    public int MaxTrainSamples { get; set; } = 10000;
-    public int MaxTestSamples { get; set; } = 1000;
+    public int MaxTrainSamples { get; set; } = 42000;
+    public int MaxTestSamples { get; set; } = 10000;
 
     public int BatchSize { get; set; } = 1024;
 
@@ -48,7 +48,7 @@ public class CnnTrainingConfig
                    }
                 ],
                 // Wide single hidden layer avoids information loss on 26 output classes
-                DenseArchitecture = [64, numClasses],
+                DenseArchitecture = [256, numClasses],
                 DenseHiddenActivation = ActivationType.LeakyReLU,
                 OutputActivation = ActivationType.Softmax,
                 OptimizerConfig = new CnnOptimizerConfig
