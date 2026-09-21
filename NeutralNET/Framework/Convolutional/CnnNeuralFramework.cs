@@ -37,11 +37,6 @@ public sealed unsafe class CnnNeuralFramework
     private readonly List<DenseHyperParameters> _denseHyperParameters = [];
     private readonly List<ConvHyperParameters> _convHyperParameters = [];
 
-    // FIX: dedicated pooled-output buffer per conv layer. Previously the framework reused
-    // `ConvHyperParameters.Input` for this job, which is also the immutable snapshot used
-    // by Col2Im's destination-shape logic in backward. Different tensor, different lifetime.
-    private readonly List<CnnMatrix> _pooledOutputs = [];
-
     private NeuralMatrix? _flattenedInput;
     private CnnMatrix? _lastPooledOutput;
 
@@ -112,16 +107,11 @@ public sealed unsafe class CnnNeuralFramework
             var convOutSz = GetCnnSize(prevInput.BatchSize, weights.Batch, prevInput.Height, prevInput.Width, layer);
             var preAct = NewCnn(convOutSz);
             var postAct = NewCnn(convOutSz);
+            var input = GetInput(postAct, layer.PoolSize);
 
-            // Input: immutable per-layer snapshot used by backward (Col2Im destination).
-            var input = NewCnn(prevInput.BatchSize, prevInput.Channels, prevInput.Height, prevInput.Width);
-
-            // FIX: separate buffer used as the forward-pass carry (post-pool) for this layer.
             int nextH = layer.UseMaxPool ? convOutSz.Height / layer.PoolSize : convOutSz.Height;
             int nextW = layer.UseMaxPool ? convOutSz.Width / layer.PoolSize : convOutSz.Width;
             var nextLayer = new CnnSize(prevInput.BatchSize, weights.Batch, nextH, nextW);
-            var pooledOutput = NewCnn(nextLayer);
-            _pooledOutputs.Add(pooledOutput);
 
             var colInput = GetColInput(prevInput, layer.KernelHeight, layer.KernelWidth, layer.Stride, layer.Padding);
             var poolIndices = GetPoolIndices(postAct, layer.PoolSize);
@@ -158,6 +148,19 @@ public sealed unsafe class CnnNeuralFramework
                 int totalPatches = input.BatchSize * outH * outW;
 
                 return NewNeural(totalPatches, patchSize);
+            }
+
+            CnnMatrix GetInput(CnnMatrix postAct, int poolSize)
+            {
+                int batch = postAct.Batch;
+                int channels = postAct.Channels;
+                int inH = postAct.Height;
+                int inW = postAct.Width;
+
+                int outH = inH / poolSize;
+                int outW = inW / poolSize;
+
+                return NewCnn(batch, channels, outH, outW);
             }
         }
     }
@@ -421,7 +424,6 @@ public sealed unsafe class CnnNeuralFramework
 
         foreach (var b in _convHyperParameters) b.Dispose();
         foreach (var w in _denseHyperParameters) w.Dispose();
-        foreach (var p in _pooledOutputs) p.Dispose();          // FIX: dispose pooled outputs
         foreach (var opt in _convOptimizers) opt.Dispose();
         foreach (var opt in _denseOptimizers) opt.Dispose();
     }
@@ -619,11 +621,6 @@ public sealed unsafe class CnnNeuralFramework
         {
             elem.SetBatchLimit(limit);
             elem.Input.Batch = limit;
-        }
-
-        foreach (var p in _pooledOutputs)
-        {
-            p.Batch = limit;
         }
 
         foreach (var (_, _, preAct, postAct) in _denseHyperParameters)
@@ -1113,55 +1110,20 @@ public sealed unsafe class CnnNeuralFramework
         for (var layerIdx = 0; layerIdx < _cnnConfig.ConvLayers.Count; layerIdx++)
         {
             var layer = _cnnConfig.ConvLayers[layerIdx];
-            var hp = _convHyperParameters[layerIdx];
+            var input = _convHyperParameters[layerIdx].Input;
+            input.CopyFrom(current);
 
-            // 1. Snapshot the layer's *input* (used later by Col2Im in backward).
-            //    Input's shape was fixed at construction time and is never mutated,
-            //    so this CopyFrom is a same-shape byte copy.
-            if (hp.Input.Batch != current.Batch ||
-                hp.Input.Channels != current.Channels ||
-                hp.Input.Height != current.Height ||
-                hp.Input.Width != current.Width)
-            {
-                throw new InvalidOperationException(
-                    $"ForwardPoolingPass: conv[{layerIdx}].Input shape " +
-                    $"({hp.Input.Batch},{hp.Input.Channels},{hp.Input.Height},{hp.Input.Width}) " +
-                    $"does not match current ({current.Batch},{current.Channels},{current.Height},{current.Width}).");
-            }
-            hp.Input.CopyFrom(current);
-
-            // 2. Conv + activation.
             ConvForward(current, layerIdx);
-            hp.PostAct.CopyFrom(hp.PreAct);
-            ApplyActivation(hp.PostAct, layer.Activation);
 
-            // 3. Pool into the layer's dedicated output buffer (fixed shape, never aliases Input).
-            var pooled = _pooledOutputs[layerIdx];
+            var preAct = _convHyperParameters[layerIdx].PreAct;
+            var postAct = _convHyperParameters[layerIdx].PostAct;
 
-            int outH = layer.UseMaxPool ? hp.PostAct.Height / layer.PoolSize : hp.PostAct.Height;
-            int outW = layer.UseMaxPool ? hp.PostAct.Width / layer.PoolSize : hp.PostAct.Width;
+            postAct.CopyFrom(preAct);
+            ApplyActivation(postAct, layer.Activation);
 
-            if (pooled.Batch != hp.PostAct.Batch ||
-                pooled.Channels != hp.PostAct.Channels ||
-                pooled.Height != outH ||
-                pooled.Width != outW)
-            {
-                throw new InvalidOperationException(
-                    $"ForwardPoolingPass: conv[{layerIdx}] pooled buffer shape " +
-                    $"({pooled.Batch},{pooled.Channels},{pooled.Height},{pooled.Width}) " +
-                    $"does not match expected ({hp.PostAct.Batch},{hp.PostAct.Channels},{outH},{outW}).");
-            }
-
-            if (layer.UseMaxPool)
-            {
-                MaxPoolForward(hp.PostAct, hp.PoolIndices, pooled, layer.PoolSize);
-            }
-            else
-            {
-                pooled.CopyFrom(hp.PostAct);
-            }
-
-            current = pooled;
+            var poolIndices = _convHyperParameters[layerIdx].PoolIndices;
+            MaxPoolForward(postAct, poolIndices, input, layer.PoolSize);
+            current = input;
         }
 
         _lastPooledOutput = current;
@@ -1171,7 +1133,7 @@ public sealed unsafe class CnnNeuralFramework
 
         using (DenseForward(flat, storeIntermediates: true)) { }
 
-        return _denseHyperParameters[^1].PostAct;
+        return _denseHyperParameters[^1].PostAct;  //_densePostAct[^1];
     }
 
     private void ConvForward(CnnMatrix current, int layerIdx)
@@ -2225,7 +2187,6 @@ public sealed unsafe class CnnNeuralFramework
             var p = _convHyperParameters[i];
             sb.AppendLine($"  conv[{i}]:");
             sb.AppendLine($"    Input              : {Fmt(p.Input)}");
-            sb.AppendLine($"    PooledOutput       : {Fmt(_pooledOutputs[i])}");
             sb.AppendLine($"    ColInput           : {Fmt(p.ColInput)}");
             sb.AppendLine($"    Weights (Cnn)      : {Fmt(p.Weights)}");
             sb.AppendLine($"    FlattenedWeights   : {Fmt(p.FlattenedWeights)}");
@@ -2276,9 +2237,6 @@ public sealed unsafe class CnnNeuralFramework
                         p.Input.Batch == _input.BatchSize && p.Input.Channels == inC
                         && p.Input.Height == inH && p.Input.Width == inW, p.Input);
             ok &= Check(sb, $"conv[{i}].PooledOutput   expects {_input.BatchSize}x{L.Filters}x{pOutH}x{pOutW}",
-                        _pooledOutputs[i].Batch == _input.BatchSize && _pooledOutputs[i].Channels == L.Filters
-                        && _pooledOutputs[i].Height == pOutH && _pooledOutputs[i].Width == pOutW, _pooledOutputs[i]);
-            ok &= Check(sb, $"conv[{i}].ColInput       expects ({totalPatches},{patchSize})",
                         p.ColInput.Rows == totalPatches && p.ColInput.UsedColumns == patchSize, p.ColInput);
             ok &= Check(sb, $"conv[{i}].Weights        expects {L.Filters}x{inC}x{L.KernelHeight}x{L.KernelWidth}",
                         p.Weights.Batch == L.Filters && p.Weights.Channels == inC
