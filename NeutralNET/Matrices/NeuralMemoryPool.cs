@@ -28,13 +28,10 @@ public static class NeuralMemoryPool
     private static bool TryTake(nuint size, int bw, out AllocationHandle handle)
     {
         if (!_pools[bw].TryTake(out handle)) return false;
+        Interlocked.Add(ref CurrentCacheSize, -(nint)handle.ByteSize);
         var allocLen = BitOperations.RoundUpToPowerOf2(handle.ByteSize);
-        if (size > allocLen)
-        {
-            throw new InvalidOperationException();
-        }
+        if (size > allocLen) throw new InvalidOperationException();
         handle.ByteSize = size;
-        Interlocked.Add(ref CurrentCacheSize, -(long)handle.ByteSize);
         return true;
     }
 
@@ -55,12 +52,9 @@ public static class NeuralMemoryPool
                 handle.Free();
                 break;
             case var bw:
+                if (nuint.Log2((nuint)Volatile.Read(ref CurrentCacheSize)) > 30) break;
                 _pools[bw].Add(handle);
-                var newLen = (nuint)Interlocked.Add(ref CurrentCacheSize, (long)handle.ByteSize);
-                if (nuint.Log2(newLen) > 30)
-                {
-                    Console.WriteLine($"\e[31;1mCache size is {newLen}\e[39m");
-                }
+                Interlocked.Add(ref CurrentCacheSize, (nint)handle.ByteSize);
                 break;
         }
     }

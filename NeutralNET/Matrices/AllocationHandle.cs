@@ -55,7 +55,7 @@ public unsafe struct AllocationHandle(void* ptr, nuint byteSize) : IDisposable
         { SizeString: var size } => size,
     };
 
-    [Conditional("DEBUG")]
+    [Conditional("MEM_TRACE")]
     public static void AssertSameSize(AllocationHandle lhs, AllocationHandle rhs, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
     {
         if (lhs.ByteSize == rhs.ByteSize) return;

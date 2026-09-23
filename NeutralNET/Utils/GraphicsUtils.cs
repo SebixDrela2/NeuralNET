@@ -1,4 +1,5 @@
 using NeutralNET.Utils;
+using System.Collections.Concurrent;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -27,6 +28,8 @@ public static partial class GraphicsUtils
 
     private static SizeF ScaleSize { [MethodImpl(Inline)] get => new(ScaleWidth, ScaleHeight); }
 
+    private static readonly ConcurrentDictionary<string, Font> CachedFonts = [];
+
     [SupportedOSPlatformGuard("windows6.1")]
     public static bool IsSupported => OperatingSystem.IsWindowsVersionAtLeast(6, 1);
 
@@ -34,8 +37,106 @@ public static partial class GraphicsUtils
 
     public static readonly char[] DefaultLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".ToCharArray();
 
-    public static PixelStructRGB[] GetLettersDataSetRGB(string fontName, bool applyTransformation, FontStyle style = default)
-        => GetLettersDataSetRGB(fontName, DefaultLetters, applyTransformation, style);
+    public static PixelStructRGB[] GetLettersDataSetRGB(string fontName, bool applyTransformation, FontStyle style = default) => GetLettersDataSetRGB(fontName, DefaultLetters, applyTransformation, style);
+
+    public static PixelStructRGB[] GetLettersDataSetRGB(ReadOnlySpan<CharTransformation> input, char[] characters, bool randomCharOrder = true)
+    {
+        var output = new PixelStructRGB[input.Length];
+        foreach (ref var item in output.AsSpan()) item = new PixelStructRGB(default, Size);
+
+        GetLettersDataSetRGB(input, output, characters, true);
+        return output;
+    }
+    public static void GetLettersDataSetRGB(ReadOnlySpan<CharTransformation> input, Span<PixelStructRGB> output, char[] characters, bool randomCharOrder = true)
+    {
+        if (!IsSupported) throw new NotSupportedException();
+        if (input.Length != output.Length) throw new InvalidOperationException();
+
+        using var upscaledBmp = new Bitmap(ScaleWidth, ScaleHeight, PixelFormat.Format32bppArgb);
+        using var bmp = new Bitmap(Width, Height, PixelFormat.Format32bppArgb);
+        using Matrix bmpTransformMat = new();
+        using SolidBrush brush = new(default);
+
+        int n = input.Length;
+        for (int i = 0; i < n; ++i)
+        {
+            ref readonly var inItem = ref input[i];
+            ref var outItem = ref output[i];
+
+            var font = CachedFonts.GetOrAdd(inItem.FontFamily, CreateFont);
+            int chIndex = randomCharOrder ? Random.Shared.Next(characters.Length) : (i % characters.Length);
+            char ch = characters[chIndex];
+            outItem.Label = ch - 'A';
+
+            inItem.Transformation.UpdateMatrix(bmpTransformMat);
+            brush.Color = inItem.Color.Letter;
+
+            using (var g = Graphics.FromImage(upscaledBmp))
+            {
+                var str = ch.ToString();
+                var fontDim = g.MeasureString(str, font);
+
+                var pos = new PointF(
+                    (ScaleWidth / 2f) - (fontDim.Width / 2f),
+                    (ScaleHeight / 2f) - (fontDim.Height / 2f)
+                );
+
+                g.Clear(inItem.Color.Background);
+                g.TextRenderingHint = TextRenderingHint.AntiAlias;
+                g.Transform = bmpTransformMat;
+                g.DrawString(str, font, brush, pos);
+            }
+
+            using (var g = Graphics.FromImage(bmp))
+            {
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.SmoothingMode = SmoothingMode.HighQuality;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                g.CompositingQuality = CompositingQuality.HighQuality;
+
+                g.DrawImage(
+                    upscaledBmp,
+                    new Rectangle(0, 0, Width, Height),
+                    new Rectangle(0, 0, ScaleWidth, ScaleHeight),
+                    GraphicsUnit.Pixel
+                );
+            }
+
+            unsafe
+            {
+                var data = bmp.LockBits(
+                    new Rectangle(0, 0, Width, Height),
+                    ImageLockMode.ReadOnly,
+                    PixelFormat.Format32bppArgb
+                );
+
+                try
+                {
+                    var inPtr = (Color32bppArgb*)(void*)data.Scan0;
+                    var outData = outItem.Pixels;
+                    for (int y = 0, idx = 0; y < Height; ++y, inPtr = (Color32bppArgb*)(((byte*)inPtr) + data.Stride))
+                    {
+                        for (int x = 0; x < Width; ++x, ++idx)
+                        {
+                            ref readonly var src = ref inPtr[x];
+                            ref var dst = ref outData[idx];
+
+                            const float mlt = 1.0f / byte.MaxValue;
+
+                            dst.R = float.Clamp(src.R * mlt, 0, 1);
+                            dst.G = float.Clamp(src.G * mlt, 0, 1);
+                            dst.B = float.Clamp(src.B * mlt, 0, 1);
+                        }
+                    }
+
+                }
+                finally
+                {
+                    bmp.UnlockBits(data);
+                }
+            }
+        }
+    }
 
     public static PixelStructRGB[] GetLettersDataSetRGB(string fontName, char[] characters, bool applyTransformation, FontStyle style = default)
     {
@@ -47,13 +148,7 @@ public static partial class GraphicsUtils
         Parallel.For(0, characters.Length, i =>
         {
             var transformation = applyTransformation
-                ? new(
-                    Angle: float.Lerp(-5, 5, Random.Shared.NextSingle()),
-                    Scale: (
-                        X: float.Lerp(0.95f, 1.05f, Random.Shared.NextSingle()),
-                        Y: float.Lerp(0.95f, 1.05f, Random.Shared.NextSingle())
-                    )
-                )
+                ? ImageTransformation.CreateRandom(Random.Shared, 5, 0.05f)
                 : ImageTransformation.None;
 
             result[i] = GenerateCharPixelStructRGB(characters[i], font, i, transformation);
@@ -147,15 +242,12 @@ public static partial class GraphicsUtils
     public static PixelStructRGB[] GetDigitsDataSetRGB(string fontName) => GetDigitsDataSetRGB(fontName, true, default);
     public static PixelStructRGB[] GetDigitsDataSetRGB(string fontName, bool applyTransformation, FontStyle style = default)
     {
-        if (!IsSupported)
-        {
-            throw new NotSupportedException();
-        }
+        if (!IsSupported) throw new NotSupportedException();
 
         var result = new PixelStructRGB[DigitLimit];
         var c = '0';
 
-        using var font = new Font(fontName, FontSize * UpScale, style);
+        var font = CachedFonts.GetOrAdd(fontName, CreateFont);
 
         for (var i = 0; i < DigitLimit; ++i, ++c)
         {
@@ -376,25 +468,55 @@ public static partial class GraphicsUtils
     }
     #endregion
 
-    public record struct ImageTransformation(float Angle, (float X, float Y) Scale)
+    public struct CharTransformation
     {
-        public static ImageTransformation None => new(0, (1, 1));
+        public string FontFamily;
+        public ImageTransformation Transformation;
+        public (Color Background, Color Letter) Color;
 
-        public ImageTransformation(float angle) : this(angle, (1, 1)) { }
-        public readonly Matrix ToMatrix()
+        public CharTransformation(string fontFamily, ImageTransformation transformation, (Color Background, Color Letter) color)
+            => (FontFamily, Transformation, Color) = (fontFamily, transformation, color);
+    }
+
+    public struct ImageTransformation
+    {
+        public float Angle; // deg
+        public (float X, float Y) Scale;
+
+        public static ImageTransformation None => new(0, (1, 1));
+        public static ImageTransformation CreateRandom(float maxAngle, float maxScale) => CreateRandom(Random.Shared, maxAngle, maxScale);
+        public static ImageTransformation CreateRandom(Random rng, float angle = 5.0f, float scale = 0.05f) => new()
+        {
+            Angle = float.Lerp(-angle, angle, rng.NextSingle()),
+            Scale = {
+                X = float.Lerp(1 - scale, 1 + scale, rng.NextSingle()),
+                Y = float.Lerp(1 - scale, 1 + scale, rng.NextSingle()),
+            },
+        };
+
+        public ImageTransformation() => (Angle, Scale) = (0, (1, 1));
+        public ImageTransformation(float angle) => (Angle, Scale) = (angle, (1, 1));
+        public ImageTransformation(float angle, (float X, float Y) scale) => (Angle, Scale) = (angle, scale);
+        public readonly void UpdateMatrix(Matrix m)
         {
             if (!IsSupported) throw new NotSupportedException();
 
             var (cx, cy) = (ScaleWidth * 0.5f, ScaleHeight * 0.5f);
+            m.Reset();
+            m.Translate(-cx, -cy, MatrixOrder.Prepend);
+            m.Rotate(Angle, MatrixOrder.Prepend);
+            m.Scale(Scale.X, Scale.Y, MatrixOrder.Prepend);
+            m.Translate(cx, cy, MatrixOrder.Prepend);
+        }
+        public readonly Matrix ToMatrix()
+        {
+            if (!IsSupported) throw new NotSupportedException();
+
             var m = new Matrix();
 
             try
             {
-                m.Translate(-cx, -cy);
-                m.Rotate(Angle);
-                m.Scale(Scale.X, Scale.Y);
-                m.Translate(cx, cy);
-
+                UpdateMatrix(m);
                 return m;
             }
             catch
@@ -447,4 +569,7 @@ public static partial class GraphicsUtils
 
         return pixels;
     }
+
+    [SupportedOSPlatform("windows6.1")]
+    private static Font CreateFont(string familyName) => new(familyName, FontSize * UpScale);
 }

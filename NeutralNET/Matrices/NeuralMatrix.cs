@@ -20,9 +20,10 @@ namespace NeutralNET.Matrices;
 /// </summary>
 public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
 {
-    public const int Alignment = 16;
-    private const int ByteAlignment = Alignment * sizeof(float);
-    public static readonly ConcurrentBag<NeuralMatrix> Instances = [];
+    public const int Alignment = SIMD.AlignSize;
+    private const int ByteAlignment = SIMD.ByteAlignSize;
+    public static readonly ConcurrentBag<NeuralMatrix>? Instances = null;
+    public List<SourceLocation>? Locations = null;
 
     // private static readonly ConcurrentBag<NeuralMatrix> _pool = [];
     // private static readonly int CommonAllocatedLength = 536_870_912;
@@ -34,12 +35,14 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
     public int LogicalLength;
     public uint[] StrideMasks;
     public int UnsafeSize;
-    public List<SourceLocation> Locations = [];
 
     private bool _inUse = true;
     private readonly bool _isPoolable = true;
 
     public float* Pointer { [MethodImpl(Inline)] get => (float*)MemoryHandle.Pointer; }
+    public Span<float> this[int row] { [MethodImpl(Inline)] get => new(Pointer + (row * ColumnsStride), UsedColumns); }
+    public ref float this[int row, int col] { [MethodImpl(Inline)] get => ref Pointer[(row * ColumnsStride) + col]; }
+
     public Span<float> SpanWithGarbage => new(Pointer, UnsafeSize);
 
     public static NeuralMatrix Create(int rows, int columns, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
@@ -78,10 +81,10 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
 
         MemoryHandle = NeuralMemoryPool.Rent<float>(UnsafeSize);
 
-        Locations.Add(SourceLocation.Current(new MatrixInfo([rows, columns], UnsafeSize), fp, ln));
+        Locations?.Add(SourceLocation.Current(new MatrixInfo([rows, columns], UnsafeSize), fp, ln));
         // Pointer = (float*)NativeMemory.AlignedAlloc((nuint)allocLength * sizeof(float), (nuint)ByteAlignment);
         StrideMasks = MatrixUtils.GetStrideMask(columns);
-        Instances.Add(this);
+        Instances?.Add(this);
         Clear();
     }
 
@@ -429,7 +432,7 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
 
     ~NeuralMatrix()
     {
-        Console.WriteLine(Locations[^1]);
+        Console.WriteLine(Locations?[^1]);
         MemoryHandle.Free();
     }
 }

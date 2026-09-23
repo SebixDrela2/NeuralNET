@@ -19,7 +19,7 @@ internal static class Program
         var network = new CnnBuilder()
             .WithCnnConfig(config.CnnArchitecture)
             .WithDenseConfig(config.DenseConfig)
-            .WithInputSize(config.BatchSize, 3, loader.ImageScale, loader.ImageScale)
+            .WithInputSize(config.BatchSize, 3, loader.ImageHeight, loader.ImageWidth)
             .Build();
 
         try

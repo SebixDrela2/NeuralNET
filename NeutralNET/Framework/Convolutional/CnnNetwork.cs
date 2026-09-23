@@ -27,9 +27,9 @@ public class CnnNetwork
 
     #region Save and Load Methods
 
-    public CnnMatrix GetConvLayerOutput(CnnMatrix input, int layerIndex)
+    public CnnMatrix[] GetConvLayerOutput(CnnMatrix input)
     {
-        return _framework.GetConvLayerOutput(input, layerIndex);
+        return _framework.GetConvLayerOutput(input);
     }
 
     /// <summary>

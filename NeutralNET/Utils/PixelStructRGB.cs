@@ -5,17 +5,21 @@ namespace NeutralNET.Utils;
 
 public struct PixelStructRGB(int label, int size)
 {
+    public const int Channels = ColorRGB.Channels;
     public int Label = label;
     public readonly ColorRGB[] Values = new ColorRGB[size];
 
     public readonly bool IsEmpty => size is 0;
     public readonly Span<ColorRGB> Pixels => Values;
     public readonly Span<float> Flat => MemoryMarshal.Cast<ColorRGB, float>(Pixels);
+
+    public readonly ref ColorRGB this[int index] => ref Values[index];
 }
 
-[InlineArray(3)]
+[InlineArray(Channels)]
 public struct ColorRGB
 {
+    public const int Channels = 3;
     private float _elem;
 
     public ref float R { [MethodImpl(Inline), UnscopedRef] get => ref this[0]; }
@@ -26,9 +30,10 @@ public struct ColorRGB
     public static implicit operator ColorRGB((float R, float G, float B) color) => new() { R = color.R, G = color.G, B = color.B };
 }
 
-[InlineArray(4)]
+[InlineArray(Channels)]
 public struct Color32bppArgb
 {
+    public const int Channels = 4;
     private byte _elem;
 
     public ref byte A { [MethodImpl(Inline), UnscopedRef] get => ref this[3]; }

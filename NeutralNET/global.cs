@@ -6,6 +6,8 @@ global using System.Runtime.CompilerServices;
 global using static GlobalScope;
 global using SIMD = NeutralNET.SIMD_512;
 using System.Diagnostics.CodeAnalysis;
+using System.Numerics;
+using System.Runtime.InteropServices;
 
 public static partial class GlobalScope
 {
@@ -54,6 +56,86 @@ partial class Extensions
         }
     }
 
+    public ref struct ReadOnlyMinMaxResult<T>(ref readonly T min, ref readonly T max)
+        where T : IBinaryNumber<T>
+    {
+        public ref readonly T Min = ref min;
+        public ref readonly T Max = ref max;
+
+        public ReadOnlyMinMaxResult(ref readonly T value) : this(in value, in value) { }
+    }
+
+    extension<T>(ReadOnlySpan<T> span)
+    {
+        public Y SumBy<Y>(Func<T, Y> selector)
+            where Y : IBinaryNumber<Y>
+        {
+            Y sum = Y.Zero;
+            foreach (ref readonly var x in span) sum += selector(x);
+            return sum;
+        }
+    }
+    extension<T>(ReadOnlySpan<T> span)
+        where T : unmanaged
+    {
+        public int OffsetOf(ref readonly T element)
+        {
+            return !Unsafe.IsNullRef(in element)
+                ? (int)(Unsafe.ByteOffset(in MemoryMarshal.GetReference(span), in element) / Unsafe.SizeOf<T>())
+                : default;
+        }
+    }
+
+    extension<T>(ReadOnlySpan<T> span)
+        where T : IBinaryNumber<T>
+    {
+        public T Sum()
+        {
+            T sum = T.Zero;
+            foreach (ref readonly var x in span) sum += x;
+            return sum;
+        }
+        public ref readonly T Min()
+        {
+            if (span is []) return ref Unsafe.NullRef<T>();
+            ref readonly T min = ref span[0];
+
+            foreach (ref readonly var x in span)
+            {
+                if (x >= min) continue;
+                min = ref x;
+            }
+
+            return ref min;
+        }
+        public ref readonly T Max()
+        {
+            if (span is []) return ref Unsafe.NullRef<T>();
+            ref readonly T max = ref span[0];
+
+            foreach (ref readonly var x in span)
+            {
+                if (x <= max) continue;
+                max = ref x;
+            }
+
+            return ref max;
+        }
+        public ReadOnlyMinMaxResult<T> MinMax()
+        {
+            if (span is []) return default;
+            ReadOnlyMinMaxResult<T> acc = new(in span[0]);
+
+            foreach (ref readonly var x in span)
+            {
+                if (x < acc.Min) acc.Min = ref x;
+                if (x > acc.Max) acc.Max = ref x;
+            }
+
+            return acc;
+        }
+    }
+
     extension<T>(List<T> xs)
         where T : IDisposable?
     {
@@ -62,7 +144,15 @@ partial class Extensions
             foreach (var x in xs) x?.Dispose();
             xs.Clear();
         }
+    }
 
+    extension<T>(T[] xs)
+        where T : IDisposable?
+    {
+        public void DisposeEach()
+        {
+            foreach (var x in xs) x?.Dispose();
+        }
     }
 
 }

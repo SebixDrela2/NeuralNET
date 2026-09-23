@@ -71,39 +71,14 @@ public partial class LetterWindow : Form
         InitializeCustomLayout();
 
         _timer = new() { Interval = CapturedRefreshRate };
-        _timer.Tick += (_, _) => Task.Run(HandleTick);
+        _timer.Tick += (_, _) =>
+        {
+            var tabIndex = tabControl?.SelectedIndex ?? -1;
+            Task.Run(() => HandleTick(tabIndex));
+        };
 
         StartTimer();
     }
-
-
-
-    // private static Color GetHeatmapColor(float v)
-    // {
-    //     v = Math.Clamp(v, 0f, 1f);
-    //     Color[] colors = [
-    //         Color.FromArgb(0, 0, 0),
-    //         Color.FromArgb(128, 0, 0),
-    //         Color.FromArgb(255, 0, 0),
-    //         Color.FromArgb(255, 128, 0),
-    //         Color.FromArgb(255, 255, 0),
-    //         Color.FromArgb(255, 255, 255)
-    //     ];
-
-    //     float scaled = v * (colors.Length - 1);
-    //     int idx = (int)scaled;
-    //     if (idx >= colors.Length - 1) return colors[^1];
-
-    //     float frac = scaled - idx;
-    //     Color c1 = colors[idx];
-    //     Color c2 = colors[idx + 1];
-
-    //     int r = (int)(c1.R + (c2.R - c1.R) * frac);
-    //     int g = (int)(c1.G + (c2.G - c1.G) * frac);
-    //     int b = (int)(c1.B + (c2.B - c1.B) * frac);
-
-    //     return Color.FromArgb(r, g, b);
-    // }
 
     private static Bitmap CreateNearestNeighborImage(Bitmap src, int targetWidth, int targetHeight)
     {
@@ -298,101 +273,105 @@ public partial class LetterWindow : Form
 
     private int TickState = 0;
 
-    private void HandleTick()
+    private void HandleTick(int tabIndex)
     {
         // Console.WriteLine($"{Stopwatch.GetTimestamp()} [HandleTick; {Thread.CurrentThread.ManagedThreadId}]");
         if (Interlocked.CompareExchange(ref TickState, 1, 0) != 0) return;
 
         try
         {
-            if (ScreenshotSim.Image is not Bitmap bmp) return;
-
-            var p1 = new Point(CapturedSourcePosX, CapturedSourcePosY);
-            var p2 = new Point(p1.X + CapturedWidth, p1.Y + CapturedHeight);
-
-            (p1.X, p2.X) = MinMax(p1.X, p2.X);
-            (p1.Y, p2.Y) = MinMax(p1.Y, p2.Y);
-            var pDiff = new Size(p2.X - p1.X, p2.Y - p1.Y);
-
-            using (var g = Graphics.FromImage(bmp))
+            switch (tabIndex)
             {
-                g.CopyFromScreen(p1, Point.Empty, pDiff, CopyPixelOperation.SourceCopy);
-                g.Flush();
-            }
-
-            ScreenshotSim.Invalidate();
-
-            var px = GraphicsUtils.GetPixels(bmp);
-            using var inputMatrix = LetterDataLoader.LoadInputFromScreenshot(bmp, px);
-
-            // Execute heavy network calculations asynchronously on thread pool
-
-            {
-                using var output = _network.Forward(inputMatrix);
-
-                var convOutputs = new CnnMatrix[NumConvLayers];
-                for (int i = 0; i < NumConvLayers; i++)
-                {
-                    convOutputs[i] = _network.GetConvLayerOutput(inputMatrix, layerIndex: MinConvLayerIndex + i);
-                }
-
-                try
-                {
-                    unsafe
+                case 0:
                     {
-                        float* pOutput = output.Pointer;
-                        int outputCols = output.UsedColumns;
+                        if (ScreenshotSim.Image is not Bitmap bmp) return;
 
-                        var scores = new Dictionary<char, float>();
-                        for (int i = 0; i < outputCols && i < GraphicsUtils.DefaultLetters.Length; i++)
+                        var p1 = new Point(CapturedSourcePosX, CapturedSourcePosY);
+                        var p2 = new Point(p1.X + CapturedWidth, p1.Y + CapturedHeight);
+
+                        (p1.X, p2.X) = MinMax(p1.X, p2.X);
+                        (p1.Y, p2.Y) = MinMax(p1.Y, p2.Y);
+                        var pDiff = new Size(p2.X - p1.X, p2.Y - p1.Y);
+
+                        using (var g = Graphics.FromImage(bmp))
                         {
-                            scores[GraphicsUtils.DefaultLetters[i]] = pOutput[i];
+                            g.CopyFromScreen(p1, Point.Empty, pDiff, CopyPixelOperation.SourceCopy);
+                            g.Flush();
                         }
 
-                        bool allInitialized = true;
-                        for (int i = 0; i < NumConvLayers; i++)
+                        using var inputMatrix = LetterDataLoader.LoadInputFromBitmap(bmp);
+                        Invoke(() => ScreenshotSim.Invalidate());
+                        //
+                        var convOutputs = _network.GetConvLayerOutput(inputMatrix);
                         {
-                            if (!_convLayersInitialized[i]) allInitialized = false;
-                        }
-
-                        if (!allInitialized)
-                        {
-                            Invoke(() =>
+                            if (convOutputs.Length != NumConvLayers) throw new InvalidOperationException();
+                            try
                             {
-                                for (int i = 0; i < NumConvLayers; ++i)
+
+                                bool allInitialized = true;
+                                for (int i = 0; i < NumConvLayers; i++)
                                 {
-                                    if (!_convLayersInitialized[i])
+                                    if (!_convLayersInitialized[i]) allInitialized = false;
+                                }
+
+                                if (!allInitialized)
+                                {
+                                    Invoke(() =>
                                     {
-                                        InitializeLayerUI(i, convOutputs[i].Channels, convOutputs[i].Width, convOutputs[i].Height);
+                                        for (int i = 0; i < NumConvLayers; ++i)
+                                        {
+                                            if (!_convLayersInitialized[i])
+                                            {
+                                                InitializeLayerUI(i, convOutputs[i].Channels, convOutputs[i].Width, convOutputs[i].Height);
+                                            }
+                                        }
+                                    });
+
+                                    while (true)
+                                    {
+                                        bool check = true;
+                                        for (int i = 0; i < NumConvLayers; i++) if (!_convLayersInitialized[i]) check = false;
+                                        if (check) break;
+                                        Thread.Sleep(5);
                                     }
                                 }
-                            });
 
-                            while (true)
+                                for (int i = 0; i < NumConvLayers; i++)
+                                {
+                                    ProcessConvLayerData(convOutputs[i], i);
+                                }
+                            }
+                            finally
                             {
-                                bool check = true;
-                                for (int i = 0; i < NumConvLayers; i++) if (!_convLayersInitialized[i]) check = false;
-                                if (check) break;
-                                Thread.Sleep(5);
+                                for (int i = 0; i < NumConvLayers; i++)
+                                {
+                                    convOutputs[i]?.Dispose();
+                                }
+                            }
+                            using var output = _network.Forward(inputMatrix);
+                            unsafe
+                            {
+                                float* pOutput = output.Pointer;
+                                int outputCols = output.UsedColumns;
+
+                                var scores = new Dictionary<char, float>();
+                                for (int i = 0; i < outputCols && i < GraphicsUtils.DefaultLetters.Length; i++)
+                                {
+                                    scores[GraphicsUtils.DefaultLetters[i]] = pOutput[i];
+                                }
+
+                                Invoke(() => UpdateUIResults(scores));
                             }
                         }
-
-                        for (int i = 0; i < NumConvLayers; i++)
-                        {
-                            ProcessConvLayerData(convOutputs[i], i);
-                        }
-
-                        // Automatically resumes back on UI thread without BeginInvoke
-                        Invoke(() => UpdateUIResults(scores));
                     }
-                }
-                finally
-                {
-                    for (int i = 0; i < NumConvLayers; i++)
+                    break;
+                case 1:
                     {
-                        convOutputs[i]?.Dispose();
+
                     }
-                }
+                    break;
+                default:
+                    break;
             }
         }
         catch (Exception)
@@ -624,7 +603,8 @@ public partial class LetterWindow : Form
                     buffer[i] = (slot.Pic, slot.Lbl, slot.TargetChar, predictedChar, maxConfidence);
                 }
             }
-            Parallel.For(0, _letterSlots.Count, LoopBody);
+            for (int i = 0; i < _letterSlots.Count; ++i) LoopBody(i);
+            // Parallel.For(0, _letterSlots.Count, LoopBody);
 
             return buffer;
         });
@@ -665,12 +645,6 @@ public partial class LetterWindow : Form
 
         try
         {
-            using var convOutput = _network.GetConvLayerOutput(inputMatrix, layerIndex: 0);
-
-            int numFilters = convOutput.Channels;
-            int mapHeight = convOutput.Height;
-            int mapWidth = convOutput.Width;
-
             Form mapForm = new Form
             {
                 Width = 720,
@@ -691,21 +665,36 @@ public partial class LetterWindow : Form
             };
             mapForm.Controls.Add(mapPanel);
 
-            for (int f = 0; f < numFilters; f++)
+            var convOutput = _network.GetConvLayerOutput(inputMatrix);
+            try
             {
-                using Bitmap rawBmp = new Bitmap(mapWidth, mapHeight, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-                ApplyColorScale(convOutput, f, rawBmp);
 
-                mapPanel.Controls.Add(new PictureBox
+                int numFilters = convOutput[0].Channels;
+                int mapHeight = convOutput[0].Height;
+                int mapWidth = convOutput[0].Width;
+
+
+                for (int f = 0; f < numFilters; f++)
                 {
-                    Width = 80,
-                    Height = 80,
-                    SizeMode = PictureBoxSizeMode.Normal,
-                    Image = CreateNearestNeighborImage(rawBmp, 80, 80),
-                    BackColor = Color.Black,
-                    BorderStyle = BorderStyle.FixedSingle,
-                    Margin = new Padding(4)
-                });
+                    using Bitmap rawBmp = new Bitmap(mapWidth, mapHeight, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                    ApplyColorScale(convOutput[0], f, rawBmp);
+
+                    mapPanel.Controls.Add(new PictureBox
+                    {
+                        Width = 80,
+                        Height = 80,
+                        SizeMode = PictureBoxSizeMode.Normal,
+                        Image = CreateNearestNeighborImage(rawBmp, 80, 80),
+                        BackColor = Color.Black,
+                        BorderStyle = BorderStyle.FixedSingle,
+                        Margin = new Padding(4)
+                    });
+                }
+
+            }
+            finally
+            {
+                convOutput.DisposeEach();
             }
 
             mapForm.ShowDialog();

@@ -10,8 +10,10 @@ using NeutralNET.Utils;
 namespace NeutralNET.Test.Data;
 
 [SupportedOSPlatform("windows6.1")]
-public class LetterDataLoader : DataLoaderBase
+public class LetterDataLoader : DataLoaderBase, IDataLoader<LetterDataLoader>
 {
+    public const DataSourceType DataSourceType = DataSourceType.Letters;
+
     private static readonly string[] FontFamilies =
     [
         "Consolas", "Arial", "Times New Roman", "Georgia", "Verdana", "Tahoma",
@@ -23,24 +25,32 @@ public class LetterDataLoader : DataLoaderBase
 
     public const int LettersCount = 'Z' - 'A' + 1;
 
-    public override int ImageScale => GraphicsUtils.Width;
+    public override int ImageWidth => GraphicsUtils.Width;
+    public override int ImageHeight => GraphicsUtils.Height;
+
     public override string DatasetName => "LetterData";
     public override int NumClasses => LettersCount; // 26 uppercase letters A-Z
 
-    protected override (List<CnnMatrix> trainImages, List<NeuralMatrix> trainLabels,
-                        List<CnnMatrix> testImages, List<NeuralMatrix> testLabels)
-        LoadBatches(int batchSize, int maxTrainSamples, int maxTestSamples)
-    {
-        var (trainImages, trainLabels) = LoadFlattenedDataSet(DataSetType.Train, batchSize, maxTrainSamples);
-        var (testImages, testLabels) = LoadFlattenedDataSet(DataSetType.Test, batchSize, maxTestSamples);
+    public static LetterDataLoader Create() => new();
 
-        return (trainImages, trainLabels, testImages, testLabels);
+    protected override NeuralDataSet LoadBatches(int batchSize, (int Train, int Test) samples)
+    {
+        var trainSet = CreateTrainSet(DataSetType.Train, batchSize, samples.Train);
+        var testSet = CreateTrainSet(DataSetType.Test, batchSize, samples.Test);
+
+        return new(trainSet, testSet);
+    }
+    protected override void UpdateBatches(int batchSize, (int Train, int Test) samples, NeuralDataSet dataSet)
+    {
+        UpdateTrainSet(DataSetType.Train, batchSize, samples.Train, dataSet.Train);
+        UpdateTrainSet(DataSetType.Test, batchSize, samples.Test, dataSet.Test);
     }
 
-    protected override void AddToBatches(float[][] images, int[] labels, int batchSize,
-                                         List<CnnMatrix> outImages, List<NeuralMatrix> outLabels)
+    protected override void AddToBatches(float[][] images, int[] labels, int batchSize, List<CnnMatrix> outImages, List<NeuralMatrix> outLabels)
     {
-        int scale = ImageScale;
+        Debug.Assert(ImageWidth == ImageHeight);
+        var scale = ImageWidth;
+
         int numSamples = images.Length;
 
         for (int start = 0; start < numSamples; start += batchSize)
@@ -69,20 +79,21 @@ public class LetterDataLoader : DataLoaderBase
         }
     }
 
-    /// <summary>
-    /// Unified shared helper method to populate a CnnMatrix slice from raw flat pixel data,
-    /// ensuring exact parity between training batch creation and Windows Forms UI generation.
-    /// </summary>
-    ///
-    private static void PopulateTensorFromPixels(PixelStructRGB pixels, CnnMatrix imgMat, int batchIndex, int scale)
+    // private static void PopulateTensorFromPixels(PixelStructRGB pixels, CnnMatrix imgMat, int batchIndex) => PopulateTensorFromPixels(pixels, imgMat, batchIndex, imgMat.Width, imgMat.Height);
+    private static void PopulateTensorFromPixels(PixelStructRGB pixels, CnnMatrix imgMat, int batchIndex)
     {
-        for (int y = 0; y < scale; y++)
+        Debug.Assert(imgMat.Width == GraphicsUtils.Width);
+        Debug.Assert(imgMat.Height == GraphicsUtils.Height);
+        Debug.Assert(imgMat.Channels == PixelStructRGB.Channels);
+        Debug.Assert(batchIndex < imgMat.Batch);
+
+        for (int c = 0; c < PixelStructRGB.Channels; ++c)
         {
-            for (int x = 0; x < scale; x++)
+            for (int y = 0; y < GraphicsUtils.Height; ++y)
             {
-                for (int c = 0; c < Channels; c++)
+                for (int x = 0; x < GraphicsUtils.Width; ++x)
                 {
-                    imgMat[batchIndex, c, y, x] = pixels.Pixels[y * scale + x][c];
+                    imgMat[batchIndex, c, y, x] = pixels[(y * GraphicsUtils.Height) + x][c];
                 }
             }
         }
@@ -132,12 +143,9 @@ public class LetterDataLoader : DataLoaderBase
 
         if (sample.IsEmpty) sample = set[0];
 
-        Debug.Assert(GraphicsUtils.Width == GraphicsUtils.Height);
-        int scale = GraphicsUtils.Width;
-
         var imgMat = CnnMatrix.GetOrCreate(1, Channels, GraphicsUtils.Width, GraphicsUtils.Height, readOnly: true);
 
-        PopulateTensorFromPixels(sample.Flat.ToArray(), imgMat, 0, scale);
+        PopulateTensorFromPixels(sample, imgMat, 0);
 
         // var displayBmp = new Bitmap(GraphicsUtils.Width, GraphicsUtils.Height, PixelFormat.Format32bppArgb);
         Debug.Assert(output.Width == GraphicsUtils.Width);
@@ -157,85 +165,85 @@ public class LetterDataLoader : DataLoaderBase
         return imgMat;
     }
 
-    public static CnnMatrix LoadInputFromScreenshot(Bitmap bitmap, PixelStructRGB pixels)
+    public static CnnMatrix LoadInputFromBitmap(Bitmap bmp) => LoadInputFromPixels(GraphicsUtils.GetPixels(bmp), (bmp.Width, bmp.Height));
+    public static CnnMatrix LoadInputFromPixels(PixelStructRGB pixels, (int Width, int Height) size)
     {
-        var imgMat = CnnMatrix.GetOrCreate(1, Channels, bitmap.Width, bitmap.Height);
-
-        PopulateTensorFromPixels(pixels, imgMat, 0, bitmap.Width);
-
+        var imgMat = CnnMatrix.GetOrCreate(1, Channels, size.Width, size.Height);
+        PopulateTensorFromPixels(pixels, imgMat, 0);
         return imgMat;
     }
 
-    private (List<CnnMatrix> images, List<NeuralMatrix> labels) LoadFlattenedDataSet(DataSetType dataSetType, int batchSize, int maxSamples)
+    public override NeuralTrainSet CreateTrainSet(DataSetType dataSetType, int batchSize, int maxSamples)
+    {
+        var allSamples = new PixelStructRGB[maxSamples];
+        foreach (ref var item in allSamples.AsSpan()) item = new PixelStructRGB(default, GraphicsUtils.PixelCount);
+
+        var batchCount = (maxSamples + (batchSize - 1)) / batchSize;
+        var batchImages = new CnnMatrix[batchCount];
+        var batchLabels = new NeuralMatrix[batchCount];
+
+        NeuralTrainSet output = new()
+        {
+            Images = allSamples,
+            ImagesData = batchImages,
+            LabelsData = batchLabels,
+        };
+        UpdateTrainSet(dataSetType, batchSize, maxSamples, output);
+        return output;
+    }
+
+    public override void UpdateTrainSet(DataSetType dataSetType, int batchSize, int maxSamples, NeuralTrainSet output)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxSamples);
 
         bool isTrain = dataSetType == DataSetType.Train;
         var rng = Random.Shared;
 
-        var fontTemplates = new List<(string FontName, FontStyle Style)>();
+        if (SupportedStyles is not [FontStyle.Regular]) throw new InvalidOperationException();
+        var rngProps = new GraphicsUtils.CharTransformation[maxSamples];
 
-        foreach (var fontName in FontFamilies)
+        for (int i = 0; i < maxSamples; i++)
         {
-            var stylesToRender = isTrain ? SupportedStyles : [FontStyle.Regular];
-            foreach (var style in stylesToRender)
-            {
-                fontTemplates.Add((fontName, style));
-            }
+            rngProps[i] = new(
+                FontFamilies[rng.Next(FontFamilies.Length)],
+                isTrain ? GraphicsUtils.ImageTransformation.CreateRandom(rng) : GraphicsUtils.ImageTransformation.None,
+                Color.GetRandomColors()
+            );
         }
 
-        if (fontTemplates.Count == 0) fontTemplates.Add(("Arial", FontStyle.Regular));
+        var allSamples = output.Images;
+        var batchImages = output.ImagesData;
+        var batchLabels = output.LabelsData;
 
-        var allSamples = new List<PixelStructRGB>(maxSamples);
+        GraphicsUtils.GetLettersDataSetRGB(rngProps, allSamples, GraphicsUtils.DefaultLetters);
 
-        int n = maxSamples - allSamples.Count;
-        while (true)
-        {
-            var template = fontTemplates[rng.Next(fontTemplates.Count)];
-
-            var set = GraphicsUtils.GetLettersDataSetRGB(template.FontName, applyTransformation: isTrain, style: template.Style);
-            rng.Shuffle(set);
-
-            if (set.Length > n)
-            {
-                allSamples.AddRange(set.Take(n));
-                break;
-            }
-
-            allSamples.AddRange(set);
-            n -= set.Length;
-        }
-
-        Debug.Assert(allSamples.Count == maxSamples);
-        var selectedData = allSamples.Take(maxSamples).ToArray(); // ?
-
-        int[] indices = Enumerable.Range(0, selectedData.Length).ToArray();
+        int[] indices = [.. Enumerable.Range(0, maxSamples)];
         rng.Shuffle(indices);
 
-        var labelArray = new int[selectedData.Length];
-        var imageArray = new float[selectedData.Length][];
-
-        for (int i = 0; i < indices.Length; i++) // shuffled order on already shuffled data?
+        for (var (pos, batchIndex) = (0, 0); pos < maxSamples; ++batchIndex)
         {
-            var selected = selectedData[indices[i]];
+            int batchEnd = int.Min(pos + batchSize, maxSamples);
+            int batchLen = batchEnd - pos;
 
-            labelArray[i] = selected.Label;
-            imageArray[i] = selected.Flat.ToArray();
+            ref var imgMat = ref batchImages[batchIndex];
+            ref var lblMat = ref batchLabels[batchIndex];
+
+            imgMat ??= CnnMatrix.GetOrCreate(batchLen, Channels, ImageHeight, ImageWidth, readOnly: true);
+            lblMat ??= NeuralMatrix.GetOrCreate(batchLen, NumClasses);
+
+            for (int j = 0; pos < batchEnd; ++j, ++pos)
+            {
+                ref readonly var item = ref allSamples[indices[pos]];
+
+                PopulateTensorFromPixels(item, imgMat, j);
+
+                lblMat[j].Clear();
+                lblMat[j, item.Label] = 1;
+            }
         }
 
-        var batchImages = new List<CnnMatrix>();
-        var batchLabels = new List<NeuralMatrix>();
-
-        AddToBatches(imageArray, labelArray, batchSize, batchImages, batchLabels);
-
-        Console.WriteLine($"{DatasetName}: Loaded {selectedData.Length} {dataSetType} samples with randomized transform diversity.");
-
-        return (batchImages, batchLabels);
+        Console.WriteLine($"{DatasetName}: Loaded {output.Images.Length} {dataSetType} samples with randomized transform diversity.");
     }
 
-    private enum DataSetType
-    {
-        Train,
-        Test
-    }
+    static DataSourceType IDataLoader<LetterDataLoader>.DataSourceType => DataSourceType;
 }

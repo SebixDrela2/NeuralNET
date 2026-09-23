@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using NeutralNET.Framework.Convolutional;
 using NeutralNET.Matrices;
 using NeutralNET.Test.Data;
@@ -14,6 +15,7 @@ public class CnnDisplayWriter(char[] items, int dataSetSize)
     private readonly string _txtBorderMid = new string('═', items.Length * LabelColSize);
     private readonly string _txtLabels = string.Join("", items.Select(c => $"{"",LabelPadL}{c}{"",LabelPadR}"));
 
+    private long TimeStamp;
     public int Epoch { get; set; }
     public float Accuracy
     {
@@ -38,15 +40,17 @@ public class CnnDisplayWriter(char[] items, int dataSetSize)
 
     public void Update(ReadOnlySpan<float> xss)
     {
+        var prevTs = Exchange(ref TimeStamp, Stopwatch.GetTimestamp());
+        var elapsed = prevTs is 0 ? default : Stopwatch.GetElapsedTime(prevTs, TimeStamp);
         Epoch += 1;
 
-        const string Sep1 = "══════════════╤══════════════════╤════════════════════╤═════════════════";
-        const string Sep2 = "══════════════╧══════════════════╧════════════════════╧═════════════════";
+        const string Sep1 = "══════════════╤══════════════════╤════════════════════╤═════════════════╤═══════════════════";
+        const string Sep2 = "══════════════╧══════════════════╧════════════════════╧═════════════════╧═══════════════════";
 
         Console.Write("\e[H");
 
         Console.WriteLine($"╔{Sep1}╗\e[K");
-        Console.WriteLine($"║  Epoch {Epoch,5} │ Loss: {AvgLoss,9:F6}  │  Accuracy: {Accuracy,7:P2} │  Best: {BestAccuracy,7:P2}  ║\e[K");
+        Console.WriteLine($"║  Epoch {Epoch,5} │ Loss: {AvgLoss,9:F6}  │  Accuracy: {Accuracy,7:P2} │  Best: {BestAccuracy,7:P2}  │ UpTime: {elapsed.TotalHours,2:f0}:{elapsed.Minutes:d02}:{elapsed.Seconds:d02}  ║\e[K");
         Console.WriteLine($"╠{Sep2}╝\e[K");
         Console.WriteLine($"║{_txtLabels}│\e[A\e[D╤\e[B\e[K");
         Console.WriteLine($"╠{_txtBorderMid}╡\e[K");

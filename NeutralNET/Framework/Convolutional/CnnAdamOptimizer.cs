@@ -366,9 +366,6 @@ public class CnnAdamOptimizer : ICnnOptimizer
         float one_minus_b1 = 1.0f - b1;
         float one_minus_b2 = 1.0f - b2;
 
-        bool hasAvx512 = Avx512F.IsSupported;
-        bool hasAvx2 = Avx2.IsSupported;
-
         float* pW = weights.Pointer;
         float* pBiases = biases.Pointer;
         float* pdW = dW.Pointer;
@@ -395,7 +392,7 @@ public class CnnAdamOptimizer : ICnnOptimizer
 
             int outIdx = 0;
 
-            if (hasAvx512)
+            if (Avx512F.IsSupported)
             {
                 var vB1 = Vector512.Create(b1);
                 var vOneMinusB1 = Vector512.Create(one_minus_b1);
@@ -459,7 +456,7 @@ public class CnnAdamOptimizer : ICnnOptimizer
                     pWBase[(outIdx + 15) * wStride] = vWNew.GetElement(15);
                 }
             }
-            else if (hasAvx2)
+            else if (Avx2.IsSupported)
             {
                 var vB1 = Vector256.Create(b1);
                 var vOneMinusB1 = Vector256.Create(one_minus_b1);
@@ -534,7 +531,7 @@ public class CnnAdamOptimizer : ICnnOptimizer
         // 2. DENSE BIASES UPDATE
         // =========================================================================
         int i = 0;
-        if (hasAvx512)
+        if (Avx512F.IsSupported)
         {
             var vB1 = Vector512.Create(b1);
             var vOneMinusB1 = Vector512.Create(one_minus_b1);
@@ -569,7 +566,7 @@ public class CnnAdamOptimizer : ICnnOptimizer
                 vBNew.Store(pBiases + i);
             }
         }
-        else if (hasAvx2)
+        else if (Avx2.IsSupported)
         {
             var vB1 = Vector256.Create(b1);
             var vOneMinusB1 = Vector256.Create(one_minus_b1);

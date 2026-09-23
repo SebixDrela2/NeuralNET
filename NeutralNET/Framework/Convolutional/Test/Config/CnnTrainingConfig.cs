@@ -9,12 +9,11 @@ namespace NeutralTest;
 public class CnnTrainingConfig
 {
     public DataSourceType DatasetKey { get; set; } = DataSourceType.Letters;
-    public int MaxTrainSamples { get; set; } = 42000;
-    public int MaxTestSamples { get; set; } = 10000;
+    public int BatchSize => DenseConfig.BatchSize;
+    public required int MaxTrainSamples { get; set; }
+    public required int MaxTestSamples { get; set; }
 
-    public int BatchSize { get; set; } = 1024;
-
-    public float LearningRate { get; set; } = 0.0005f;
+    public float LearningRate { get; set; }
     public float TargetAccuracy { get; set; } = 1f;
     public float TargetLoss { get; set; } = 0.0001f;
     public int EarlyStopPatience { get; set; } = 300;
@@ -33,29 +32,29 @@ public class CnnTrainingConfig
                 [
                    // Layer 1: 64x64 -> 32x32 (8 filters)
                    new() {
-                       KernelHeight = 3, KernelWidth = 3, Filters = 16, Stride = 1, Padding = 1,
+                       KernelHeight = 3, KernelWidth = 3, Filters = 8, Stride = 1, Padding = 1,
                        Activation = ActivationType.LeakyReLU, UseMaxPool = true, PoolSize = 2
                    },
                    // Layer 2: 32x32 -> 16x16 (16 filters)
                    new() {
-                       KernelHeight = 3, KernelWidth = 3, Filters = 32, Stride = 1, Padding = 1,
+                       KernelHeight = 3, KernelWidth = 3, Filters = 16, Stride = 1, Padding = 1,
                        Activation = ActivationType.LeakyReLU, UseMaxPool = true, PoolSize = 2
                    },
                    // Layer 2: 16x16 -> 8x8 (32 filters)
                     new() {
-                       KernelHeight = 3, KernelWidth = 3, Filters = 64, Stride = 1, Padding = 1,
+                       KernelHeight = 3, KernelWidth = 3, Filters = 32, Stride = 1, Padding = 1,
                        Activation = ActivationType.LeakyReLU, UseMaxPool = true, PoolSize = 2
                    }
                 ],
                 // Wide single hidden layer avoids information loss on 26 output classes
-                DenseArchitecture = [256, numClasses],
+                DenseArchitecture = [64, numClasses],
                 DenseHiddenActivation = ActivationType.LeakyReLU,
                 OutputActivation = ActivationType.Softmax,
                 OptimizerConfig = new CnnOptimizerConfig
                 {
                     OptimizerType = CnnOptimizerType.Adam,
                     LearningRate = 0.0005f,
-                    WeightDecay = 5e-4f,
+                    WeightDecay = 1e-4f,
                     Beta1 = 0.9f,
                     Beta2 = 0.999f,
                     Epsilon = 1e-8f
@@ -65,13 +64,15 @@ public class CnnTrainingConfig
             {
                 LearningRate = 0.0005f,
                 WeightDecay = 1e-4f,
-                BatchSize = 1024,
+                BatchSize = 1 << 8,
                 Epochs = 100,
-                DropoutRate = 0.2f,
+                DropoutRate = 0.1f,
                 WithShuffle = true,
                 OptimizerType = OptimizerType.Adam,
-                Model = null
-            }
+            },
+            LearningRate = 0.0005f,
+            MaxTrainSamples = 1 << 12,
+            MaxTestSamples = 1 << 8,
         };
     }
 }

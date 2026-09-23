@@ -16,14 +16,14 @@ namespace NeutralNET.Framework.Neural.CNN;
 /// </summary>
 public sealed unsafe class CnnNeuralFramework
 {
-    private const bool EnableGpu = true;
+    private const bool EnableGpu = false;
     private const int Avx256Size = 8;
     private const int Avx512Size = 16;
 
     private static readonly bool IsAvx512Supported = Avx512F.IsSupported;
     private static readonly bool IsAvx2Supported = Avx2.IsSupported;
 
-    private readonly NeuralNetworkConfig _baseConfig;
+    //private readonly NeuralNetworkConfig _baseConfig;
     private readonly CnnArchitectureConfig _cnnConfig;
     private readonly ActivationSelector _activationSelector = new();
     private CnnSize _input;
@@ -46,7 +46,7 @@ public sealed unsafe class CnnNeuralFramework
     public CnnNeuralFramework(NeuralNetworkConfig baseConfig, CnnArchitectureConfig cnnConfig,
         int batchSize, int inputChannels, int inputHeight, int inputWidth)
     {
-        _baseConfig = baseConfig;
+        // _baseConfig = baseConfig;
         _cnnConfig = cnnConfig;
         _rng = new Random();
         _input = new CnnSize(batchSize, inputChannels, inputHeight, inputWidth);
@@ -210,22 +210,22 @@ public sealed unsafe class CnnNeuralFramework
         }
     }
 
-    public CnnMatrix GetConvLayerOutput(CnnMatrix input, int layerIndex)
+    public CnnMatrix[] GetConvLayerOutput(CnnMatrix input)
     {
+        CnnMatrix[] output = new CnnMatrix[_cnnConfig.ConvLayers.Count];
         CnnMatrix current = input;
-        bool isExternal = true;
 
-        for (int i = 0; i <= layerIndex && i < _cnnConfig.ConvLayers.Count; i++)
+        for (int i = 0; i < _cnnConfig.ConvLayers.Count; i++)
         {
             ConvForward(current, i);
 
             var layer = _cnnConfig.ConvLayers[i];
             var convPreAct = _convHyperParameters[i].PreAct;
 
-            if (!isExternal)
-            {
-                current.Dispose();
-            }
+            // if (!isExternal)
+            // {
+            //     current.Dispose();
+            // }
 
             var pAct = convPreAct.Pointer;
             var totalElements = convPreAct.Batch * convPreAct.Channels * convPreAct.Height * convPreAct.Width;
@@ -242,10 +242,10 @@ public sealed unsafe class CnnNeuralFramework
             }
 
             current = next;
-            isExternal = false;
+            output[i] = current;
         }
 
-        return current;
+        return output;
     }
 
     public void SaveData<TEnum>(TEnum key, Stream stream) where TEnum : struct, Enum
@@ -439,17 +439,17 @@ public sealed unsafe class CnnNeuralFramework
 
     private int ComputeFlattenedSize(CnnArchitectureConfig config)
     {
-        var h = _input.Height;
         var w = _input.Width;
+        var h = _input.Height;
         var channels = _input.Channels;
 
         foreach (var layer in config.ConvLayers)
         {
-            int paddedH = h + (2 * layer.Padding);
             int paddedW = w + (2 * layer.Padding);
+            int paddedH = h + (2 * layer.Padding);
 
-            h = (paddedH - layer.KernelHeight) / layer.Stride + 1;
             w = (paddedW - layer.KernelWidth) / layer.Stride + 1;
+            h = (paddedH - layer.KernelHeight) / layer.Stride + 1;
 
             channels = layer.Filters;
 
@@ -635,16 +635,13 @@ public sealed unsafe class CnnNeuralFramework
         for (int layerIdx = _cnnConfig.ConvLayers.Count - 1; layerIdx >= 0; layerIdx--)
         {
             var layer = _cnnConfig.ConvLayers[layerIdx];
-            var preAct = _convHyperParameters[layerIdx].PreAct;
-            var postAct = _convHyperParameters[layerIdx].PostAct;
-            var colInput = _convHyperParameters[layerIdx].ColInput;
-            var inputTensor = _convHyperParameters[layerIdx].Input;
-            var indices = _convHyperParameters[layerIdx].PoolIndices;
+            var cnvParams = _convHyperParameters[layerIdx];
 
             currentGrad = ProcessSingleConvLayerBackward(
                 currentGrad,
                 layerIdx, layer,
-                preAct, postAct, colInput, inputTensor, indices);
+                cnvParams
+            );
         }
 
         return currentGrad;
@@ -654,42 +651,40 @@ public sealed unsafe class CnnNeuralFramework
         CnnMatrix currentGrad,
         int layerIdx,
         CnnLayerConfig layer,
-        CnnMatrix preAct,
-        CnnMatrix postAct,
-        NeuralMatrix colInput,
-        CnnMatrix inputTensor,
-        NeuralMatrix indices)
+        ConvHyperParameters cnvParams)
     {
-        var convGrad = BackPropagateThroughPool(currentGrad, layer, postAct, indices);
-        var preGrad = ComputePreGradient(layer, preAct, postAct, convGrad);
-        convGrad.Dispose();
+        CnnMatrix preAct = cnvParams.PreAct;
+        CnnMatrix postAct = cnvParams.PostAct;
+        NeuralMatrix colInput = cnvParams.ColInput;
+        CnnMatrix inputTensor = cnvParams.Input;
+        NeuralMatrix indices = cnvParams.PoolIndices;
 
-        var preGradMatrix = ConvertPregradToMatrix(preGrad);
+        using var convGrad = BackPropagateThroughPool(currentGrad, layer, postAct, indices);
+        using var preGrad = ComputePreGradient(layer, preAct, postAct, convGrad);
+
+        using var preGradMatrix = ConvertPregradToMatrix(preGrad);
 
         var patches = preGradMatrix.Rows;
         var filters = preGrad.Channels;
         var inDim = colInput.UsedColumns;
 
-        var dW = ComputeWeightGradient(colInput, preGradMatrix, patches, filters, inDim);
-        var dB = ComputeBiasGradient(preGradMatrix, patches, filters);
+        using var dW = ComputeWeightGradient(colInput, preGradMatrix, patches, filters, inDim);
+        using var dB = ComputeBiasGradient(preGradMatrix, patches, filters);
 
         _convOptimizers[layerIdx].UpdateConvWeights(
-            _convHyperParameters[layerIdx].Weights,
-            _convHyperParameters[layerIdx].Biases, dW, dB);
+            cnvParams.Weights,
+            cnvParams.Biases,
+            dW,
+            dB
+        );
 
-        var flattenedWeights = _convHyperParameters[layerIdx].FlattenedWeights;
-        var gradPatchMat = ComputeGradientWithRespectToInput(flattenedWeights, preGradMatrix, patches, filters, inDim);
+        var flattenedWeights = cnvParams.FlattenedWeights;
+        using var gradPatchMat = ComputeGradientWithRespectToInput(flattenedWeights, preGradMatrix, patches, filters, inDim);
 
         // inputTensor now carries the layer's *actual* input shape, because the forward pass
         // no longer writes pooled data into this buffer. See ForwardPoolingPass below.
         var inputGrad = RentCnn(inputTensor.Batch, inputTensor.Channels, inputTensor.Height, inputTensor.Width);
-        inputGrad.Col2Im(gradPatchMat, layer.KernelHeight, layer.KernelWidth, layer.Stride, layer.Padding, 1.0f);
-
-        preGrad.Dispose();
-        preGradMatrix.Dispose();
-        dW.Dispose();
-        dB.Dispose();
-        gradPatchMat.Dispose();
+        inputGrad.Col2Im(gradPatchMat, layer.KernelHeight, layer.KernelWidth, layer.Stride, layer.Padding);
 
         return inputGrad;
     }
@@ -813,7 +808,7 @@ public sealed unsafe class CnnNeuralFramework
             int colInStride = colInput.ColumnsStride;
             float* pPreGradMat = preGradMatrix.Pointer;
             int preGradMatStride = preGradMatrix.ColumnsStride;
-            
+
             // dW[f, i] = Σ_p preGrad[p, f] * colInput[p, i]
             // Outer loop over patches keeps rowColIn hot across all filters.
             for (int patch = 0; patch < patches; patch++)
@@ -972,14 +967,16 @@ public sealed unsafe class CnnNeuralFramework
             }
             else if (IsAvx2Supported)
             {
-                Vector256<float> vZero = Vector256<float>.Zero;
-                int limit = totalElements - (totalElements % Avx256Size);
-                for (; i < limit; i += Avx256Size)
+                int end = totalElements & (Avx256Size - 1);
+                for (; i < end; i += Avx256Size)
                 {
-                    Vector256<float> g = Avx.LoadVector256(pGrad + i);
-                    Vector256<float> p = Avx.LoadVector256(pPost + i);
-                    Vector256<float> mask = Avx.Compare(p, vZero, FloatComparisonMode.OrderedGreaterThanNonSignaling);
-                    Avx.And(g, mask).Store(pDst + i);
+                    Avx.And(
+                        Avx.LoadVector256(pGrad + i),
+                        Avx.CompareGreaterThan(
+                            Avx.LoadVector256(pPost + i),
+                            Vector256<float>.Zero
+                        )
+                    ).Store(pDst + i);
                 }
             }
         }

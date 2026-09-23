@@ -9,6 +9,12 @@
       "type": "dotnet",
       "request": "launch",
       "projectPath": "${workspaceFolder}/NeutralTest/NeutralNET.Test.csproj",
+    },
+    {
+      "name": "C#: UI Debug",
+      "type": "dotnet",
+      "request": "launch",
+      "projectPath": "${workspaceFolder}/NeutralNET.ImageEpochViewer.cs/NeutralNET.ImageEpochViewer.csproj",
     }
   ]
 }

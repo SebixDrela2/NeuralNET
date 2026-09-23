@@ -2,11 +2,12 @@ using System.Text;
 using NeutralNET.Framework.Convolutional;
 using NeutralNET.Framework.Neural.CNN;
 using NeutralNET.Matrices;
+using NeutralNET.Stuff;
 using NeutralNET.Test.Data;
 
 namespace NeutralTest;
 
-public class CnnTrainer
+public class CnnTrainer : IDisposable
 {
     private readonly CnnNetwork _network;
     private readonly CnnValidator _validator;
@@ -21,25 +22,31 @@ public class CnnTrainer
         _loader = loader;
     }
 
-    public void Train(NeuralDataset dataSet, int numClasses)
+    public void Train(NeuralDataSet dataSet, int numClasses)
     {
         _network.LoadData(_config.DatasetKey, _config.CheckpointDir);
         char[] chars = [.. EnumerateChars('A').Take(numClasses)];
-        var display = new CnnDisplayWriter(chars, dataSet.TrainImages.Count);
+
+        var trainN = dataSet.Train.ImagesData.Length;
+
+        var trainImg = dataSet.Train.ImagesData;
+        var trainLbl = dataSet.Train.LabelsData;
+
+        var display = new CnnDisplayWriter(chars, trainN);
 
         display.Clear();
         Span<float> results = new float[(1 + numClasses) * _config.BatchSize];
-        var indexes = Enumerable.Range(0, dataSet.TrainImages.Count).ToArray();
+        var indexes = Enumerable.Range(0, trainN).ToArray();
 
         while (true)
         {
             Random.Shared.Shuffle(indexes);
             var totalLoss = 0.0f;
 
-            for (var batchIdx = 0; batchIdx < dataSet.TrainImages.Count; batchIdx++)
+            for (var batchIdx = 0; batchIdx < trainN; batchIdx++)
             {
                 var index = indexes[batchIdx];
-                var loss = _network.TrainBatch(dataSet.TrainImages[index], dataSet.TrainLabels[index], _config.LearningRate);
+                var loss = _network.TrainBatch(trainImg[index], trainLbl[index], _config.LearningRate);
                 //DisplayInstances();
 
                 totalLoss += loss;
@@ -52,12 +59,14 @@ public class CnnTrainer
         }
     }
 
-    [Obsolete]
     public void DisplayInstances()
     {
-        var locations = NeuralMatrix.Instances
-            .SelectMany(x => x.Locations)
-            .Concat(CnnMatrix.Instances.SelectMany(x => x.Locations))
+        if (NeuralMatrix.Instances is not { } xs) throw new NotSupportedException();
+        if (CnnMatrix.Instances is not { } ys) throw new NotSupportedException();
+
+        var locations = xs
+            .SelectMany(x => x.Locations ?? throw new NotSupportedException())
+            .Concat(ys.SelectMany(x => x.Locations ?? throw new NotSupportedException()))
             .ToArray();
 
         var grouped = locations
@@ -67,11 +76,11 @@ public class CnnTrainer
 
         var builder = new StringBuilder();
 
-        foreach(var group in grouped)
+        foreach (var group in grouped)
         {
             builder.AppendLine($"{group.Key}");
 
-            foreach(var elem in group.OrderBy(x => x.TimeStamp))
+            foreach (var elem in group.OrderBy(x => x.TimeStamp))
             {
                 builder.AppendLine($"  [{elem.TimeStamp}]  {elem.Info.TotalSize} [{string.Join(" x ", elem.Info.Dimensions)}]");
             }
@@ -81,19 +90,22 @@ public class CnnTrainer
         Console.WriteLine(output);
     }
 
-    private bool ProcessLoss(NeuralDataset dataSet, int numClasses, CnnDisplayWriter display, Span<float> results, float totalLoss)
+    private bool ProcessLoss(NeuralDataSet dataSet, int numClasses, CnnDisplayWriter display, Span<float> results, float totalLoss)
     {
+        var testImg = dataSet.Test.ImagesData;
+        var testLbl = dataSet.Test.LabelsData;
+
         display.TotalLoss = totalLoss;
 
-        var result = _validator.Validate(_network, dataSet.TestImages, dataSet.TestLabels);
+        var result = _validator.Validate(_network, testImg, testLbl);
         display.Accuracy = result.Accuracy;
 
         var offset = 0;
 
-        if (dataSet.TestImages.Count > 0)
+        if (testImg.Length > 0)
         {
-            var sampleBatch = dataSet.TestImages[0];
-            var sampleLabels = dataSet.TestLabels[0];
+            var sampleBatch = testImg[0];
+            var sampleLabels = testLbl[0];
             using var pred = _network.Forward(sampleBatch);
 
             var numSamples = Math.Min(numClasses, sampleBatch.Batch);
@@ -139,7 +151,7 @@ public class CnnTrainer
         return DisplayWithControlFlow(display, dataSet, results, offset);
     }
 
-    private bool DisplayWithControlFlow(CnnDisplayWriter display, NeuralDataset dataset, Span<float> results, int offset)
+    private bool DisplayWithControlFlow(CnnDisplayWriter display, NeuralDataSet dataset, Span<float> results, int offset)
     {
         display.Update(results[..offset]);
 
@@ -215,5 +227,11 @@ public class CnnTrainer
         }
 
         return maxIndex;
+    }
+
+    public void Dispose()
+    {
+        _network.Dispose();
+        _loader.Dispose();
     }
 }
