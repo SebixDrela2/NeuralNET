@@ -16,7 +16,7 @@ namespace NeutralNET.Framework.Neural.CNN;
 /// </summary>
 public sealed unsafe class CnnNeuralFramework
 {
-    private const bool EnableGpu = false;
+    private const bool EnableGpu = true;
     private const int Avx256Size = 8;
     private const int Avx512Size = 16;
 
@@ -681,10 +681,8 @@ public sealed unsafe class CnnNeuralFramework
         var flattenedWeights = cnvParams.FlattenedWeights;
         using var gradPatchMat = ComputeGradientWithRespectToInput(flattenedWeights, preGradMatrix, patches, filters, inDim);
 
-        // inputTensor now carries the layer's *actual* input shape, because the forward pass
-        // no longer writes pooled data into this buffer. See ForwardPoolingPass below.
         var inputGrad = RentCnn(inputTensor.Batch, inputTensor.Channels, inputTensor.Height, inputTensor.Width);
-        inputGrad.Col2Im(gradPatchMat, layer.KernelHeight, layer.KernelWidth, layer.Stride, layer.Padding);
+        inputGrad.Col2Im(gradPatchMat);
 
         return inputGrad;
     }

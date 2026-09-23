@@ -64,15 +64,15 @@ public class CnnTrainingConfig
             {
                 LearningRate = 0.0005f,
                 WeightDecay = 1e-4f,
-                BatchSize = 1 << 8,
+                BatchSize = 1024,
                 Epochs = 100,
                 DropoutRate = 0.1f,
                 WithShuffle = true,
                 OptimizerType = OptimizerType.Adam,
             },
             LearningRate = 0.0005f,
-            MaxTrainSamples = 1 << 12,
-            MaxTestSamples = 1 << 8,
+            MaxTrainSamples = 120000,
+            MaxTestSamples = 1000,
         };
     }
 }

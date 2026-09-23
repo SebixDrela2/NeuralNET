@@ -181,91 +181,92 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
     public void Im2Col(NeuralMatrix colInput, int kernelH, int kernelW, int stride, int padding)
     {
         EnsureNotDisposed();
-        int paddedH = Height + 2 * padding;
-        int paddedW = Width + 2 * padding;
-        int outH = (paddedH - kernelH) / stride + 1;
-        int outW = (paddedW - kernelW) / stride + 1;
-        int patchSize = Channels * kernelH * kernelW;
-        int totalPatches = Batch * outH * outW;
 
-        float* colPtr = colInput.Pointer;
+        int outH = (Height + 2 * padding - kernelH) / stride + 1;
+        int outW = (Width + 2 * padding - kernelW) / stride + 1;
+        int spatialOut = outH * outW;
         int colStride = colInput.ColumnsStride;
-        bool needsPadding = padding > 0;
-        using var padded = needsPadding ? GetOrCreate(Batch, Channels, paddedH, paddedW) : null;
-        if (needsPadding) padded.Clear();
 
-        float* baseSrcPtr = Pointer;
-        float* basePaddedPtr = needsPadding ? padded!.Pointer : baseSrcPtr;
-        int srcStrideH = Width;
-        int targetPaddedW = needsPadding ? paddedW : Width;
+        float* srcBase = Pointer;
+        float* colBase = colInput.Pointer;
 
-        if (needsPadding)
+        int numTasks = Batch * Channels;
+
+        Parallel.For(0, numTasks, taskIdx =>
         {
-            nuint rowBytes = (nuint)Width * sizeof(float);
-            Parallel.For(0, Batch, b =>
+            int b = taskIdx / Channels;
+            int c = taskIdx % Channels;
+
+            float* srcChannel = srcBase + (long)(b * Channels + c) * Height * Width;
+
+            for (int ky = 0; ky < kernelH; ky++)
             {
-                long batchSrcOffset = b * Channels * Height * Width;
-                long batchPadOffset = b * Channels * paddedH * paddedW;
-
-                for (int c = 0; c < Channels; c++)
+                for (int kx = 0; kx < kernelW; kx++)
                 {
-                    float* srcPtr = baseSrcPtr + batchSrcOffset + c * Height * Width;
-                    float* dstPtr = basePaddedPtr + batchPadOffset + c * paddedH * paddedW;
+                    int channelKernelOffset = (c * kernelH + ky) * kernelW + kx;
 
-                    for (int y = 0; y < Height; y++)
+                    for (int oh = 0; oh < outH; oh++)
                     {
-                        float* srcRow = srcPtr + y * srcStrideH;
-                        float* dstRow = dstPtr + (y + padding) * targetPaddedW + padding;
-                        NativeMemory.Copy(srcRow, dstRow, rowBytes);
-                    }
-                }
-            });
-        }
+                        int ih = oh * stride - padding + ky;
+                        bool hInBounds = (uint)ih < (uint)Height;
 
-        int spatialPadStride = paddedH * targetPaddedW;
+                        float* colRowBase = colBase + (long)(b * spatialOut + oh * outW) * colStride + channelKernelOffset;
 
-        Parallel.For(0, Batch, b =>
-        {
-            int batchPatchBase = b * outH * outW;
-            long batchPadOffset = b * Channels * spatialPadStride;
-            long batchColOffset = (long)batchPatchBase * colStride;
-            float* batchColPtr = colPtr + batchColOffset;
-
-            for (int oh = 0; oh < outH; oh++)
-            {
-                int startY = oh * stride;
-                int patchRowBase = oh * outW;
-
-                for (int ow = 0; ow < outW; ow++)
-                {
-                    int startX = ow * stride;
-                    float* dstRow = batchColPtr + (patchRowBase + ow) * colStride;
-                    int colIdx = 0;
-
-                    for (int c = 0; c < Channels; c++)
-                    {
-                        float* channelPaddedPtr = basePaddedPtr + batchPadOffset + c * spatialPadStride;
-
-                        for (int ky = 0; ky < kernelH; ky++)
+                        if (!hInBounds)
                         {
-                            float* srcRow = channelPaddedPtr + (startY + ky) * targetPaddedW + startX;
+                            for (int ow2 = 0; ow2 < outW; ow2++)
+                            {
+                                colRowBase[ow2 * colStride] = 0.0f;
+                            }
+                            continue;
+                        }
 
-                            if (kernelW == 3)
+                        int ow = 0;
+                        if (padding == 0)
+                        {
+                            int srcYOffset = ih * Width;
+
+                            if (Avx512F.IsSupported && stride == 1 && (outW - ow) >= 16)
                             {
-                                dstRow[colIdx] = srcRow[0];
-                                dstRow[colIdx + 1] = srcRow[1];
-                                dstRow[colIdx + 2] = srcRow[2];
-                                colIdx += 3;
+                                int vecLimit = outW - 15;
+                                for (; ow < vecLimit; ow += 16)
+                                {
+                                    int iw = ow + kx;
+                                    var vData = Avx512F.LoadVector512(srcChannel + srcYOffset + iw);
+
+                                    for (int i = 0; i < 16; i++)
+                                    {
+                                        colRowBase[(ow + i) * colStride] = vData[i];
+                                    }
+                                }
                             }
-                            else if (kernelW == 1)
+                            else if (Avx2.IsSupported && stride == 1 && (outW - ow) >= 8)
                             {
-                                dstRow[colIdx++] = srcRow[0];
+                                int vecLimit = outW - 7;
+                                for (; ow < vecLimit; ow += 8)
+                                {
+                                    int iw = ow + kx;
+                                    var vData = Avx2.LoadVector256(srcChannel + srcYOffset + iw);
+
+                                    for (int i = 0; i < 8; i++)
+                                    {
+                                        colRowBase[(ow + i) * colStride] = vData[i];
+                                    }
+                                }
                             }
-                            else
+
+                            for (; ow < outW; ow++)
                             {
-                                nuint copyBytes = (nuint)kernelW * sizeof(float);
-                                NativeMemory.Copy(srcRow, dstRow + colIdx, copyBytes);
-                                colIdx += kernelW;
+                                int iw = ow * stride + kx;
+                                colRowBase[ow * colStride] = srcChannel[srcYOffset + iw];
+                            }
+                        }
+                        else
+                        {
+                            for (; ow < outW; ow++)
+                            {
+                                int iw = ow * stride - padding + kx;
+                                colRowBase[ow * colStride] = ((uint)iw < (uint)Width) ? srcChannel[ih * Width + iw] : 0.0f;
                             }
                         }
                     }
@@ -274,75 +275,57 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
         });
     }
 
-    public void Col2Im(NeuralMatrix colGradients, int kernelH, int kernelW, int stride, int padding, float scale = 1.0f)
+    public void Col2Im(NeuralMatrix colGradients)
     {
         EnsureNotDisposed();
-        int paddedH = Height + 2 * padding;
-        int paddedW = Width + 2 * padding;
-        int outH = (paddedH - kernelH) / stride + 1;
-        int outW = (paddedW - kernelW) / stride + 1;
+
+        const int kernelH = 3;
+        const int kernelW = 3;
+        const int kernelSpatial = kernelH * kernelW; // 9
+
+        int paddedH = Height + 2;
+        int paddedW = Width + 2;
 
         using var paddedGrad = GetOrCreate(Batch, Channels, paddedH, paddedW);
+
         float* colPtr = colGradients.Pointer;
         int colStride = colGradients.ColumnsStride;
         float* gradPtr = paddedGrad.Pointer;
-        int kernelSpatial = kernelH * kernelW;
 
+        int padW = paddedW;
+        long padWH = (long)paddedH * paddedW;
+        long padWHC = (long)Channels * padWH;
+
+        Unsafe.InitBlockUnaligned(gradPtr, 0, (uint)(Batch * padWHC * sizeof(float)));
         Parallel.For(0, Batch, b =>
         {
-            long batchOffsetGrad = b * paddedGrad.StrideN;
-            int batchPatchBase = b * outH * outW;
+            long batchOffsetGrad = (long)b * padWHC;
+            long batchPatchBase = (long)b * Height * Width;
 
-            for (int oh = 0; oh < outH; oh++)
+            for (int oh = 0; oh < Height; oh++)
             {
-                int startY = oh * stride;
-                int patchRowBase = (b * outH + oh) * outW;
+                long patchRowBase = (batchPatchBase + (long)oh * Width) * colStride;
 
-                for (int ow = 0; ow < outW; ow++)
+                for (int ow = 0; ow < Width; ow++)
                 {
-                    int startX = ow * stride;
-                    float* colRow = colPtr + (patchRowBase + ow) * colStride;
+                    float* colRow = colPtr + patchRowBase + (long)ow * colStride;
 
                     for (int c = 0; c < Channels; c++)
                     {
-                        long channelOffsetGrad = batchOffsetGrad + c * paddedGrad.StrideC;
-                        int channelOffsetCol = c * kernelSpatial;
+                        long channelOffsetGrad = ((long)c * padWH) + batchOffsetGrad;
+                        long channelOffsetCol = (long)c * kernelSpatial;
+
+                        float* srcColBase = colRow + channelOffsetCol;
+                        float* dstGradBase = gradPtr + channelOffsetGrad + ow;
 
                         for (int ky = 0; ky < kernelH; ky++)
                         {
-                            float* dstGrad = gradPtr + channelOffsetGrad + (startY + ky) * paddedGrad.StrideH + startX;
-                            float* srcCol = colRow + channelOffsetCol + ky * kernelW;
+                            float* dstGrad = dstGradBase + ((oh + ky) * padW);
+                            float* srcCol = srcColBase + (ky * kernelW);
 
-                            int kx = 0;
-                            if (Avx512F.IsSupported)
-                            {
-                                var vScale512 = Vector512.Create(scale);
-                                int vecLimit = kernelW - (kernelW % 16);
-                                for (; kx < vecLimit; kx += 16)
-                                {
-                                    var vDst = Vector512.Load(dstGrad + kx);
-                                    var vSrc = Vector512.Load(srcCol + kx);
-                                    vDst = Vector512.FusedMultiplyAdd(vSrc, vScale512, vDst);
-                                    vDst.Store(dstGrad + kx);
-                                }
-                            }
-                            else if (Avx2.IsSupported)
-                            {
-                                var vScale256 = Vector256.Create(scale);
-                                int vecLimit = kernelW - (kernelW % 8);
-                                for (; kx < vecLimit; kx += 8)
-                                {
-                                    var vDst = Vector256.Load(dstGrad + kx);
-                                    var vSrc = Vector256.Load(srcCol + kx);
-                                    vDst = Vector256.FusedMultiplyAdd(vSrc, vScale256, vDst);
-                                    vDst.Store(dstGrad + kx);
-                                }
-                            }
-
-                            for (; kx < kernelW; kx++)
-                            {
-                                dstGrad[kx] += srcCol[kx] * scale;
-                            }
+                            dstGrad[0] += srcCol[0];
+                            dstGrad[1] += srcCol[1];
+                            dstGrad[2] += srcCol[2];
                         }
                     }
                 }
@@ -353,183 +336,26 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
         float* baseDstPtr = Pointer;
         float* basePaddedGradPtr = paddedGrad.Pointer;
 
-        Parallel.For(0, Batch, b =>
+        int numTasks = Batch * Channels;
+
+        Parallel.For(0, numTasks, taskIdx =>
         {
-            long batchSrcOffset = b * paddedGrad.StrideN;
+            int b = taskIdx / Channels;
+            int c = taskIdx % Channels;
+
+            long batchSrcOffset = (long)b * padWHC;
             long batchDstOffset = (long)b * Channels * Height * Width;
 
-            for (int c = 0; c < Channels; c++)
-            {
-                float* srcChannel = basePaddedGradPtr + batchSrcOffset + c * paddedGrad.StrideC;
-                float* dstChannel = baseDstPtr + batchDstOffset + c * Height * Width;
+            float* srcChannel = basePaddedGradPtr + batchSrcOffset + ((long)c * padWH);
+            float* dstChannel = baseDstPtr + batchDstOffset + ((long)c * Height * Width);
 
-                for (int y = 0; y < Height; y++)
-                {
-                    float* srcPtr = srcChannel + (y + padding) * paddedW + padding;
-                    float* dstPtr = dstChannel + y * Width;
-                    NativeMemory.Copy(srcPtr, dstPtr, rowBytes);
-                }
+            for (int y = 0; y < Height; y++)
+            {
+                float* srcPtr = srcChannel + ((y + 1) * padW) + 1;
+                float* dstPtr = dstChannel + (y * Width);
+                NativeMemory.Copy(srcPtr, dstPtr, rowBytes);
             }
         });
-    }
-
-    public void Im2Col_Fast(NeuralMatrix colInput)
-    {
-        EnsureNotDisposed();
-        const int kernelH = 3;
-        const int kernelW = 3;
-        const int kernelWH = kernelH * kernelW;
-
-        int paddedH = Height + 2;
-        int paddedW = Width + 2;
-        int patchSize = Channels * kernelWH;
-        int totalPatches = Batch * Height * Width;
-
-        float* colPtr = colInput.Pointer;
-        int colStride = colInput.ColumnsStride;
-        using var padded = GetOrCreate(Batch, Channels, paddedH, paddedW);
-
-        float* baseSrcPtr = Pointer;
-        float* basePaddedPtr = padded.Pointer;
-        int srcStrideH = Width;
-        int targetPaddedW = paddedW;
-
-        {
-            nuint rowBytes = (nuint)Width * sizeof(float);
-            for (int b = 0; b < Batch; ++b)
-            {
-                long batchSrcOffset = b * Channels * Height * Width;
-                long batchPadOffset = b * Channels * paddedH * paddedW;
-
-                for (int c = 0; c < Channels; c++)
-                {
-                    float* srcPtr = baseSrcPtr + batchSrcOffset + (c * Height * Width);
-                    float* dstPtr = basePaddedPtr + batchPadOffset + (c * paddedH * paddedW);
-
-                    for (int y = 0; y < Height; y++)
-                    {
-                        float* srcRow = srcPtr + y * srcStrideH;
-                        float* dstRow = dstPtr + (y + 1) * targetPaddedW + 1;
-                        NativeMemory.Copy(srcRow, dstRow, rowBytes);
-                    }
-                }
-            }
-        }
-
-        int spatialPadStride = paddedH * targetPaddedW;
-
-        for (int b = 0; b < Batch; ++b)
-        {
-            int batchPatchBase = b * Height * Width;
-            long batchPadOffset = b * Channels * spatialPadStride;
-            long batchColOffset = (long)batchPatchBase * colStride;
-            float* batchColPtr = colPtr + batchColOffset;
-
-            for (int oh = 0; oh < Height; oh++)
-            {
-                // int startY = oh * stride;
-                int patchRowBase = oh * Width;
-
-                for (int ow = 0; ow < Width; ow++)
-                {
-                    // int startX = ow * stride;
-                    float* dstRow = batchColPtr + ((patchRowBase + ow) * colStride);
-
-                    for (int c = 0; c < Channels; c++)
-                    {
-                        float* channelPaddedPtr = basePaddedPtr + batchPadOffset + (c * spatialPadStride);
-
-                        for (int ky = 0; ky < kernelH; ky++)
-                        {
-                            float* srcRow = channelPaddedPtr + ((oh + ky) * targetPaddedW) + ow;
-
-                            if (kernelW == 3)
-                            {
-                                dstRow[0] = srcRow[0];
-                                dstRow[1] = srcRow[1];
-                                dstRow[2] = srcRow[2];
-                                dstRow += 3;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    public void Col2Im_Fast(NeuralMatrix colGradients)
-    {
-        EnsureNotDisposed();
-        const int kernelH = 3;
-        const int kernelW = 3;
-        const int kernelSpatial = kernelH * kernelW;
-
-        int paddedH = Height + 2;
-        int paddedW = Width + 2;
-
-        using var paddedGrad = GetOrCreate(Batch, Channels, paddedH, paddedW);
-        float* colPtr = colGradients.Pointer;
-        int colStride = colGradients.ColumnsStride;
-        float* gradPtr = paddedGrad.Pointer;
-
-        var padW = paddedW;
-        var padWH = paddedH * paddedW;
-        var padWHC = Channels * paddedH * paddedW;
-
-        for (int b = 0; b < Batch; ++b)
-        {
-            long batchOffsetGrad = b * padWHC;
-
-            for (int oh = 0; oh < Height; oh++)
-            {
-                long patchRowBase = (b * Height + oh) * Width;
-
-                for (int ow = 0; ow < Width; ow++)
-                {
-                    float* colRow = colPtr + (patchRowBase + ow) * colStride;
-
-                    for (int c = 0; c < Channels; c++)
-                    {
-                        long channelOffsetGrad = (c * padWH) + batchOffsetGrad;
-                        long channelOffsetCol = c * kernelSpatial;
-
-                        for (int ky = 0; ky < kernelH; ky++)
-                        {
-                            float* dstGrad = gradPtr + channelOffsetGrad + ((oh + ky) * padW) + ow;
-                            float* srcCol = colRow + channelOffsetCol + (ky * kernelW);
-
-                            for (int kx = 0; kx < kernelW; ++kx)
-                            {
-                                dstGrad[kx] += srcCol[kx];
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        nuint rowBytes = (nuint)Width * sizeof(float);
-        float* baseDstPtr = Pointer;
-        float* basePaddedGradPtr = paddedGrad.Pointer;
-
-        for (int b = 0; b < Batch; ++b)
-        {
-            long batchSrcOffset = b * padWHC;
-            long batchDstOffset = (long)b * Channels * Height * Width;
-
-            for (int c = 0; c < Channels; c++)
-            {
-                float* srcChannel = basePaddedGradPtr + batchSrcOffset + (c * padWH);
-                float* dstChannel = baseDstPtr + batchDstOffset + (c * Height * Width);
-
-                for (int y = 0; y < Height; y++)
-                {
-                    float* srcPtr = srcChannel + ((y + 1) * padW) + 1;
-                    float* dstPtr = dstChannel + (y * Width);
-                    NativeMemory.Copy(srcPtr, dstPtr, rowBytes);
-                }
-            }
-        }
     }
 
     private bool _isDisposing = false;
@@ -551,17 +377,6 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
 
             MemoryHandle.Take().Dispose();
             GC.SuppressFinalize(this);
-
-            // if (_isPoolable)
-            // {
-            //     _pool.Add(this);
-            // }
-            // else
-            // {
-            //     NativeMemory.AlignedFree(Pointer);
-            //     GC.SuppressFinalize(this);
-            //     Pointer = null;
-            // }
 
             _isDisposing = false;
         }
