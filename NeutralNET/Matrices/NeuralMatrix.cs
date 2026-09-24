@@ -36,12 +36,12 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
     public Span<float> SpanWithGarbage => new(Pointer, UnsafeSize);
 
     public static NeuralMatrix Create(int rows, int columns, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
-        => new(rows, columns, isPoolable: true, fp, ln);
+        => new(rows, columns, fp, ln);
 
     public static NeuralMatrix GetOrCreate(int rows, int columns, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
-        => new(rows, columns, isPoolable: true, fp, ln);
+        => new(rows, columns, fp, ln);
 
-    private NeuralMatrix(int rows, int columns, bool isPoolable, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
+    private NeuralMatrix(int rows, int columns, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
     {
         ColumnsStride = MatrixUtils.GetStride(columns);
         Rows = rows;
@@ -49,7 +49,6 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
 
         LogicalLength = Rows * UsedColumns;
         UnsafeSize = Rows * ColumnsStride;
-        _isPoolable = isPoolable;
 
         MemoryHandle = NeuralMemoryPool.Rent<float>(UnsafeSize);
         StrideMasks = MatrixUtils.GetStrideMask(columns);
