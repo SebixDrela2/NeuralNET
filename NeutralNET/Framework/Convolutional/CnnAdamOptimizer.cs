@@ -38,7 +38,7 @@ public class CnnAdamOptimizer : ICnnOptimizer
         _t = 0;
     }
 
-    public unsafe void UpdateConvWeights(CnnMatrix weights, CnnMatrix biases, NeuralMatrix dW, NeuralMatrix dB)
+    public unsafe void Update(CnnMatrix weights, CnnMatrix biases, NeuralMatrix dW, NeuralMatrix dB)
     {
         int innerDim = dW.Rows;
         int filters = dW.UsedColumns;
@@ -329,7 +329,7 @@ public class CnnAdamOptimizer : ICnnOptimizer
         }
     }
 
-    public unsafe void UpdateDenseWeights(NeuralMatrix weights, NeuralMatrix biases, NeuralMatrix dW, NeuralMatrix dB)
+    public unsafe void Update(NeuralMatrix weights, NeuralMatrix biases, NeuralMatrix dW, NeuralMatrix dB)
     {
         int inputSize = dW.Rows;
         int outputSize = dW.UsedColumns;

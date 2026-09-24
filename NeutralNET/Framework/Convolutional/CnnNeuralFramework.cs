@@ -705,7 +705,7 @@ public sealed unsafe class CnnNeuralFramework
         using var dW = ComputeWeightGradient(colInput, preGradMatrix, patches, filters, inDim);
         using var dB = ComputeBiasGradient(preGradMatrix, patches, filters);
 
-        _convOptimizers[layerIdx].UpdateConvWeights(
+        _convOptimizers[layerIdx].Update(
             cnvParams.Weights,
             cnvParams.Biases,
             dW,
@@ -1882,7 +1882,7 @@ public sealed unsafe class CnnNeuralFramework
                 }
             }
 
-            _denseOptimizers[i].UpdateDenseWeights(_denseHyperParameters[i].Weights, _denseHyperParameters[i].Biases, dW, dB);
+            _denseOptimizers[i].Update(_denseHyperParameters[i].Weights, _denseHyperParameters[i].Biases, dW, dB);
 
             var weights = _denseHyperParameters[i].Weights;
             int weightOutDim = weights.Rows;

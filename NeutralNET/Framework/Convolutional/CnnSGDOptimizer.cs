@@ -21,7 +21,7 @@ public class CnnSGDOptimizer : ICnnOptimizer
         _momentum = config.Momentum;
     }
 
-    public void UpdateConvWeights(CnnMatrix weights, CnnMatrix biases, NeuralMatrix dW, NeuralMatrix dB)
+    public void Update(CnnMatrix weights, CnnMatrix biases, NeuralMatrix dW, NeuralMatrix dB)
     {
         int innerDim = dW.Rows;
         int filters = dW.UsedColumns;
@@ -66,7 +66,7 @@ public class CnnSGDOptimizer : ICnnOptimizer
         }
     }
 
-    public void UpdateDenseWeights(NeuralMatrix weights, NeuralMatrix biases, NeuralMatrix dW, NeuralMatrix dB)
+    public void Update(NeuralMatrix weights, NeuralMatrix biases, NeuralMatrix dW, NeuralMatrix dB)
     {
         int inputSize = dW.Rows;
         int outputSize = dW.UsedColumns;
