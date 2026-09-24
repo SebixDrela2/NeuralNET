@@ -134,7 +134,9 @@ public sealed unsafe class CnnNeuralFramework
             poolIndices.DisplayName = $"Conv_PoolIndices[{i}]";
             gradInput.DisplayName = $"Conv_GradInput[{i}]";
             preGrad.DisplayName = $"Conv_PreGrad[{i}]";
-
+            preGradMatrix.DisplayName = $"Conv_PreGradMatrix[{i}]";
+            dW.DisplayName = $"Conv_DWeights[{i}]";
+            dB.DisplayName = $"Conv_DBiases[{i}]";
 
             _convActivationTypes.Add(layer.Activation);
 
