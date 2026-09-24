@@ -225,7 +225,6 @@ public static class Cifar10Loader
                 int idx = start + i;
                 float[] pixels = images[idx];
 
-                // Copy pixels using the indexer
                 for (int c = 0; c < 3; c++)
                 {
                     int offset = c * Scale * Scale;
@@ -238,7 +237,6 @@ public static class Cifar10Loader
                     }
                 }
 
-                // One-hot label
                 int label = labels[idx];
                 lblMat.Set(i, label, 1.0f);
             }

@@ -71,7 +71,7 @@ public class CnnTrainingConfig
                 OptimizerType = OptimizerType.Adam,
             },
             LearningRate = 0.0005f,
-            MaxTrainSamples = 1024 * 118,
+            MaxTrainSamples = 1024 * /*118*/ 1,
             MaxTestSamples = 1024,
         };
     }

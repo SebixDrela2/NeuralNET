@@ -708,6 +708,7 @@ public sealed unsafe class CnnNeuralFramework
     int inDim)
     {
         var gradPatchMat = RentNeural(patches, inDim);
+        gradPatchMat.DisplayName = "GradPatchMat";
 
         if (EnableGpu)                       // ← un-inverted
         {
@@ -1471,12 +1472,12 @@ public sealed unsafe class CnnNeuralFramework
         }
     }
 
-    private CnnMatrix MaxPoolBackward(CnnMatrix gradOutput, CnnMatrix input, NeuralMatrix indices, int poolSize)
+    private CnnMatrix MaxPoolBackward(CnnMatrix gradOutput, CnnMatrix postAct, NeuralMatrix indices, int poolSize)
     {
-        int batch = input.Batch;
-        int channels = input.Channels;
-        int inH = input.Height;
-        int inW = input.Width;
+        int batch = postAct.Batch;
+        int channels = postAct.Channels;
+        int inH = postAct.Height;
+        int inW = postAct.Width;
         int outH = gradOutput.Height;
         int outW = gradOutput.Width;
 
