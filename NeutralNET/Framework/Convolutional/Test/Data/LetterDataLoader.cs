@@ -60,7 +60,7 @@ public class LetterDataLoader : DataLoaderBase, IDataLoader<LetterDataLoader>
 
             if (currentBatchSize <= 0) break;
 
-            var imgMat = CnnMatrix.GetOrCreate(currentBatchSize, Channels, scale, scale, readOnly: true);
+            var imgMat = CnnMatrix.GetOrCreate(currentBatchSize, Channels, scale, scale);
             var lblMat = NeuralMatrix.GetOrCreate(currentBatchSize, NumClasses);
 
             for (int i = 0; i < currentBatchSize; i++)
@@ -143,7 +143,7 @@ public class LetterDataLoader : DataLoaderBase, IDataLoader<LetterDataLoader>
 
         if (sample.IsEmpty) sample = set[0];
 
-        var imgMat = CnnMatrix.GetOrCreate(1, Channels, GraphicsUtils.Width, GraphicsUtils.Height, readOnly: true);
+        var imgMat = CnnMatrix.GetOrCreate(1, Channels, GraphicsUtils.Width, GraphicsUtils.Height);
 
         PopulateTensorFromPixels(sample, imgMat, 0);
 
@@ -228,7 +228,7 @@ public class LetterDataLoader : DataLoaderBase, IDataLoader<LetterDataLoader>
             ref var imgMat = ref batchImages[batchIndex];
             ref var lblMat = ref batchLabels[batchIndex];
 
-            imgMat ??= CnnMatrix.GetOrCreate(batchLen, Channels, ImageHeight, ImageWidth, readOnly: true);
+            imgMat ??= CnnMatrix.GetOrCreate(batchLen, Channels, ImageHeight, ImageWidth);
             lblMat ??= NeuralMatrix.GetOrCreate(batchLen, NumClasses);
 
             for (int j = 0; pos < batchEnd; ++j, ++pos)

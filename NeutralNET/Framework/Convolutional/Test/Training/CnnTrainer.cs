@@ -47,7 +47,6 @@ public class CnnTrainer : IDisposable
             {
                 var index = indexes[batchIdx];
                 var loss = _network.TrainBatch(trainImg[index], trainLbl[index], _config.LearningRate);
-                //DisplayInstances();
 
                 totalLoss += loss;
             }
@@ -57,37 +56,6 @@ public class CnnTrainer : IDisposable
                 break;
             }
         }
-    }
-
-    public void DisplayInstances()
-    {
-        if (NeuralMatrix.Instances is not { } xs) throw new NotSupportedException();
-        if (CnnMatrix.Instances is not { } ys) throw new NotSupportedException();
-
-        var locations = xs
-            .SelectMany(x => x.Locations ?? throw new NotSupportedException())
-            .Concat(ys.SelectMany(x => x.Locations ?? throw new NotSupportedException()))
-            .ToArray();
-
-        var grouped = locations
-            .GroupBy(x => (x.FilePath, x.LineNumber))
-            .OrderByDescending(x => x.Max(y => y.Info.TotalSize))
-            .ToArray();
-
-        var builder = new StringBuilder();
-
-        foreach (var group in grouped)
-        {
-            builder.AppendLine($"{group.Key}");
-
-            foreach (var elem in group.OrderBy(x => x.TimeStamp))
-            {
-                builder.AppendLine($"  [{elem.TimeStamp}]  {elem.Info.TotalSize} [{string.Join(" x ", elem.Info.Dimensions)}]");
-            }
-        }
-
-        var output = builder.ToString();
-        Console.WriteLine(output);
     }
 
     private bool ProcessLoss(NeuralDataSet dataSet, int numClasses, CnnDisplayWriter display, Span<float> results, float totalLoss)
