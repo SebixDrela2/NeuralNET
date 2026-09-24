@@ -121,8 +121,9 @@ public sealed unsafe class CnnNeuralFramework
 
             var dW = GetDWeights();
             var dB = RentNeural(preGrad.Channels, 1);
+            var convolution = RentNeural(colInput.Rows, flattenedWeights.Rows);
 
-            _convHyperParameters.Add(new(input, colInput, weights, flattenedWeights, biases, preAct, postAct, poolIndices, gradInput, preGrad, preGradMatrix, dW, dB));
+            _convHyperParameters.Add(new(input, colInput, weights, flattenedWeights, biases, preAct, postAct, poolIndices, gradInput, preGrad, preGradMatrix, dW, dB, convolution));
 
             input.DisplayName = $"Conv_Input[{i}]";
             colInput.DisplayName = $"Conv_ColInput[{i}]";
@@ -1175,15 +1176,13 @@ public sealed unsafe class CnnNeuralFramework
         var flattenedWeights = _convHyperParameters[layerIdx].FlattenedWeights;
         var preAct = _convHyperParameters[layerIdx].PreAct;
         var biases = _convHyperParameters[layerIdx].Biases;
+        var convolution = _convHyperParameters[layerIdx].Convolution;
 
         current.Im2Col(colInput, layer.KernelHeight, layer.KernelWidth, layer.Stride, layer.Padding);
         UpdateFlattenConvWeights(weights, flattenedWeights);
-        var result = ComputeConvolution(colInput, flattenedWeights);
-        AddBias(result, biases);
-
-        FillToCnnMatrix(result, preAct);
-
-        result.Dispose();
+        ComputeConvolution(colInput, flattenedWeights, convolution);
+        AddBias(convolution, biases);
+        FillToCnnMatrix(convolution, preAct);
     }
 
     private void UpdateFlattenConvWeights(CnnMatrix weights, NeuralMatrix flattenedWeights)
@@ -1221,13 +1220,11 @@ public sealed unsafe class CnnNeuralFramework
         return weightMat;
     }
 
-    private NeuralMatrix ComputeConvolution(NeuralMatrix colInput, NeuralMatrix weightMat)
+    private void ComputeConvolution(NeuralMatrix colInput, NeuralMatrix flattenedWeights, NeuralMatrix convolution)
     {
         int patches = colInput.Rows;
-        int filters = weightMat.Rows;
+        int filters = flattenedWeights.Rows;
         int innerDim = colInput.UsedColumns;
-
-        var result = RentNeural(patches, filters);
 
         if (EnableGpu)
         {
@@ -1237,18 +1234,18 @@ public sealed unsafe class CnnNeuralFramework
                 patches, filters, innerDim,
                 1.0f,
                 colInput.Pointer, colInput.ColumnsStride,
-                weightMat.Pointer, weightMat.ColumnsStride,
+                flattenedWeights.Pointer, flattenedWeights.ColumnsStride,
                 0.0f,
-                result.Pointer, result.ColumnsStride);
+                convolution.Pointer, convolution.ColumnsStride);
         }
         else
         {
             float* colPtr = colInput.Pointer;
-            float* weightPtr = weightMat.Pointer;
-            float* resPtr = result.Pointer;
+            float* weightPtr = flattenedWeights.Pointer;
+            float* resPtr = convolution.Pointer;
             int colStride = colInput.ColumnsStride;
-            int weightStride = weightMat.ColumnsStride;
-            int resStride = result.ColumnsStride;
+            int weightStride = flattenedWeights.ColumnsStride;
+            int resStride = convolution.ColumnsStride;
 
             for (int patch = 0; patch < patches; patch++)
             {
@@ -1295,8 +1292,6 @@ public sealed unsafe class CnnNeuralFramework
                 }
             }
         }
-
-        return result;
     }
 
     private void AddBias(NeuralMatrix result, CnnMatrix biases)
