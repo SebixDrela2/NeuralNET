@@ -29,6 +29,8 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
     private bool _inUse = true;
     private readonly bool _isPoolable = true;
 
+    public string? DisplayName { get; set; }
+
     public float* Pointer { [MethodImpl(Inline)] get => (float*)MemoryHandle.Pointer; }
     public Span<float> this[int row] { [MethodImpl(Inline)] get => new(Pointer + (row * ColumnsStride), UsedColumns); }
     public ref float this[int row, int col] { [MethodImpl(Inline)] get => ref Pointer[(row * ColumnsStride) + col]; }
@@ -49,6 +51,7 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
 
         MemoryHandle = NeuralMemoryPool.Rent<float>(UnsafeSize);
         StrideMasks = MatrixUtils.GetStrideMask(columns);
+
         Clear();
     }
 

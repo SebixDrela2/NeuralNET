@@ -45,7 +45,6 @@ public sealed unsafe class CnnNeuralFramework
     public CnnNeuralFramework(NeuralNetworkConfig baseConfig, CnnArchitectureConfig cnnConfig,
         int batchSize, int inputChannels, int inputHeight, int inputWidth)
     {
-        // _baseConfig = baseConfig;
         _cnnConfig = cnnConfig;
         _rng = new Random();
         _input = new CnnSize(batchSize, inputChannels, inputHeight, inputWidth);
@@ -54,8 +53,8 @@ public sealed unsafe class CnnNeuralFramework
         var convCount = cnnConfig.ConvLayers.Count;
 
         _convHyperParameters = [with(convCount)];
-        _convActivationTypes = new List<ActivationType>(convCount);
-        _convOptimizers = new List<ICnnOptimizer>(convCount);
+        _convActivationTypes = [with(convCount)];
+        _convOptimizers = [with(convCount)];
 
         SetupCnnConvParameters(cnnConfig);
 
@@ -64,9 +63,9 @@ public sealed unsafe class CnnNeuralFramework
         int denseCount = denseArch.Length - 1;
 
         _denseHyperParameters = [with(denseCount)];
-        _denseActivations = new List<ActivationFunction>(denseCount);
-        _denseDerivatives = new List<DerivativeFunction>(denseCount);
-        _denseOptimizers = new List<ICnnOptimizer>(denseCount);
+        _denseActivations = [with(denseCount)];
+        _denseDerivatives = [with(denseCount)];
+        _denseOptimizers = [with(denseCount)];
 
         SetupDenseArchitecture(denseArch, cnnConfig);
     }
@@ -75,8 +74,9 @@ public sealed unsafe class CnnNeuralFramework
     {
         var prevInput = _input;
 
-        foreach (var layer in cnnConfig.ConvLayers)
+        for (int i = 0; i < cnnConfig.ConvLayers.Count; i++)
         {
+            CnnLayerConfig? layer = cnnConfig.ConvLayers[i];
             var fanIn = prevInput.Channels * layer.KernelHeight * layer.KernelWidth;
             var stddev = MathF.Sqrt(2.0f / fanIn);
             var weights = RentCnn(layer.Filters, prevInput.Channels, layer.KernelHeight, layer.KernelWidth);
@@ -116,6 +116,16 @@ public sealed unsafe class CnnNeuralFramework
             var poolIndices = GetPoolIndices(postAct, layer.PoolSize);
 
             _convHyperParameters.Add(new(input, colInput, weights, flattenedWeights, biases, preAct, postAct, poolIndices));
+
+            input.DisplayName = $"Conv_Input[{i}]";
+            colInput.DisplayName = $"Conv_ColInput[{i}]";
+            weights.DisplayName = $"Conv_Weights[{i}]";
+            flattenedWeights.DisplayName = $"Conv_FlattenedWeights[{i}]";
+            biases.DisplayName = $"Conv_Biases[{i}]";
+            preAct.DisplayName = $"Conv_PreAct[{i}]";
+            postAct.DisplayName = $"Conv_PostAct[{i}]";
+            poolIndices.DisplayName = $"Conv_PoolIndices[{i}]";
+
             _convActivationTypes.Add(layer.Activation);
 
             var opt = CnnOptimizerFactory.Create(_cnnConfig.OptimizerConfig);
@@ -193,6 +203,11 @@ public sealed unsafe class CnnNeuralFramework
             var postAct = RentNeural(actSize, weights.Rows);
 
             _denseHyperParameters.Add(new(weights, biases, preAct, postAct));
+
+            weights.DisplayName = $"Dense_Weights[{i}]";
+            biases.DisplayName = $"Dense_Biases[{i}]";
+            preAct.DisplayName = $"Dense_PreAct[{i}]";
+            postAct.DisplayName = $"Dense_PostAct[{i}]";
 
             ActivationType actType = (i == denseArch.Length - 2)
                 ? cnnConfig.OutputActivation
@@ -583,6 +598,10 @@ public sealed unsafe class CnnNeuralFramework
     public float Train(CnnMatrix input, NeuralMatrix target, float learningRate)
     {
         ClearIntermediates();
+
+        input.DisplayName = "MainInput";
+        target.DisplayName = "MainExpected";
+
         CnnMatrix current = input;
 
         SetBatchLimitAll(current.Batch);

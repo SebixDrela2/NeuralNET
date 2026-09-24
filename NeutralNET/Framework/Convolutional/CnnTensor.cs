@@ -25,6 +25,8 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
     public int UnsafeSize;
     public bool ReadOnly;
 
+    public string? DisplayName { get; set; }
+
     public int StrideW { [MethodImpl(Inline)] get => 1; }
     public int StrideH { [MethodImpl(Inline)] get => Width; }
     public int StrideC { [MethodImpl(Inline)] get => Width * Height; }
