@@ -35,9 +35,6 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
 
     public Span<float> SpanWithGarbage => new(Pointer, UnsafeSize);
 
-    public static NeuralMatrix Create(int rows, int columns, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
-        => new(rows, columns, fp, ln);
-
     public static NeuralMatrix GetOrCreate(int rows, int columns, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
         => new(rows, columns, fp, ln);
 

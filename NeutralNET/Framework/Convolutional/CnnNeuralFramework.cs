@@ -80,7 +80,7 @@ public sealed unsafe class CnnNeuralFramework
         {
             var fanIn = prevInput.Channels * layer.KernelHeight * layer.KernelWidth;
             var stddev = MathF.Sqrt(2.0f / fanIn);
-            var weights = NewCnn(layer.Filters, prevInput.Channels, layer.KernelHeight, layer.KernelWidth);
+            var weights = RentCnn(layer.Filters, prevInput.Channels, layer.KernelHeight, layer.KernelWidth);
 
             for (int f = 0; f < layer.Filters; f++)
             {
@@ -96,7 +96,7 @@ public sealed unsafe class CnnNeuralFramework
                 }
             }
 
-            var biases = NewCnn(1, layer.Filters, 1, 1);
+            var biases = RentCnn(1, layer.Filters, 1, 1);
 
             for (int f = 0; f < layer.Filters; f++)
             {
@@ -105,8 +105,8 @@ public sealed unsafe class CnnNeuralFramework
 
             var flattenedWeights = FlattenConvWeights(weights);
             var convOutSz = GetCnnSize(prevInput.BatchSize, weights.Batch, prevInput.Height, prevInput.Width, layer);
-            var preAct = NewCnn(convOutSz);
-            var postAct = NewCnn(convOutSz);
+            var preAct = RentCnn(convOutSz);
+            var postAct = RentCnn(convOutSz);
             var input = GetInput(postAct, layer.PoolSize);
 
             int nextH = layer.UseMaxPool ? convOutSz.Height / layer.PoolSize : convOutSz.Height;
@@ -134,7 +134,7 @@ public sealed unsafe class CnnNeuralFramework
                 int outH = inH / poolSize;
                 int outW = inW / poolSize;
 
-                return NewNeural(batch * channels * outH * outW, 1);
+                return RentNeural(batch * channels * outH * outW, 1);
             }
 
             NeuralMatrix GetColInput(CnnSize input, int kernelH, int kernelW, int stride, int padding)
@@ -147,7 +147,7 @@ public sealed unsafe class CnnNeuralFramework
                 int patchSize = input.Channels * kernelH * kernelW;
                 int totalPatches = input.BatchSize * outH * outW;
 
-                return NewNeural(totalPatches, patchSize);
+                return RentNeural(totalPatches, patchSize);
             }
 
             CnnMatrix GetInput(CnnMatrix postAct, int poolSize)
@@ -160,7 +160,7 @@ public sealed unsafe class CnnNeuralFramework
                 int outH = inH / poolSize;
                 int outW = inW / poolSize;
 
-                return NewCnn(batch, channels, outH, outW);
+                return RentCnn(batch, channels, outH, outW);
             }
         }
     }
@@ -175,7 +175,7 @@ public sealed unsafe class CnnNeuralFramework
             var outputSize = denseArch[i + 1];
             float stddev = MathF.Sqrt(2.0f / inputSize);
 
-            var weights = NewNeural(outputSize, inputSize);
+            var weights = RentNeural(outputSize, inputSize);
             for (int outIdx = 0; outIdx < outputSize; outIdx++)
             {
                 for (int inIdx = 0; inIdx < inputSize; inIdx++)
@@ -184,14 +184,14 @@ public sealed unsafe class CnnNeuralFramework
                 }
             }
 
-            var biases = NewNeural(1, outputSize);
+            var biases = RentNeural(1, outputSize);
             for (int j = 0; j < outputSize; j++)
             {
                 biases.At(0, j) = NextGaussianFloat(0, 0.1f);
             }
 
-            var preAct = NewNeural(actSize, weights.Rows);
-            var postAct = NewNeural(actSize, weights.Rows);
+            var preAct = RentNeural(actSize, weights.Rows);
+            var postAct = RentNeural(actSize, weights.Rows);
 
             _denseHyperParameters.Add(new(weights, biases, preAct, postAct));
 
@@ -2323,19 +2323,8 @@ public sealed unsafe class CnnNeuralFramework
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static CnnMatrix RentCnn(int batch, int channels, int h, int w, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
-        => CnnMatrix.GetOrCreate(batch, channels, h, w, readOnly: false, fp, ln);
+        => CnnMatrix.GetOrCreate(batch, channels, h, w, fp, ln);
 
     private static CnnMatrix RentCnn(CnnSize cnnSize, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
-        => CnnMatrix.GetOrCreate(cnnSize.BatchSize, cnnSize.Channels, cnnSize.Height, cnnSize.Width, readOnly: false, fp, ln);
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static NeuralMatrix NewNeural(int rows, int cols, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
-        => NeuralMatrix.Create(rows, cols, fp, ln);
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static CnnMatrix NewCnn(int batch, int channels, int h, int w, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
-        => CnnMatrix.Create(batch, channels, h, w, readOnly: false, fp, ln);
-
-    private static CnnMatrix NewCnn(CnnSize cnnSize, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
-        => CnnMatrix.Create(cnnSize.BatchSize, cnnSize.Channels, cnnSize.Height, cnnSize.Width, readOnly: false, fp, ln);
+        => CnnMatrix.GetOrCreate(cnnSize.BatchSize, cnnSize.Channels, cnnSize.Height, cnnSize.Width, fp, ln);
 }

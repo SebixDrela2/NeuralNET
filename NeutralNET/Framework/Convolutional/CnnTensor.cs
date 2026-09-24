@@ -33,13 +33,10 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
     private bool _inUse = true;
     private bool _isDisposing = false;
 
-    public static CnnMatrix Create(int batch, int channels, int height, int width, bool readOnly = false, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
-        => new(batch, channels, height, width, isPoolable: true, fp, ln);
+    public static CnnMatrix GetOrCreate(int batch, int channels, int height, int width, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
+        => new(batch, channels, height, width, fp, ln);
 
-    public static CnnMatrix GetOrCreate(int batch, int channels, int height, int width, bool readOnly = false, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
-        => new(batch, channels, height, width, isPoolable: true, fp, ln);
-
-    private CnnMatrix(int batch, int channels, int height, int width, bool isPoolable, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0, bool readOnly = false)
+    private CnnMatrix(int batch, int channels, int height, int width, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0, bool readOnly = false)
     {
         Batch = batch;
         Channels = channels;
