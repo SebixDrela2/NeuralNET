@@ -108,6 +108,7 @@ public sealed unsafe class CnnNeuralFramework
             var postAct = RentCnn(convOutSz);
             var gradInput = RentCnn(convOutSz);
             var preGrad = RentCnn(convOutSz);
+            var preGradMatrix = GetPreGradMatrix(preGrad);
 
             var input = GetInput(postAct, layer.PoolSize);
 
@@ -118,7 +119,7 @@ public sealed unsafe class CnnNeuralFramework
             var colInput = GetColInput(prevInput, layer.KernelHeight, layer.KernelWidth, layer.Stride, layer.Padding);
             var poolIndices = GetPoolIndices(postAct, layer.PoolSize);
 
-            _convHyperParameters.Add(new(input, colInput, weights, flattenedWeights, biases, preAct, postAct, poolIndices, gradInput, preGrad));
+            _convHyperParameters.Add(new(input, colInput, weights, flattenedWeights, biases, preAct, postAct, poolIndices, gradInput, preGrad, preGradMatrix));
 
             input.DisplayName = $"Conv_Input[{i}]";
             colInput.DisplayName = $"Conv_ColInput[{i}]";
@@ -128,6 +129,9 @@ public sealed unsafe class CnnNeuralFramework
             preAct.DisplayName = $"Conv_PreAct[{i}]";
             postAct.DisplayName = $"Conv_PostAct[{i}]";
             poolIndices.DisplayName = $"Conv_PoolIndices[{i}]";
+            gradInput.DisplayName = $"Conv_GradInput[{i}]";
+            preGrad.DisplayName = $"Conv_PreGrad[{i}]";
+
 
             _convActivationTypes.Add(layer.Activation);
 
@@ -173,6 +177,18 @@ public sealed unsafe class CnnNeuralFramework
                 int outW = inW / poolSize;
 
                 return RentCnn(batch, channels, outH, outW);
+            }
+
+            NeuralMatrix GetPreGradMatrix(CnnMatrix preGrad)
+            {
+                int outH = preGrad.Height;
+                int outW = preGrad.Width;
+                int patches = preGrad.Batch * outH * outW;
+                int filters = preGrad.Channels;
+
+                var preGradMatrix = RentNeural(patches, filters);
+
+                return preGradMatrix;
             }
         }
     }
@@ -676,11 +692,11 @@ public sealed unsafe class CnnNeuralFramework
         NeuralMatrix indices = cnvParams.PoolIndices;
         CnnMatrix gradInput = cnvParams.GradInput;
         CnnMatrix preGrad = cnvParams.PreGrad;
+        NeuralMatrix preGradMatrix = cnvParams.PreGradMatrix;
 
         BackPropagateThroughPool(currentGrad, layer, gradInput, indices);
         ComputePreGradient(layer, preGrad, postAct, gradInput);
-
-        using var preGradMatrix = ConvertPregradToMatrix(preGrad);
+        ConvertPregradToMatrix(preGrad, preGradMatrix);
 
         var patches = preGradMatrix.Rows;
         var filters = preGrad.Channels;
@@ -919,14 +935,12 @@ public sealed unsafe class CnnNeuralFramework
         return dB;
     }
 
-    private static NeuralMatrix ConvertPregradToMatrix(CnnMatrix preGrad)
+    private static void ConvertPregradToMatrix(CnnMatrix preGrad, NeuralMatrix preGradMatrix)
     {
         int outH = preGrad.Height;
         int outW = preGrad.Width;
         int patches = preGrad.Batch * outH * outW;
         int filters = preGrad.Channels;
-
-        var preGradMatrix = RentNeural(patches, filters);
         var pPreGrad = preGrad.Pointer;
         var pPreGradMat = preGradMatrix.Pointer;
         var preGradMatStride = preGradMatrix.ColumnsStride;
@@ -948,8 +962,6 @@ public sealed unsafe class CnnNeuralFramework
                 }
             }
         }
-
-        return preGradMatrix;
     }
 
     private void ComputePreGradient(CnnLayerConfig layer, CnnMatrix preGrad, CnnMatrix postAct, CnnMatrix convGrad)
