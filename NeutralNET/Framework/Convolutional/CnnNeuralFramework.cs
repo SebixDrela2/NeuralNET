@@ -106,6 +106,9 @@ public sealed unsafe class CnnNeuralFramework
             var convOutSz = GetCnnSize(prevInput.BatchSize, weights.Batch, prevInput.Height, prevInput.Width, layer);
             var preAct = RentCnn(convOutSz);
             var postAct = RentCnn(convOutSz);
+            var gradInput = RentCnn(convOutSz);
+            var preGrad = RentCnn(convOutSz);
+
             var input = GetInput(postAct, layer.PoolSize);
 
             int nextH = layer.UseMaxPool ? convOutSz.Height / layer.PoolSize : convOutSz.Height;
@@ -115,7 +118,7 @@ public sealed unsafe class CnnNeuralFramework
             var colInput = GetColInput(prevInput, layer.KernelHeight, layer.KernelWidth, layer.Stride, layer.Padding);
             var poolIndices = GetPoolIndices(postAct, layer.PoolSize);
 
-            _convHyperParameters.Add(new(input, colInput, weights, flattenedWeights, biases, preAct, postAct, poolIndices));
+            _convHyperParameters.Add(new(input, colInput, weights, flattenedWeights, biases, preAct, postAct, poolIndices, gradInput, preGrad));
 
             input.DisplayName = $"Conv_Input[{i}]";
             colInput.DisplayName = $"Conv_ColInput[{i}]";
@@ -671,9 +674,11 @@ public sealed unsafe class CnnNeuralFramework
         NeuralMatrix colInput = cnvParams.ColInput;
         CnnMatrix inputTensor = cnvParams.Input;
         NeuralMatrix indices = cnvParams.PoolIndices;
+        CnnMatrix gradInput = cnvParams.GradInput;
+        CnnMatrix preGrad = cnvParams.PreGrad;
 
-        using var convGrad = BackPropagateThroughPool(currentGrad, layer, postAct, indices);
-        using var preGrad = ComputePreGradient(layer, preAct, postAct, convGrad);
+        BackPropagateThroughPool(currentGrad, layer, gradInput, indices);
+        ComputePreGradient(layer, preGrad, postAct, gradInput);
 
         using var preGradMatrix = ConvertPregradToMatrix(preGrad);
 
@@ -947,11 +952,9 @@ public sealed unsafe class CnnNeuralFramework
         return preGradMatrix;
     }
 
-    private CnnMatrix ComputePreGradient(CnnLayerConfig layer, CnnMatrix preAct, CnnMatrix postAct, CnnMatrix convGrad)
+    private void ComputePreGradient(CnnLayerConfig layer, CnnMatrix preGrad, CnnMatrix postAct, CnnMatrix convGrad)
     {
-        var preGrad = RentCnn(preAct.Batch, preAct.Channels, preAct.Height, preAct.Width);
         ApplyDerivativeDirect(convGrad, postAct, preGrad, layer.Activation);
-        return preGrad;
     }
 
     private static void ApplyDerivativeDirect(CnnMatrix gradient, CnnMatrix postAct, CnnMatrix dest, ActivationType type)
@@ -1008,17 +1011,10 @@ public sealed unsafe class CnnNeuralFramework
         }
     }
 
-    private CnnMatrix BackPropagateThroughPool(CnnMatrix currentGrad, CnnLayerConfig layer, CnnMatrix postAct, NeuralMatrix indices)
+    private void BackPropagateThroughPool(CnnMatrix currentGrad, CnnLayerConfig layer, CnnMatrix gradInput, NeuralMatrix indices)
     {
-        if (layer.UseMaxPool)
-        {
-            var convGrad = MaxPoolBackward(currentGrad, postAct, indices, layer.PoolSize);
-            currentGrad.Dispose();
-
-            return convGrad;
-        }
-
-        return currentGrad;
+        MaxPoolBackward(currentGrad, gradInput, indices, layer.PoolSize);
+        currentGrad.Dispose();
     }
 
     private CnnMatrix BulkMemoryCopy(NeuralMatrix denseGrad)
@@ -1472,16 +1468,15 @@ public sealed unsafe class CnnNeuralFramework
         }
     }
 
-    private CnnMatrix MaxPoolBackward(CnnMatrix gradOutput, CnnMatrix postAct, NeuralMatrix indices, int poolSize)
+    private CnnMatrix MaxPoolBackward(CnnMatrix gradOutput, CnnMatrix gradInput, NeuralMatrix indices, int poolSize)
     {
-        int batch = postAct.Batch;
-        int channels = postAct.Channels;
-        int inH = postAct.Height;
-        int inW = postAct.Width;
+        int batch = gradInput.Batch;
+        int channels = gradInput.Channels;
+        int inH = gradInput.Height;
+        int inW = gradInput.Width;
+
         int outH = gradOutput.Height;
         int outW = gradOutput.Width;
-
-        var gradInput = RentCnn(batch, channels, inH, inW);
 
         int totalInputElements = batch * channels * inH * inW;
 
