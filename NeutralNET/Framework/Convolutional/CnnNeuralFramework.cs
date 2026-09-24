@@ -23,7 +23,6 @@ public sealed unsafe class CnnNeuralFramework
     private static readonly bool IsAvx512Supported = Avx512F.IsSupported;
     private static readonly bool IsAvx2Supported = Avx2.IsSupported;
 
-    //private readonly NeuralNetworkConfig _baseConfig;
     private readonly CnnArchitectureConfig _cnnConfig;
     private readonly ActivationSelector _activationSelector = new();
     private CnnSize _input;
@@ -221,11 +220,6 @@ public sealed unsafe class CnnNeuralFramework
 
             var layer = _cnnConfig.ConvLayers[i];
             var convPreAct = _convHyperParameters[i].PreAct;
-
-            // if (!isExternal)
-            // {
-            //     current.Dispose();
-            // }
 
             var pAct = convPreAct.Pointer;
             var totalElements = convPreAct.Batch * convPreAct.Channels * convPreAct.Height * convPreAct.Width;
