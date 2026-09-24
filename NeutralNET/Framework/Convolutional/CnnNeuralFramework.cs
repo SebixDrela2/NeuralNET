@@ -119,7 +119,10 @@ public sealed unsafe class CnnNeuralFramework
             var colInput = GetColInput(prevInput, layer.KernelHeight, layer.KernelWidth, layer.Stride, layer.Padding);
             var poolIndices = GetPoolIndices(postAct, layer.PoolSize);
 
-            _convHyperParameters.Add(new(input, colInput, weights, flattenedWeights, biases, preAct, postAct, poolIndices, gradInput, preGrad, preGradMatrix));
+            var dW = GetDWeights();
+            var dB = RentNeural(preGrad.Channels, 1);
+
+            _convHyperParameters.Add(new(input, colInput, weights, flattenedWeights, biases, preAct, postAct, poolIndices, gradInput, preGrad, preGradMatrix, dW, dB));
 
             input.DisplayName = $"Conv_Input[{i}]";
             colInput.DisplayName = $"Conv_ColInput[{i}]";
@@ -189,6 +192,19 @@ public sealed unsafe class CnnNeuralFramework
                 var preGradMatrix = RentNeural(patches, filters);
 
                 return preGradMatrix;
+            }
+
+            NeuralMatrix GetDWeights()
+            {
+                var filters = preGrad.Channels;
+                var inDim = colInput.UsedColumns;
+
+                if (EnableGpu)
+                {
+                    return RentNeural(filters, inDim);
+                }
+
+                return RentNeural(inDim, filters);
             }
         }
     }
@@ -693,6 +709,8 @@ public sealed unsafe class CnnNeuralFramework
         CnnMatrix gradInput = cnvParams.GradInput;
         CnnMatrix preGrad = cnvParams.PreGrad;
         NeuralMatrix preGradMatrix = cnvParams.PreGradMatrix;
+        NeuralMatrix dW = cnvParams.DWeights;
+        NeuralMatrix dB = cnvParams.DBiases;
 
         BackPropagateThroughPool(currentGrad, layer, gradInput, indices);
         ComputePreGradient(layer, preGrad, postAct, gradInput);
@@ -702,8 +720,8 @@ public sealed unsafe class CnnNeuralFramework
         var filters = preGrad.Channels;
         var inDim = colInput.UsedColumns;
 
-        using var dW = ComputeWeightGradient(colInput, preGradMatrix, patches, filters, inDim);
-        using var dB = ComputeBiasGradient(preGradMatrix, patches, filters);
+        ComputeWeightGradient(colInput, preGradMatrix, dW, patches, filters, inDim);
+        ComputeBiasGradient(preGradMatrix, dB, patches, filters);
 
         _convOptimizers[layerIdx].Update(
             cnvParams.Weights,
@@ -807,15 +825,14 @@ public sealed unsafe class CnnNeuralFramework
         return gradPatchMat;
     }
 
-    private static NeuralMatrix ComputeWeightGradient(
+    private static void ComputeWeightGradient(
     NeuralMatrix colInput,
     NeuralMatrix preGradMatrix,
+    NeuralMatrix dW,
     int patches,
     int filters,
     int inDim)
     {
-        NeuralMatrix dW;
-
         if (EnableGpu)
         {
             dW = RentNeural(filters, inDim);
@@ -889,13 +906,10 @@ public sealed unsafe class CnnNeuralFramework
                 }
             }
         }
-
-        return dW;
     }
 
-    private static NeuralMatrix ComputeBiasGradient(NeuralMatrix preGradMatrix, int patches, int filters)
+    private static void ComputeBiasGradient(NeuralMatrix preGradMatrix, NeuralMatrix dB, int patches, int filters)
     {
-        var dB = RentNeural(1, filters);
         var pdB = dB.Pointer;
         var pPreGradMat = preGradMatrix.Pointer;
         var preGradMatStride = preGradMatrix.ColumnsStride;
@@ -931,8 +945,6 @@ public sealed unsafe class CnnNeuralFramework
                 pdB[f] += rowPreGradMat[f];
             }
         }
-
-        return dB;
     }
 
     private static void ConvertPregradToMatrix(CnnMatrix preGrad, NeuralMatrix preGradMatrix)
