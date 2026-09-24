@@ -47,7 +47,7 @@ public class CnnTrainingConfig
                    }
                 ],
                 // Wide single hidden layer avoids information loss on 26 output classes
-                DenseArchitecture = [64, numClasses],
+                DenseArchitecture = [256, numClasses],
                 DenseHiddenActivation = ActivationType.LeakyReLU,
                 OutputActivation = ActivationType.Softmax,
                 OptimizerConfig = new CnnOptimizerConfig
@@ -71,8 +71,8 @@ public class CnnTrainingConfig
                 OptimizerType = OptimizerType.Adam,
             },
             LearningRate = 0.0005f,
-            MaxTrainSamples = 120000,
-            MaxTestSamples = 1000,
+            MaxTrainSamples = 1024 * 118,
+            MaxTestSamples = 1024,
         };
     }
 }
