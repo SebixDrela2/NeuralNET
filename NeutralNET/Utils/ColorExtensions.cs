@@ -15,7 +15,7 @@ public static class ColorExtensions
             var background = Color.FromArgb(r.Background, g.Background, b.Background);
             var letter = Color.FromArgb(r.Letter, g.Letter, b.Letter);
 
-            return (background, letter);
+            return (Color.Black, Color.White);
         }
     }
 

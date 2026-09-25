@@ -17,7 +17,8 @@ public sealed record class ConvHyperParameters(
     NeuralMatrix PreGradMatrix,
     NeuralMatrix DWeights,
     NeuralMatrix DBiases,
-    NeuralMatrix Convolution) : IDisposable
+    NeuralMatrix Convolution,
+    CnnMatrix InputGrad) : IDisposable
 {
     public void SetBatchLimit(int batchSize)
     {
@@ -41,5 +42,6 @@ public sealed record class ConvHyperParameters(
         DWeights.Dispose();
         DBiases.Dispose();
         Convolution.Dispose();
+        InputGrad.Dispose();
     }
 }

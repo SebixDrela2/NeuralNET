@@ -150,23 +150,5 @@ namespace NeutralNET.GPU
                 if (d_C != IntPtr.Zero) CudaInterop.cudaFree(d_C);
             }
         }
-
-        public static void ComputeDenseForwardGpuDevice(
-            IntPtr d_input, IntPtr d_weights, IntPtr d_biases, IntPtr d_result,
-            int batch, int inFeatures, int outFeatures,
-            int strideInput, int strideWeights, int strideResult)
-        {
-            RowMajorSgemmDevice(
-                CublasOperation.NonTranspose, CublasOperation.Transpose,
-                batch, outFeatures, inFeatures,
-                1.0f,
-                d_input, strideInput,
-                d_weights, strideWeights,
-                0.0f,
-                d_result, strideResult);
-
-            // Note: For optimal pipeline performance, replace this host-side bias loop 
-            // with a custom compiled CUDA kernel or cuBLAS vector addition kernel.
-        }
     }
 }

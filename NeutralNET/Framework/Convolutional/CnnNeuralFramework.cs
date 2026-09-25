@@ -111,6 +111,7 @@ public sealed unsafe class CnnNeuralFramework
             var preGradMatrix = GetPreGradMatrix(preGrad);
 
             var input = GetInput(postAct, layer.PoolSize);
+            var inputGrad = RentCnn(input.Batch, input.Channels, input.Height, input.Width);
 
             int nextH = layer.UseMaxPool ? convOutSz.Height / layer.PoolSize : convOutSz.Height;
             int nextW = layer.UseMaxPool ? convOutSz.Width / layer.PoolSize : convOutSz.Width;
@@ -123,7 +124,10 @@ public sealed unsafe class CnnNeuralFramework
             var dB = RentNeural(preGrad.Channels, 1);
             var convolution = RentNeural(colInput.Rows, flattenedWeights.Rows);
 
-            _convHyperParameters.Add(new(input, colInput, weights, flattenedWeights, biases, preAct, postAct, poolIndices, gradInput, preGrad, preGradMatrix, dW, dB, convolution));
+            _convHyperParameters.Add(new(
+                input,colInput,weights,flattenedWeights,biases,
+                preAct,postAct,poolIndices,gradInput,preGrad,
+                preGradMatrix,dW, dB, convolution, inputGrad));
 
             input.DisplayName = $"Conv_Input[{i}]";
             colInput.DisplayName = $"Conv_ColInput[{i}]";
@@ -138,6 +142,8 @@ public sealed unsafe class CnnNeuralFramework
             preGradMatrix.DisplayName = $"Conv_PreGradMatrix[{i}]";
             dW.DisplayName = $"Conv_DWeights[{i}]";
             dB.DisplayName = $"Conv_DBiases[{i}]";
+            convolution.DisplayName = $"Conv_Convolution[{i}]";
+            inputGrad.DisplayName = $"Conv_InputGrad[{i}]";
 
             _convActivationTypes.Add(layer.Activation);
 
@@ -650,8 +656,7 @@ public sealed unsafe class CnnNeuralFramework
         var denseGrad = DenseBackWardClipped(learningRate, grad);
         var currentGrad = BulkMemoryCopy(denseGrad);
 
-        currentGrad = GetConvolutionBackwardPass(currentGrad);
-        currentGrad?.Dispose();
+        PerformConvolutionBackwardPass(currentGrad);
         ClearIntermediates();
 
         return float.IsNaN(loss) || float.IsInfinity(loss) || loss > 100f ? 10.0f : loss;
@@ -681,7 +686,7 @@ public sealed unsafe class CnnNeuralFramework
         }
     }
 
-    private CnnMatrix GetConvolutionBackwardPass(CnnMatrix currentGrad)
+    private void PerformConvolutionBackwardPass(CnnMatrix currentGrad)
     {
         for (int layerIdx = _cnnConfig.ConvLayers.Count - 1; layerIdx >= 0; layerIdx--)
         {
@@ -694,8 +699,6 @@ public sealed unsafe class CnnNeuralFramework
                 cnvParams
             );
         }
-
-        return currentGrad;
     }
 
     private CnnMatrix ProcessSingleConvLayerBackward(
@@ -707,13 +710,14 @@ public sealed unsafe class CnnNeuralFramework
         CnnMatrix preAct = cnvParams.PreAct;
         CnnMatrix postAct = cnvParams.PostAct;
         NeuralMatrix colInput = cnvParams.ColInput;
-        CnnMatrix inputTensor = cnvParams.Input;
+        CnnMatrix input = cnvParams.Input;
         NeuralMatrix indices = cnvParams.PoolIndices;
         CnnMatrix gradInput = cnvParams.GradInput;
         CnnMatrix preGrad = cnvParams.PreGrad;
         NeuralMatrix preGradMatrix = cnvParams.PreGradMatrix;
         NeuralMatrix dW = cnvParams.DWeights;
         NeuralMatrix dB = cnvParams.DBiases;
+        CnnMatrix inputGrad = cnvParams.InputGrad;
 
         BackPropagateThroughPool(currentGrad, layer, gradInput, indices);
         ComputePreGradient(layer, preGrad, postAct, gradInput);
@@ -735,8 +739,7 @@ public sealed unsafe class CnnNeuralFramework
 
         var flattenedWeights = cnvParams.FlattenedWeights;
         using var gradPatchMat = ComputeGradientWithRespectToInput(flattenedWeights, preGradMatrix, patches, filters, inDim);
-
-        var inputGrad = RentCnn(inputTensor.Batch, inputTensor.Channels, inputTensor.Height, inputTensor.Width);
+        
         inputGrad.Col2Im(gradPatchMat);
 
         return inputGrad;
@@ -762,7 +765,7 @@ public sealed unsafe class CnnNeuralFramework
                 preGradMatrix.Pointer, preGradMatrix.ColumnsStride,
                 weightMat.Pointer, weightMat.ColumnsStride,
                 0.0f,
-                gradPatchMat.Pointer, gradPatchMat.ColumnsStride);
+                gradPatchMat.Pointer, gradPatchMat.ColumnsStride); 
         }
         else
         {
@@ -838,7 +841,6 @@ public sealed unsafe class CnnNeuralFramework
     {
         if (EnableGpu)
         {
-            dW = RentNeural(filters, inDim);
             // dW = preGradMatrixᵀ · colInput  →  (filters, inDim)
             GpuMatrixOps.RowMajorSgemmHostStaged(
                 GpuMatrixOps.CublasOperation.Transpose,
@@ -852,8 +854,6 @@ public sealed unsafe class CnnNeuralFramework
         }
         else
         {
-            dW = RentNeural(inDim, filters);
-
             float* pdW = dW.Pointer;
             int dWStride = dW.ColumnsStride;
 
@@ -1041,7 +1041,6 @@ public sealed unsafe class CnnNeuralFramework
     private void BackPropagateThroughPool(CnnMatrix currentGrad, CnnLayerConfig layer, CnnMatrix gradInput, NeuralMatrix indices)
     {
         MaxPoolBackward(currentGrad, gradInput, indices, layer.PoolSize);
-        currentGrad.Dispose();
     }
 
     private CnnMatrix BulkMemoryCopy(NeuralMatrix denseGrad)
@@ -1165,7 +1164,7 @@ public sealed unsafe class CnnNeuralFramework
 
         using (DenseForward(flat, storeIntermediates: true)) { }
 
-        return _denseHyperParameters[^1].PostAct;  //_densePostAct[^1];
+        return _denseHyperParameters[^1].PostAct;
     }
 
     private void ConvForward(CnnMatrix current, int layerIdx)
