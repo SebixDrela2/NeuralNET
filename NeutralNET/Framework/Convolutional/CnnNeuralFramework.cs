@@ -37,7 +37,6 @@ public sealed unsafe class CnnNeuralFramework
     private readonly List<ConvHyperParameters> _convHyperParameters = [];
 
     private NeuralMatrix? _flattenedInput;
-    private CnnMatrix? _lastPooledOutput;
 
     private readonly Random _rng;
     private readonly int _maxBatch;
@@ -755,10 +754,7 @@ public sealed unsafe class CnnNeuralFramework
     int filters,
     int inDim)
     {
-        //RentNeural(patches, inDim);
-        gradPatchMat.DisplayName = "GradPatchMat";
-
-        if (EnableGpu)                       // ← un-inverted
+        if (EnableGpu)
         {
             GpuMatrixOps.RowMajorSgemmHostStaged(
                 GpuMatrixOps.CublasOperation.NonTranspose,
@@ -1046,7 +1042,7 @@ public sealed unsafe class CnnNeuralFramework
 
     private CnnMatrix BulkMemoryCopy(NeuralMatrix denseGrad)
     {
-        var lastPooled = _lastPooledOutput!;
+        var lastPooled = _convHyperParameters[^1].Input!;
         var pooledGrad = RentCnn(lastPooled.Batch, lastPooled.Channels, lastPooled.Height, lastPooled.Width);
 
         float* pDenseGrad = denseGrad.Pointer;
@@ -1072,7 +1068,7 @@ public sealed unsafe class CnnNeuralFramework
     {
         var denseGrad = DenseBackward(grad, learningRate, skipLastDerivative: true);
 
-        if (_lastPooledOutput == null)
+        if (_convHyperParameters[^1].Input is null)
         {
             throw new InvalidOperationException("_lastPooledOutput is null.");
         }
@@ -1157,8 +1153,6 @@ public sealed unsafe class CnnNeuralFramework
             MaxPoolForward(postAct, poolIndices, input, layer.PoolSize);
             current = input;
         }
-
-        _lastPooledOutput = current;
 
         var flat = Flatten(current);
         _flattenedInput = flat;
@@ -2236,7 +2230,7 @@ public sealed unsafe class CnnNeuralFramework
 
         sb.AppendLine();
         sb.AppendLine($"  _flattenedInput  : {Fmt(_flattenedInput)}");
-        sb.AppendLine($"  _lastPooledOut   : {Fmt(_lastPooledOutput)}");
+        sb.AppendLine($"  _lastPooledOut   : {Fmt(_convHyperParameters[^1].Input)}");
 
         sb.AppendLine();
         sb.AppendLine("---- CONSISTENCY CHECKS ----");
@@ -2343,8 +2337,6 @@ public sealed unsafe class CnnNeuralFramework
             _flattenedInput.Dispose();
             _flattenedInput = default;
         }
-
-        _lastPooledOutput = null;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
