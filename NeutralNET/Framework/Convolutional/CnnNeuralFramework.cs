@@ -35,6 +35,7 @@ public sealed unsafe class CnnNeuralFramework
 
     private readonly List<DenseHyperParameters> _denseHyperParameters = [];
     private readonly List<ConvHyperParameters> _convHyperParameters = [];
+    private CnnMatrix _pooledOutputGrad;
 
     private NeuralMatrix? _flattenedInput;
 
@@ -216,6 +217,9 @@ public sealed unsafe class CnnNeuralFramework
                 return RentNeural(inDim, filters);
             }
         }
+
+        var lastPooled = _convHyperParameters[^1].Input!;
+        _pooledOutputGrad = RentCnn(lastPooled.Batch, lastPooled.Channels, lastPooled.Height, lastPooled.Width);
     }
 
     private void SetupDenseArchitecture(int[] denseArch, CnnArchitectureConfig cnnConfig)
@@ -479,6 +483,7 @@ public sealed unsafe class CnnNeuralFramework
         foreach (var w in _denseHyperParameters) w.Dispose();
         foreach (var opt in _convOptimizers) opt.Dispose();
         foreach (var opt in _denseOptimizers) opt.Dispose();
+        _pooledOutputGrad.Dispose();
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -654,9 +659,9 @@ public sealed unsafe class CnnNeuralFramework
         var loss = ComputeCrossEntropyLoss(probabilities, target);
         var grad = GetVectorizedLossGradients(target, probabilities);
         var denseGrad = DenseBackWardClipped(learningRate, grad);
-        var currentGrad = BulkMemoryCopy(denseGrad);
+        BulkMemoryCopy(denseGrad);
 
-        PerformConvolutionBackwardPass(currentGrad);
+        PerformConvolutionBackwardPass();
         ClearIntermediates();
 
         return float.IsNaN(loss) || float.IsInfinity(loss) || loss > 100f ? 10.0f : loss;
@@ -686,8 +691,10 @@ public sealed unsafe class CnnNeuralFramework
         }
     }
 
-    private void PerformConvolutionBackwardPass(CnnMatrix currentGrad)
+    private void PerformConvolutionBackwardPass()
     {
+        var currentGrad = _pooledOutputGrad;
+
         for (int layerIdx = _cnnConfig.ConvLayers.Count - 1; layerIdx >= 0; layerIdx--)
         {
             var layer = _cnnConfig.ConvLayers[layerIdx];
@@ -1040,18 +1047,15 @@ public sealed unsafe class CnnNeuralFramework
         MaxPoolBackward(currentGrad, gradInput, indices, layer.PoolSize);
     }
 
-    private CnnMatrix BulkMemoryCopy(NeuralMatrix denseGrad)
+    private void BulkMemoryCopy(NeuralMatrix denseGrad)
     {
-        var lastPooled = _convHyperParameters[^1].Input!;
-        var pooledGrad = RentCnn(lastPooled.Batch, lastPooled.Channels, lastPooled.Height, lastPooled.Width);
-
         float* pDenseGrad = denseGrad.Pointer;
-        float* pPooledGrad = pooledGrad.Pointer;
+        float* pPooledGrad = _pooledOutputGrad.Pointer;
 
         int denseStride = denseGrad.ColumnsStride;
-        int spatialDim = lastPooled.Channels * lastPooled.Height * lastPooled.Width;
+        int spatialDim = _pooledOutputGrad.Channels * _pooledOutputGrad.Height * _pooledOutputGrad.Width;
 
-        for (int b = 0; b < lastPooled.Batch; b++)
+        for (int b = 0; b < _pooledOutputGrad.Batch; b++)
         {
             float* srcRow = pDenseGrad + b * denseStride;
             float* dstRow = pPooledGrad + b * spatialDim;
@@ -1061,7 +1065,6 @@ public sealed unsafe class CnnNeuralFramework
         }
 
         denseGrad.Dispose();
-        return pooledGrad;
     }
 
     private NeuralMatrix DenseBackWardClipped(float learningRate, NeuralMatrix grad)
