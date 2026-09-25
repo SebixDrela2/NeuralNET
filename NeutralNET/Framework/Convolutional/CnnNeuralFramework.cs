@@ -654,10 +654,10 @@ public sealed unsafe class CnnNeuralFramework
         CnnMatrix current = input;
 
         SetBatchLimitAll(current.Batch);
+        ForwardPoolingPass(ref current);
 
-        var probabilities = ForwardPoolingPass(ref current);
-        var loss = ComputeCrossEntropyLoss(probabilities, target);
-        var grad = GetVectorizedLossGradients(target, probabilities);
+        var loss = ComputeCrossEntropyLoss(target);
+        var grad = GetVectorizedLossGradients(target);
         var denseGrad = DenseBackWardClipped(learningRate, grad);
         BulkMemoryCopy(denseGrad);
 
@@ -1079,8 +1079,9 @@ public sealed unsafe class CnnNeuralFramework
         return denseGrad;
     }
 
-    private static NeuralMatrix GetVectorizedLossGradients(NeuralMatrix target, NeuralMatrix probabilities)
+    private NeuralMatrix GetVectorizedLossGradients(NeuralMatrix target)
     {
+        var probabilities = _denseHyperParameters[^1].PostAct;
         int rows = probabilities.Rows;
         int cols = probabilities.UsedColumns;
         var grad = RentNeural(rows, cols);
@@ -1136,7 +1137,7 @@ public sealed unsafe class CnnNeuralFramework
         return grad;
     }
 
-    private NeuralMatrix ForwardPoolingPass(ref CnnMatrix current)
+    private void ForwardPoolingPass(ref CnnMatrix current)
     {
         for (var layerIdx = 0; layerIdx < _cnnConfig.ConvLayers.Count; layerIdx++)
         {
@@ -1161,8 +1162,6 @@ public sealed unsafe class CnnNeuralFramework
         _flattenedInput = flat;
 
         using (DenseForward(flat, storeIntermediates: true)) { }
-
-        return _denseHyperParameters[^1].PostAct;
     }
 
     private void ConvForward(CnnMatrix current, int layerIdx)
@@ -2084,8 +2083,9 @@ public sealed unsafe class CnnNeuralFramework
         return flat;
     }
 
-    private float ComputeCrossEntropyLoss(NeuralMatrix predictions, NeuralMatrix targets)
+    private float ComputeCrossEntropyLoss(NeuralMatrix targets)
     {
+        var predictions = _denseHyperParameters[^1].PostAct;
         var rows = predictions.Rows;
         var cols = predictions.UsedColumns;
         var eps = 1e-7f;
