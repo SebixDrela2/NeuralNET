@@ -6,7 +6,7 @@ using NeutralNET.Matrices;
 
 namespace NeutralNET.Framework.Neural.CNN;
 
-public class CnnAdamOptimizer : ICnnOptimizer
+public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
 {
     private readonly float _learningRate;
     private readonly float _weightDecay;
@@ -17,18 +17,13 @@ public class CnnAdamOptimizer : ICnnOptimizer
     private int _t;
 
     // Conv state
-    private NeuralMatrix? _convMWeights;
-    private NeuralMatrix? _convVWeights;
-    private NeuralMatrix? _convMBiases;
-    private NeuralMatrix? _convVBiases;
+    private readonly AdamHyperLayerParameters _convHyperParameters;
+    private readonly AdamHyperLayerParameters _denseHyperParameters;
 
-    // Dense state
-    private NeuralMatrix? _denseMWeights;
-    private NeuralMatrix? _denseVWeights;
-    private NeuralMatrix? _denseMBiases;
-    private NeuralMatrix? _denseVBiases;
-
-    public CnnAdamOptimizer(CnnOptimizerConfig config)
+    public CnnAdamOptimizer(
+        CnnOptimizerConfig config,
+        AdamHyperLayerParameters convHyperParameters,
+        AdamHyperLayerParameters denseHyperParameters)
     {
         _learningRate = config.LearningRate;
         _weightDecay = config.WeightDecay;
@@ -36,6 +31,8 @@ public class CnnAdamOptimizer : ICnnOptimizer
         _beta2 = config.Beta2;
         _epsilon = config.Epsilon;
         _t = 0;
+        _convHyperParameters = convHyperParameters;
+        _denseHyperParameters = denseHyperParameters;
     }
 
     public unsafe void Update(CnnMatrix weights, CnnMatrix biases, NeuralMatrix dW, NeuralMatrix dB)
@@ -43,24 +40,10 @@ public class CnnAdamOptimizer : ICnnOptimizer
         int innerDim = dW.Rows;
         int filters = dW.UsedColumns;
 
-        if (_convMWeights == null || _convMWeights.Rows != innerDim || _convMWeights.UsedColumns != filters)
-        {
-            _convMWeights?.Dispose();
-            _convVWeights?.Dispose();
-            _convMWeights = NeuralMatrix.GetOrCreate(innerDim, filters);
-            _convVWeights = NeuralMatrix.GetOrCreate(innerDim, filters);
-            _convMWeights.Clear();
-            _convVWeights.Clear();
-        }
-        if (_convMBiases == null || _convMBiases.Rows != 1 || _convMBiases.UsedColumns != filters)
-        {
-            _convMBiases?.Dispose();
-            _convVBiases?.Dispose();
-            _convMBiases = NeuralMatrix.GetOrCreate(1, filters);
-            _convVBiases = NeuralMatrix.GetOrCreate(1, filters);
-            _convMBiases.Clear();
-            _convVBiases.Clear();
-        }
+        var mWeights = _convHyperParameters.MWeights;
+        var vWeights = _convHyperParameters.VWeights;
+        var mBiases = _convHyperParameters.MBiases;
+        var vBiases = _convHyperParameters.VBiases;
 
         _t++;
         float lr = _learningRate;
@@ -82,14 +65,14 @@ public class CnnAdamOptimizer : ICnnOptimizer
         float* pBiases = biases.Pointer;
         float* pdW = dW.Pointer;
         float* pdB = dB.Pointer;
-        float* pM = _convMWeights.Pointer;
-        float* pV = _convVWeights.Pointer;
-        float* pMBiases = _convMBiases.Pointer;
-        float* pVBiases = _convVBiases.Pointer;
+        float* pM = mWeights.Pointer;
+        float* pV = vWeights.Pointer;
+        float* pMBiases = mBiases.Pointer;
+        float* pVBiases = vBiases.Pointer;
 
         int dWStride = dW.ColumnsStride;
-        int mStride = _convMWeights.ColumnsStride;
-        int vStride = _convVWeights.ColumnsStride;
+        int mStride = mWeights.ColumnsStride;
+        int vStride = vWeights.ColumnsStride;
 
         // =========================================================================
         // 1. CONVOLUTION WEIGHTS UPDATE
@@ -334,24 +317,10 @@ public class CnnAdamOptimizer : ICnnOptimizer
         int inputSize = dW.Rows;
         int outputSize = dW.UsedColumns;
 
-        if (_denseMWeights == null || _denseMWeights.Rows != inputSize || _denseMWeights.UsedColumns != outputSize)
-        {
-            _denseMWeights?.Dispose();
-            _denseVWeights?.Dispose();
-            _denseMWeights = NeuralMatrix.GetOrCreate(inputSize, outputSize);
-            _denseVWeights = NeuralMatrix.GetOrCreate(inputSize, outputSize);
-            _denseMWeights.Clear();
-            _denseVWeights.Clear();
-        }
-        if (_denseMBiases == null || _denseMBiases.Rows != 1 || _denseMBiases.UsedColumns != outputSize)
-        {
-            _denseMBiases?.Dispose();
-            _denseVBiases?.Dispose();
-            _denseMBiases = NeuralMatrix.GetOrCreate(1, outputSize);
-            _denseVBiases = NeuralMatrix.GetOrCreate(1, outputSize);
-            _denseMBiases.Clear();
-            _denseVBiases.Clear();
-        }
+        var mWeights = _denseHyperParameters.MWeights;
+        var vWeights = _denseHyperParameters.VWeights;
+        var mBiases = _denseHyperParameters.MBiases;
+        var vBiases = _denseHyperParameters.VBiases;
 
         _t++;
         float lr = _learningRate;
@@ -370,15 +339,15 @@ public class CnnAdamOptimizer : ICnnOptimizer
         float* pBiases = biases.Pointer;
         float* pdW = dW.Pointer;
         float* pdB = dB.Pointer;
-        float* pM = _denseMWeights.Pointer;
-        float* pV = _denseVWeights.Pointer;
-        float* pMBiases = _denseMBiases.Pointer;
-        float* pVBiases = _denseVBiases.Pointer;
+        float* pM = mWeights.Pointer;
+        float* pV = vWeights.Pointer;
+        float* pMBiases = mBiases.Pointer;
+        float* pVBiases = vBiases.Pointer;
 
         int wStride = weights.ColumnsStride;
         int dWStride = dW.ColumnsStride;
-        int mStride = _denseMWeights.ColumnsStride;
-        int vStride = _denseVWeights.ColumnsStride;
+        int mStride = mWeights.ColumnsStride;
+        int vStride = vWeights.ColumnsStride;
 
         // =========================================================================
         // 1. DENSE WEIGHTS UPDATE
@@ -620,13 +589,7 @@ public class CnnAdamOptimizer : ICnnOptimizer
 
     public void Dispose()
     {
-        _convMWeights?.Dispose();
-        _convVWeights?.Dispose();
-        _convMBiases?.Dispose();
-        _convVBiases?.Dispose();
-        _denseMWeights?.Dispose();
-        _denseVWeights?.Dispose();
-        _denseMBiases?.Dispose();
-        _denseVBiases?.Dispose();
+        _denseHyperParameters?.Dispose();
+        _convHyperParameters?.Dispose();
     }
 }

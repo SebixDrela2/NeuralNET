@@ -4,15 +4,15 @@ namespace NeutralNET.Framework.Neural.CNN;
 
 public sealed record class ReverseDenseHyperParamers(
     NeuralMatrix GradPre,
-    NeuralMatrix DWeight,
-    NeuralMatrix DBias,
+    NeuralMatrix DWeights,
+    NeuralMatrix DBiases,
     NeuralMatrix GradInput) : IDisposable
 {
     public void Dispose()
     {
         GradPre.Dispose();
-        DWeight.Dispose();
-        DBias.Dispose();
+        DWeights.Dispose();
+        DBiases.Dispose();
         GradInput.Dispose();
     }
 }

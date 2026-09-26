@@ -6,6 +6,7 @@ using NeutralNET.Framework.Connected.Neural;
 using NeutralNET.Framework.Convolutional;
 using NeutralNET.GPU;
 using NeutralNET.Matrices;
+using static HDF.PInvoke.H5Z;
 using static NeutralNET.Activation.ActivationSelector;
 
 namespace NeutralNET.Framework.Neural.CNN;
@@ -153,7 +154,17 @@ public sealed unsafe class CnnNeuralFramework
 
             _convActivationTypes.Add(layer.Activation);
 
-            var opt = CnnOptimizerFactory.Create(_cnnConfig.OptimizerConfig);
+            int innerDim = dW.Rows;
+            int filters = dW.UsedColumns;
+
+            var mWeights = RentNeural(innerDim, filters);
+            var vWeights = RentNeural(innerDim, filters);
+            var mBiases = RentNeural(1, filters);
+            var vBiases = RentNeural(1, filters);
+
+            var adamParameters = new AdamHyperLayerParameters(mWeights, vWeights, mBiases, vBiases);
+            var opt = CnnOptimizerFactory.Create(_cnnConfig.OptimizerConfig, adamParameters, null!);
+
             _convOptimizers.Add(opt);
 
             prevInput = nextLayer;
@@ -288,9 +299,6 @@ public sealed unsafe class CnnNeuralFramework
 
             _denseActivations.Add(act);
             _denseDerivatives.Add(der);
-
-            var opt = CnnOptimizerFactory.Create(cnnConfig.OptimizerConfig);
-            _denseOptimizers.Add(opt);
         }
 
         var probabilities = _denseHyperParameters[^1].PostAct;
@@ -335,6 +343,21 @@ public sealed unsafe class CnnNeuralFramework
             var layerMatrix = RentNeural(batchSize, outFeatures);
 
             _denseLayerMatrixes.Add(layerMatrix);
+
+            var dW = _reverseDenseHyperParameters[i].DWeights;
+
+            int iSize = dW.Rows;
+            int oSize = dW.UsedColumns;
+
+            var mWeights = RentNeural(iSize, oSize);
+            var vWeights = RentNeural(iSize, oSize);
+            var mBiases = RentNeural(1, oSize);
+            var vBiases = RentNeural(1, oSize);
+
+            var adamParameters = new AdamHyperLayerParameters(mWeights, vWeights, mBiases, vBiases);
+            var opt = CnnOptimizerFactory.Create(_cnnConfig.OptimizerConfig, null!, adamParameters);
+
+            _denseOptimizers.Add(opt);
 
             current = layerMatrix;
         }
@@ -1802,7 +1825,7 @@ public sealed unsafe class CnnNeuralFramework
                 }
             }
 
-            var dW = _reverseDenseHyperParameters[i].DWeight;
+            var dW = _reverseDenseHyperParameters[i].DWeights;
 
             if (EnableGpu)
             {
@@ -1867,7 +1890,7 @@ public sealed unsafe class CnnNeuralFramework
                 }
             }
 
-            var dB = _reverseDenseHyperParameters[i].DBias;
+            var dB = _reverseDenseHyperParameters[i].DBiases;
 
             dB.Clear();
             float* pDB = dB.Pointer;

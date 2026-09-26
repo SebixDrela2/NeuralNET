@@ -296,11 +296,6 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
     {
         try
         {
-            if (DisplayName is { } epic &&  epic.Contains("Conv_InputGrad"))
-            {
-
-            }
-
             if (_isDisposing)
             {
                 throw new InvalidOperationException("ooga");

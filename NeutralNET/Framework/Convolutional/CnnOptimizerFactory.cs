@@ -4,13 +4,14 @@ namespace NeutralNET.Framework.Convolutional;
 
 public static class CnnOptimizerFactory
 {
-    public static ICnnOptimizer Create(CnnOptimizerConfig config)
-    {
-        return config.OptimizerType switch
+    public static ICnnOptimizer Create(
+        CnnOptimizerConfig config,
+        AdamHyperLayerParameters convHyperParameters,
+        AdamHyperLayerParameters denseHyperParameters)
+        => config.OptimizerType switch
         {
             CnnOptimizerType.SGD => new CnnSGDOptimizer(config),
-            CnnOptimizerType.Adam => new CnnAdamOptimizer(config),
+            CnnOptimizerType.Adam => new CnnAdamOptimizer(config, convHyperParameters, denseHyperParameters),
             _ => throw new NotSupportedException($"Optimizer {config.OptimizerType} not supported.")
         };
-    }
 }
