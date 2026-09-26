@@ -74,7 +74,7 @@ public class CnnTrainer : IDisposable
         {
             var sampleBatch = testImg[0];
             var sampleLabels = testLbl[0];
-            using var pred = _network.Forward(sampleBatch);
+            var pred = _network.Forward(sampleBatch);
 
             var numSamples = Math.Min(numClasses, sampleBatch.Batch);
 

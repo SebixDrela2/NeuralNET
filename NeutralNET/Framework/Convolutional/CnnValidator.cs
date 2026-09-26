@@ -15,7 +15,7 @@ public class CnnValidator
 
         for (int batchIdx = 0; batchIdx < images.Length; batchIdx++)
         {
-            using var output = network.Forward(images[batchIdx]);
+            var output = network.Forward(images[batchIdx]);
             var label = labels[batchIdx];
 
             for (int i = 0; i < output.Rows; i++)

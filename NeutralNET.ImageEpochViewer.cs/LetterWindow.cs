@@ -348,7 +348,7 @@ public partial class LetterWindow : Form
                                     convOutputs[i]?.Dispose();
                                 }
                             }
-                            using var output = _network.Forward(inputMatrix);
+                            var output = _network.Forward(inputMatrix);
                             unsafe
                             {
                                 float* pOutput = output.Pointer;
@@ -579,7 +579,7 @@ public partial class LetterWindow : Form
                 using var inputMatrix = LetterDataLoader.GenerateSampleForUI(slot.TargetChar, bmp);
 
                 {
-                    using NeuralMatrix output = _network.Forward(inputMatrix);
+                    var output = _network.Forward(inputMatrix);
                     int predictedClassIndex = 0;
                     float maxConfidence = float.MinValue;
 
