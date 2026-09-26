@@ -305,49 +305,41 @@ public partial class LetterWindow : Form
                         var convOutputs = _network.GetConvLayerOutput(inputMatrix);
                         {
                             if (convOutputs.Length != NumConvLayers) throw new InvalidOperationException();
-                            try
+
+                            bool allInitialized = true;
+
+                            for (int i = 0; i < NumConvLayers; i++)
                             {
+                                if (!_convLayersInitialized[i]) allInitialized = false;
+                            }
 
-                                bool allInitialized = true;
-                                for (int i = 0; i < NumConvLayers; i++)
+                            if (!allInitialized)
+                            {
+                                Invoke(() =>
                                 {
-                                    if (!_convLayersInitialized[i]) allInitialized = false;
-                                }
-
-                                if (!allInitialized)
-                                {
-                                    Invoke(() =>
+                                    for (int i = 0; i < NumConvLayers; ++i)
                                     {
-                                        for (int i = 0; i < NumConvLayers; ++i)
+                                        if (!_convLayersInitialized[i])
                                         {
-                                            if (!_convLayersInitialized[i])
-                                            {
-                                                InitializeLayerUI(i, convOutputs[i].Channels, convOutputs[i].Width, convOutputs[i].Height);
-                                            }
+                                            InitializeLayerUI(i, convOutputs[i].Channels, convOutputs[i].Width, convOutputs[i].Height);
                                         }
-                                    });
-
-                                    while (true)
-                                    {
-                                        bool check = true;
-                                        for (int i = 0; i < NumConvLayers; i++) if (!_convLayersInitialized[i]) check = false;
-                                        if (check) break;
-                                        Thread.Sleep(5);
                                     }
-                                }
+                                });
 
-                                for (int i = 0; i < NumConvLayers; i++)
+                                while (true)
                                 {
-                                    ProcessConvLayerData(convOutputs[i], i);
+                                    bool check = true;
+                                    for (int i = 0; i < NumConvLayers; i++) if (!_convLayersInitialized[i]) check = false;
+                                    if (check) break;
+                                    Thread.Sleep(5);
                                 }
                             }
-                            finally
+
+                            for (int i = 0; i < NumConvLayers; i++)
                             {
-                                for (int i = 0; i < NumConvLayers; i++)
-                                {
-                                    convOutputs[i]?.Dispose();
-                                }
+                                ProcessConvLayerData(convOutputs[i], i);
                             }
+
                             var output = _network.Forward(inputMatrix);
                             unsafe
                             {
@@ -666,35 +658,27 @@ public partial class LetterWindow : Form
             mapForm.Controls.Add(mapPanel);
 
             var convOutput = _network.GetConvLayerOutput(inputMatrix);
-            try
+
+            int numFilters = convOutput[0].Channels;
+            int mapHeight = convOutput[0].Height;
+            int mapWidth = convOutput[0].Width;
+
+
+            for (int f = 0; f < numFilters; f++)
             {
+                using Bitmap rawBmp = new Bitmap(mapWidth, mapHeight, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                ApplyColorScale(convOutput[0], f, rawBmp);
 
-                int numFilters = convOutput[0].Channels;
-                int mapHeight = convOutput[0].Height;
-                int mapWidth = convOutput[0].Width;
-
-
-                for (int f = 0; f < numFilters; f++)
+                mapPanel.Controls.Add(new PictureBox
                 {
-                    using Bitmap rawBmp = new Bitmap(mapWidth, mapHeight, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-                    ApplyColorScale(convOutput[0], f, rawBmp);
-
-                    mapPanel.Controls.Add(new PictureBox
-                    {
-                        Width = 80,
-                        Height = 80,
-                        SizeMode = PictureBoxSizeMode.Normal,
-                        Image = CreateNearestNeighborImage(rawBmp, 80, 80),
-                        BackColor = Color.Black,
-                        BorderStyle = BorderStyle.FixedSingle,
-                        Margin = new Padding(4)
-                    });
-                }
-
-            }
-            finally
-            {
-                convOutput.DisposeEach();
+                    Width = 80,
+                    Height = 80,
+                    SizeMode = PictureBoxSizeMode.Normal,
+                    Image = CreateNearestNeighborImage(rawBmp, 80, 80),
+                    BackColor = Color.Black,
+                    BorderStyle = BorderStyle.FixedSingle,
+                    Margin = new Padding(4)
+                });
             }
 
             mapForm.ShowDialog();
