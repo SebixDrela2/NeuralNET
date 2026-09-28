@@ -1941,6 +1941,7 @@ public sealed unsafe class CnnNeuralFramework
             }
 
             var dW = _reverseDenseHyperParameters[i].DWeights;
+            dW.Clear();
 
             if (EnableGpu)
             {
