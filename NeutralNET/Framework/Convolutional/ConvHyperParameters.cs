@@ -22,6 +22,25 @@ public sealed record class ConvHyperParameters(
     NeuralMatrix GradPatchMat,
     CnnMatrix Pooled) : IDisposable
 {
+    public void Init(int i)
+    {
+        Input.DisplayName = $"Conv_Input[{i}]";
+        ColInput.DisplayName = $"Conv_ColInput[{i}]";
+        Weights.DisplayName = $"Conv_Weights[{i}]";
+        FlattenedWeights.DisplayName = $"Conv_FlattenedWeights[{i}]";
+        Biases.DisplayName = $"Conv_Biases[{i}]";
+        PreAct.DisplayName = $"Conv_PreAct[{i}]";
+        PostAct.DisplayName = $"Conv_PostAct[{i}]";
+        PoolIndices.DisplayName = $"Conv_PoolIndices[{i}]";
+        GradInput.DisplayName = $"Conv_GradInput[{i}]";
+        PreGrad.DisplayName = $"Conv_PreGrad[{i}]";
+        PreGradMatrix.DisplayName = $"Conv_PreGradMatrix[{i}]";
+        DWeights.DisplayName = $"Conv_DWeights[{i}]";
+        DBiases.DisplayName = $"Conv_DBiases[{i}]";
+        Convolution.DisplayName = $"Conv_Convolution[{i}]";
+        InputGrad.DisplayName = $"Conv_InputGrad[{i}]";
+        GradPatchMat.DisplayName = $"Conv_GradPatchMat[{i}]";
+    }
     public void SetBatchLimit(int batchSize)
     {
         PreAct.Batch = batchSize;

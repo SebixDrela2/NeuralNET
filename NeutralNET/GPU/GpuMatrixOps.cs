@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using NeutralNET.Framework.Convolutional.Native;
 
 namespace NeutralNET.GPU
 {
@@ -21,16 +22,16 @@ namespace NeutralNET.GPU
         public static extern int cudaMemcpy(IntPtr dst, IntPtr src, nuint count, int kind);
     }
 
+    public enum CublasOperation
+    {
+        NonTranspose = 0,
+        Transpose = 1,
+        ConjugateTranspose = 2
+    }
+
     public static unsafe class GpuMatrixOps
     {
         private const string CublasDll = "cublas64_13.dll";
-
-        public enum CublasOperation
-        {
-            NonTranspose = 0,
-            Transpose = 1,
-            ConjugateTranspose = 2
-        }
 
         public enum CublasStatus
         {
@@ -69,6 +70,7 @@ namespace NeutralNET.GPU
         static GpuMatrixOps()
         {
             CublasStatus status = cublasCreate_v2(out _cublasHandle);
+
             if (status != CublasStatus.Success)
             {
                 throw new Exception($"Failed to initialize cuBLAS handle. Status code: {status}");
@@ -76,9 +78,29 @@ namespace NeutralNET.GPU
         }
 
         /// <summary>
+        /// Convenience wrapper for isolated host-to-host operations that require temporary staging.
+        /// </summary>
+        public static void RowMajorSgemmHostStaged(CublasContext alloc,
+            int m, int n, int k, float* A, float* B, float* C)
+        {
+            var pointers = alloc.GetPointers();
+            var sizes = alloc.GetSizes();
+            var transitions = alloc.GetTransitions();
+            var strides = alloc.GetStrides();
+
+            CudaInterop.cudaMemcpy(pointers.A, (IntPtr)A, sizes.A, CudaInterop.CudaMemcpyHostToDevice);
+            CudaInterop.cudaMemcpy(pointers.B, (IntPtr)B, sizes.B, CudaInterop.CudaMemcpyHostToDevice);
+
+            RowMajorSgemmDevice(transitions.A, transitions.B, m, n, k, 1.0f, pointers.A, strides.A, pointers.B, strides.B, 0.0f, pointers.C, strides.C);
+
+            CudaInterop.cudaMemcpy((IntPtr)C, pointers.C, sizes.C, CudaInterop.CudaMemcpyDeviceToHost);
+        }
+
+        /// <summary>
         /// Core GEMM operating directly on GPU Device pointers (eliminates PCIe round-trip overhead).
         /// </summary>
-        public static void RowMajorSgemmDevice(
+        /// 
+        private static void RowMajorSgemmDevice(
             CublasOperation transA, CublasOperation transB,
             int m, int n, int k,
             float alpha,
@@ -103,52 +125,5 @@ namespace NeutralNET.GPU
             }
         }
 
-        /// <summary>
-        /// Convenience wrapper for isolated host-to-host operations that require temporary staging.
-        /// </summary>
-        public static void RowMajorSgemmHostStaged(
-            CublasOperation transA, CublasOperation transB,
-            int m, int n, int k,
-            float alpha,
-            float* A, int strideA,
-            float* B, int strideB,
-            float beta,
-            float* C, int strideC)
-        {
-            int rowsA = (transA == CublasOperation.NonTranspose) ? m : k;
-            int rowsB = (transB == CublasOperation.NonTranspose) ? k : n;
-            int rowsC = m;
-
-            nuint sizeA = (nuint)(rowsA * strideA * sizeof(float));
-            nuint sizeB = (nuint)(rowsB * strideB * sizeof(float));
-            nuint sizeC = (nuint)(rowsC * strideC * sizeof(float));
-
-            IntPtr d_A = IntPtr.Zero;
-            IntPtr d_B = IntPtr.Zero;
-            IntPtr d_C = IntPtr.Zero;
-
-            try
-            {
-                if (CudaInterop.cudaMalloc(out d_A, sizeA) != 0 ||
-                    CudaInterop.cudaMalloc(out d_B, sizeB) != 0 ||
-                    CudaInterop.cudaMalloc(out d_C, sizeC) != 0)
-                {
-                    throw new OutOfMemoryException("CUDA Memory Allocation failed.");
-                }
-
-                CudaInterop.cudaMemcpy(d_A, (IntPtr)A, sizeA, CudaInterop.CudaMemcpyHostToDevice);
-                CudaInterop.cudaMemcpy(d_B, (IntPtr)B, sizeB, CudaInterop.CudaMemcpyHostToDevice);
-
-                RowMajorSgemmDevice(transA, transB, m, n, k, alpha, d_A, strideA, d_B, strideB, beta, d_C, strideC);
-
-                CudaInterop.cudaMemcpy((IntPtr)C, d_C, sizeC, CudaInterop.CudaMemcpyDeviceToHost);
-            }
-            finally
-            {
-                if (d_A != IntPtr.Zero) CudaInterop.cudaFree(d_A);
-                if (d_B != IntPtr.Zero) CudaInterop.cudaFree(d_B);
-                if (d_C != IntPtr.Zero) CudaInterop.cudaFree(d_C);
-            }
-        }
     }
 }

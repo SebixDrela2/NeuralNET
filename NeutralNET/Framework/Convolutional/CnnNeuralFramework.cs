@@ -1,23 +1,28 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
+using System.Text.RegularExpressions;
 using NeutralNET.Activation;
 using NeutralNET.Framework.Connected.Neural;
 using NeutralNET.Framework.Convolutional;
+using NeutralNET.Framework.Convolutional.Native;
 using NeutralNET.GPU;
 using NeutralNET.Matrices;
-using static HDF.PInvoke.H5Z;
+using Tensorflow.Keras.Layers;
 using static NeutralNET.Activation.ActivationSelector;
 
 namespace NeutralNET.Framework.Neural.CNN;
+using static ConvRenter;
+using static NeuralRenter;
 
 /// <summary>
 /// Zero-GC CNN framework with full object and buffer pooling, pluggable optimizers,
 /// and low-latency P/Invoke CUDA/cuBLAS GPU matrix acceleration.
 /// </summary>
+/// 
 public sealed unsafe class CnnNeuralFramework
 {
-    private const bool EnableGpu = true;
+    public const bool EnableGpu = true;
     private const int Avx256Size = 8;
     private const int Avx512Size = 16;
 
@@ -38,6 +43,10 @@ public sealed unsafe class CnnNeuralFramework
     private readonly List<DenseHyperParameters> _denseHyperParameters = [];
     private readonly List<ReverseDenseHyperParamers> _reverseDenseHyperParameters = [];
     private readonly List<ConvHyperParameters> _convHyperParameters = [];
+    private readonly List<CublasConvAllocations> _cublasConvAllocations = [];
+    private readonly List<CublasDenseAllocations> _cublasDenseAllocations = [];
+    private readonly List<CublasReverseDenseAllocations> _cublasReverseDenseAllocations = [];
+
     private CnnMatrix _pooledOutputGrad;
     private NeuralMatrix _outputGrad;
 
@@ -62,6 +71,11 @@ public sealed unsafe class CnnNeuralFramework
 
         SetupCnnConvParameters(cnnConfig);
 
+        if (EnableGpu)
+        {
+            SetupCublasForCnn(cnnConfig);
+        }
+
         int flattenedSize = ComputeFlattenedSize(cnnConfig);
         int[] denseArch = [flattenedSize, .. cnnConfig.DenseArchitecture];
         int denseCount = denseArch.Length - 1;
@@ -72,180 +86,90 @@ public sealed unsafe class CnnNeuralFramework
         _denseOptimizers = [with(denseCount)];
 
         SetupDenseArchitecture(denseArch, cnnConfig);
+        SetupReverseDenseHyperParameters();
+
+        if (EnableGpu)
+        {
+            SetUpCublasForDense();
+            SetupCublasDenseReversed();
+        }
+    }
+
+    private void SetupCublasForCnn(CnnArchitectureConfig cnnConfig)
+    {
+        for (int i = 0; i < cnnConfig.ConvLayers.Count; i++)
+        {
+            var gradPatchMat = GetGradPatchMat(i);
+            var dW = GetDw(i);
+            var convolution = GetConvolution(i);
+
+            _cublasConvAllocations.Add(new CublasConvAllocations(
+                gradPatchMat, dW, convolution));
+        }
+
+        CublasContext GetGradPatchMat(int i)
+        {
+            var preGradMatrix = _convHyperParameters[i].PreGradMatrix;
+            var flattenedWeights = _convHyperParameters[i].FlattenedWeights;
+            var gradPatchMath = _convHyperParameters[i].GradPatchMat;
+
+            var patches = preGradMatrix.Rows;
+            var inDim = _convHyperParameters[i].ColInput.UsedColumns;
+            var filters = _convHyperParameters[i].PreGrad.Channels;
+
+            var context = new CublasContext(
+                new CublasTransitions(CublasOperation.NonTranspose, CublasOperation.NonTranspose),
+                new CublasItem<int>(patches, inDim, filters),
+                new CublasItem<int>(preGradMatrix.ColumnsStride, flattenedWeights.ColumnsStride, gradPatchMath.ColumnsStride));
+
+            return context;
+        }
+
+        CublasContext GetDw(int i)
+        {
+            var preGradMatrix = _convHyperParameters[i].PreGradMatrix;
+            var colInput = _convHyperParameters[i].ColInput;
+            var dW = _convHyperParameters[i].DWeights;
+
+            var filters = _convHyperParameters[i].PreGrad.Channels;
+            var inDim = _convHyperParameters[i].ColInput.UsedColumns;
+            var patches = preGradMatrix.Rows;
+
+            var context = new CublasContext(
+                new CublasTransitions(CublasOperation.Transpose, CublasOperation.NonTranspose),
+                new CublasItem<int>(filters, inDim, patches),
+                new CublasItem<int>(preGradMatrix.ColumnsStride, colInput.ColumnsStride, dW.ColumnsStride));
+
+            return context;
+        }
+
+        CublasContext GetConvolution(int i)
+        {
+            var flattenedWeights = _convHyperParameters[i].FlattenedWeights;
+            var colInput = _convHyperParameters[i].ColInput;
+
+            var patches = colInput.Rows;
+            var filters = flattenedWeights.Rows;
+            var innerDim = colInput.UsedColumns;
+
+            var convolution = _convHyperParameters[i].Convolution;
+
+            var context = new CublasContext(
+                new CublasTransitions(CublasOperation.NonTranspose, CublasOperation.Transpose),
+                new CublasItem<int>(patches, filters, innerDim),
+                new CublasItem<int>(colInput.ColumnsStride, flattenedWeights.ColumnsStride, convolution.ColumnsStride));
+
+            return context;
+        }
     }
 
     private void SetupCnnConvParameters(CnnArchitectureConfig cnnConfig)
     {
-        var prevInput = _input;
+        var cnnSize = _input;
 
         for (int i = 0; i < cnnConfig.ConvLayers.Count; i++)
         {
-            CnnLayerConfig? layer = cnnConfig.ConvLayers[i];
-            var fanIn = prevInput.Channels * layer.KernelHeight * layer.KernelWidth;
-            var stddev = MathF.Sqrt(2.0f / fanIn);
-            var weights = RentCnn(layer.Filters, prevInput.Channels, layer.KernelHeight, layer.KernelWidth);
-
-            for (int f = 0; f < layer.Filters; f++)
-            {
-                for (int c = 0; c < prevInput.Channels; c++)
-                {
-                    for (int y = 0; y < layer.KernelHeight; y++)
-                    {
-                        for (int x = 0; x < layer.KernelWidth; x++)
-                        {
-                            weights[f, c, y, x] = NextGaussianFloat(0, stddev);
-                        }
-                    }
-                }
-            }
-
-            var biases = RentCnn(1, layer.Filters, 1, 1);
-
-            for (int f = 0; f < layer.Filters; f++)
-            {
-                biases[0, f, 0, 0] = NextGaussianFloat(0, 0.1f);
-            }
-
-            var flattenedWeights = FlattenConvWeights(weights);
-            var convOutSz = GetCnnSize(prevInput.BatchSize, weights.Batch, prevInput.Height, prevInput.Width, layer);
-            var preAct = RentCnn(convOutSz);
-            var postAct = RentCnn(convOutSz);
-            var gradInput = RentCnn(convOutSz);
-            var preGrad = RentCnn(convOutSz);
-            var preGradMatrix = GetPreGradMatrix(preGrad);
-            var input = GetInput(postAct, layer.PoolSize);
-            var inputGrad = RentCnn(input.Batch, input.Channels, input.Height, input.Width);
-
-            int nextH = layer.UseMaxPool ? convOutSz.Height / layer.PoolSize : convOutSz.Height;
-            int nextW = layer.UseMaxPool ? convOutSz.Width / layer.PoolSize : convOutSz.Width;
-            var nextLayer = new CnnSize(prevInput.BatchSize, weights.Batch, nextH, nextW);
-
-            var colInput = GetColInput(prevInput, layer.KernelHeight, layer.KernelWidth, layer.Stride, layer.Padding);
-            var gradPatchMat = RentNeural(preGradMatrix.Rows, colInput.UsedColumns);
-            var poolIndices = GetPoolIndices(postAct, layer.PoolSize);
-
-            var dW = GetDWeights();
-            var dB = RentNeural(preGrad.Channels, 1);
-            var convolution = RentNeural(colInput.Rows, flattenedWeights.Rows);
-            var pooled = GetPooled(layer, preAct);
-
-            _convHyperParameters.Add(new(
-                input, colInput, weights, flattenedWeights, biases,
-                preAct, postAct, poolIndices, gradInput, preGrad,
-                preGradMatrix, dW, dB, convolution, inputGrad,
-                gradPatchMat, pooled));
-
-            input.DisplayName = $"Conv_Input[{i}]";
-            colInput.DisplayName = $"Conv_ColInput[{i}]";
-            weights.DisplayName = $"Conv_Weights[{i}]";
-            flattenedWeights.DisplayName = $"Conv_FlattenedWeights[{i}]";
-            biases.DisplayName = $"Conv_Biases[{i}]";
-            preAct.DisplayName = $"Conv_PreAct[{i}]";
-            postAct.DisplayName = $"Conv_PostAct[{i}]";
-            poolIndices.DisplayName = $"Conv_PoolIndices[{i}]";
-            gradInput.DisplayName = $"Conv_GradInput[{i}]";
-            preGrad.DisplayName = $"Conv_PreGrad[{i}]";
-            preGradMatrix.DisplayName = $"Conv_PreGradMatrix[{i}]";
-            dW.DisplayName = $"Conv_DWeights[{i}]";
-            dB.DisplayName = $"Conv_DBiases[{i}]";
-            convolution.DisplayName = $"Conv_Convolution[{i}]";
-            inputGrad.DisplayName = $"Conv_InputGrad[{i}]";
-            gradPatchMat.DisplayName = $"Conv_GradPatchMat[{i}]";
-
-            _convActivationTypes.Add(layer.Activation);
-
-            int innerDim = dW.Rows;
-            int filters = dW.UsedColumns;
-
-            var mWeights = RentNeural(innerDim, filters);
-            var vWeights = RentNeural(innerDim, filters);
-            var mBiases = RentNeural(1, filters);
-            var vBiases = RentNeural(1, filters);
-
-            var adamParameters = new AdamHyperLayerParameters(mWeights, vWeights, mBiases, vBiases);
-            var opt = CnnOptimizerFactory.Create(_cnnConfig.OptimizerConfig, adamParameters, null!);
-
-            _convOptimizers.Add(opt);
-
-            prevInput = nextLayer;
-
-            NeuralMatrix GetPoolIndices(CnnMatrix postAct, int poolSize)
-            {
-                int batch = postAct.Batch;
-                int channels = postAct.Channels;
-                int inH = postAct.Height;
-                int inW = postAct.Width;
-
-                int outH = inH / poolSize;
-                int outW = inW / poolSize;
-
-                return RentNeural(batch * channels * outH * outW, 1);
-            }
-
-            NeuralMatrix GetColInput(CnnSize input, int kernelH, int kernelW, int stride, int padding)
-            {
-                int paddedH = input.Height + 2 * padding;
-                int paddedW = input.Width + 2 * padding;
-
-                int outH = (paddedH - kernelH) / stride + 1;
-                int outW = (paddedW - kernelW) / stride + 1;
-                int patchSize = input.Channels * kernelH * kernelW;
-                int totalPatches = input.BatchSize * outH * outW;
-
-                return RentNeural(totalPatches, patchSize);
-            }
-
-            CnnMatrix GetInput(CnnMatrix postAct, int poolSize)
-            {
-                int batch = postAct.Batch;
-                int channels = postAct.Channels;
-                int inH = postAct.Height;
-                int inW = postAct.Width;
-
-                int outH = inH / poolSize;
-                int outW = inW / poolSize;
-
-                return RentCnn(batch, channels, outH, outW);
-            }
-
-            NeuralMatrix GetPreGradMatrix(CnnMatrix preGrad)
-            {
-                int outH = preGrad.Height;
-                int outW = preGrad.Width;
-                int patches = preGrad.Batch * outH * outW;
-                int filters = preGrad.Channels;
-
-                var preGradMatrix = RentNeural(patches, filters);
-
-                return preGradMatrix;
-            }
-
-            NeuralMatrix GetDWeights()
-            {
-                var filters = preGrad.Channels;
-                var inDim = colInput.UsedColumns;
-
-                if (EnableGpu)
-                {
-                    return RentNeural(filters, inDim);
-                }
-
-                return RentNeural(inDim, filters);
-            }
-
-            CnnMatrix GetPooled(CnnLayerConfig layer, CnnMatrix preAct)
-            {
-                int batch = preAct.Batch;
-                int channels = preAct.Channels;
-                int inH = preAct.Height;
-                int inW = preAct.Width;
-
-                int outH = inH / layer.PoolSize;
-                int outW = inW / layer.PoolSize;
-
-                var pooled = RentCnn(batch, channels, outH, outW);
-                return pooled;
-            }
+            cnnSize = SetupCnnConvParametersForLayer(cnnConfig, cnnSize, i);
         }
 
         var lastPooled = _convHyperParameters[^1].Input!;
@@ -253,6 +177,172 @@ public sealed unsafe class CnnNeuralFramework
 
         _flattenedInput = RentNeural(lastPooled.Batch, featureDim);
         _pooledOutputGrad = RentCnn(lastPooled.Batch, lastPooled.Channels, lastPooled.Height, lastPooled.Width);
+    }
+
+    private CnnSize SetupCnnConvParametersForLayer(CnnArchitectureConfig cnnConfig, CnnSize prevInput, int i)
+    {
+        CnnLayerConfig? layer = cnnConfig.ConvLayers[i];
+        var fanIn = prevInput.Channels * layer.KernelHeight * layer.KernelWidth;
+        var stddev = MathF.Sqrt(2.0f / fanIn);
+        var weights = RentCnn(layer.Filters, prevInput.Channels, layer.KernelHeight, layer.KernelWidth);
+
+        for (int f = 0; f < layer.Filters; f++)
+        {
+            for (int c = 0; c < prevInput.Channels; c++)
+            {
+                for (int y = 0; y < layer.KernelHeight; y++)
+                {
+                    for (int x = 0; x < layer.KernelWidth; x++)
+                    {
+                        weights[f, c, y, x] = NextGaussianFloat(0, stddev);
+                    }
+                }
+            }
+        }
+
+        var biases = RentCnn(1, layer.Filters, 1, 1);
+
+        for (int f = 0; f < layer.Filters; f++)
+        {
+            biases[0, f, 0, 0] = NextGaussianFloat(0, 0.1f);
+        }
+
+        var flattenedWeights = FlattenConvWeights(weights);
+        var convOutSz = GetCnnSize(prevInput.BatchSize, weights.Batch, prevInput.Height, prevInput.Width, layer);
+        var preAct = RentCnn(convOutSz);
+        var postAct = RentCnn(convOutSz);
+        var gradInput = RentCnn(convOutSz);
+        var preGrad = RentCnn(convOutSz);
+        var preGradMatrix = GetPreGradMatrix(preGrad);
+        var input = GetInput(postAct, layer.PoolSize);
+        var inputGrad = RentCnn(input.Batch, input.Channels, input.Height, input.Width);
+
+        int nextH = layer.UseMaxPool ? convOutSz.Height / layer.PoolSize : convOutSz.Height;
+        int nextW = layer.UseMaxPool ? convOutSz.Width / layer.PoolSize : convOutSz.Width;
+        var nextLayer = new CnnSize(prevInput.BatchSize, weights.Batch, nextH, nextW);
+
+        var colInput = GetColInput(prevInput, layer.KernelHeight, layer.KernelWidth, layer.Stride, layer.Padding);
+        var gradPatchMat = RentNeural(preGradMatrix.Rows, colInput.UsedColumns);
+        var poolIndices = GetPoolIndices(postAct, layer.PoolSize);
+
+        var dW = GetDWeights(colInput, preGrad);
+        var dB = RentNeural(preGrad.Channels, 1);
+        var convolution = RentNeural(colInput.Rows, flattenedWeights.Rows);
+        var pooled = GetPooled(layer, preAct);
+
+        ConvHyperParameters convHyperParam = new(
+            input, colInput, weights, flattenedWeights, biases,
+            preAct, postAct, poolIndices, gradInput, preGrad,
+            preGradMatrix, dW, dB, convolution, inputGrad,
+            gradPatchMat, pooled);
+
+        convHyperParam.Init(i);
+
+        _convHyperParameters.Add(convHyperParam);
+        _convActivationTypes.Add(layer.Activation);
+
+        SetUpOptimizerPerCnnLayer(dW);
+
+        prevInput = nextLayer;
+
+        return prevInput;
+    }
+
+    private void SetUpOptimizerPerCnnLayer(NeuralMatrix dW)
+    {
+        int innerDim = dW.Rows;
+        int filters = dW.UsedColumns;
+
+        var mWeights = RentNeural(innerDim, filters);
+        var vWeights = RentNeural(innerDim, filters);
+        var mBiases = RentNeural(1, filters);
+        var vBiases = RentNeural(1, filters);
+
+        var adamParameters = new AdamHyperLayerParameters(mWeights, vWeights, mBiases, vBiases);
+        var opt = CnnOptimizerFactory.Create(_cnnConfig.OptimizerConfig, adamParameters, null!);
+
+        _convOptimizers.Add(opt);
+    }
+
+    private void SetUpCublasForDense()
+    {
+        for (var i = 0; i < _denseHyperParameters.Count; i++)
+        {
+            var current = i == 0 ? _flattenedInput! : _denseLayerMatrixes[i - 1];
+            var result = _denseLayerMatrixes[i];
+
+            var layerResult = GetLayer(current, result, i);
+           
+            _cublasDenseAllocations.Add(new CublasDenseAllocations(layerResult));
+        }
+
+        CublasContext GetLayer(NeuralMatrix current, NeuralMatrix result, int i)
+        {
+            var weights = _denseHyperParameters[i].Weights;
+
+            int batchSize = current.Rows;
+            int inFeatures = current.UsedColumns;
+            int outFeatures = weights.Rows;
+
+            var context = new CublasContext(
+                new CublasTransitions(CublasOperation.NonTranspose, CublasOperation.Transpose),
+                new CublasItem<int>(batchSize, outFeatures, inFeatures),
+                new CublasItem<int>(current.ColumnsStride, weights.ColumnsStride, result.ColumnsStride));
+
+            return context;
+        }
+    }
+
+    private void SetupCublasDenseReversed()
+    {
+        for (int i = _denseHyperParameters.Count - 1; i >= 0; i--)
+        {
+            var gradOutput = i == _denseHyperParameters.Count - 1
+                ? _outputGrad
+                : _reverseDenseHyperParameters[i + 1].GradInput;
+            var inputToLayer = (i == 0) ? _flattenedInput! : _denseHyperParameters[i - 1].PostAct;
+
+            var dW = GetDW(gradOutput, inputToLayer, i);
+            var gradInput = GetGradInput(gradOutput, i);
+
+            _cublasReverseDenseAllocations.Add(new CublasReverseDenseAllocations(dW, gradInput));
+        }
+
+        _cublasReverseDenseAllocations.Reverse();
+
+        CublasContext GetDW(NeuralMatrix gradOutput, NeuralMatrix inputToLayer, int i)
+        {
+            int batch = gradOutput.Rows;
+            int outDim = gradOutput.UsedColumns;
+            int inDim = inputToLayer.UsedColumns;
+
+            var gradPre = _reverseDenseHyperParameters[i].GradPre;
+            var dW = _reverseDenseHyperParameters[i].DWeights;
+
+            var context = new CublasContext(
+                new CublasTransitions(CublasOperation.Transpose, CublasOperation.NonTranspose),
+                new CublasItem<int>(inDim, outDim, batch),
+                new CublasItem<int>(inputToLayer.ColumnsStride, gradPre.ColumnsStride, dW.ColumnsStride));
+
+            return context;
+        }
+
+        CublasContext GetGradInput(NeuralMatrix gradOutput, int i)
+        {
+            int batch = gradOutput.Rows;
+            var weights = _denseHyperParameters[i].Weights;
+            var weightOutDim = weights.Rows;
+            var weightInDim = weights.UsedColumns;
+            var gradInput = _reverseDenseHyperParameters[i].GradInput;
+            var gradPre = _reverseDenseHyperParameters[i].GradPre;
+
+            var context = new CublasContext(
+                new CublasTransitions(CublasOperation.NonTranspose, CublasOperation.NonTranspose),
+                new CublasItem<int>(batch, weightInDim, weightOutDim),
+                new CublasItem<int>(gradPre.ColumnsStride, weights.ColumnsStride, gradInput.ColumnsStride));
+
+            return context;
+        }
     }
 
     private void SetupDenseArchitecture(int[] denseArch, CnnArchitectureConfig cnnConfig)
@@ -305,8 +395,11 @@ public sealed unsafe class CnnNeuralFramework
         int rows = probabilities.Rows;
         int cols = probabilities.UsedColumns;
 
-        _outputGrad = RentNeural(rows, cols);
+        _outputGrad = RentNeural(rows, cols);      
+    }
 
+    private void SetupReverseDenseHyperParameters()
+    {
         var gradOutput = _outputGrad;
 
         for (int i = _denseHyperParameters.Count - 1; i >= 0; i--)
@@ -566,6 +659,9 @@ public sealed unsafe class CnnNeuralFramework
         foreach (var r in _reverseDenseHyperParameters) r.Dispose();
         foreach (var opt in _convOptimizers) opt.Dispose();
         foreach (var opt in _denseOptimizers) opt.Dispose();
+        foreach (var alloc in _cublasConvAllocations) alloc.Dispose();
+        foreach (var alloc in _cublasDenseAllocations) alloc.Dispose();
+        foreach (var alloc in _cublasReverseDenseAllocations) alloc.Dispose();
 
         _pooledOutputGrad.Dispose();
         _outputGrad.Dispose();
@@ -798,7 +894,7 @@ public sealed unsafe class CnnNeuralFramework
         var filters = preGrad.Channels;
         var inDim = colInput.UsedColumns;
 
-        ComputeWeightGradient(colInput, preGradMatrix, dW, patches, filters, inDim);
+        ComputeWeightGradient(colInput, preGradMatrix, dW, patches, filters, inDim, layerIdx);
         ComputeBiasGradient(preGradMatrix, dB, patches, filters);
 
         _convOptimizers[layerIdx].Update(
@@ -809,41 +905,43 @@ public sealed unsafe class CnnNeuralFramework
         );
 
         var flattenedWeights = cnvParams.FlattenedWeights;
-        ComputeGradientWithRespectToInput(flattenedWeights, preGradMatrix, gradPatchMat, patches, filters, inDim);
+        ComputeGradientWithRespectToInput(flattenedWeights, preGradMatrix, gradPatchMat, patches, filters, inDim, layerIdx);
         
         inputGrad.Col2Im(gradPatchMat);
 
         return inputGrad;
     }
 
-    private static void ComputeGradientWithRespectToInput(
-    NeuralMatrix weightMat,
+    private  void ComputeGradientWithRespectToInput(
+    NeuralMatrix flattenedWeightMatrix,
     NeuralMatrix preGradMatrix,
     NeuralMatrix gradPatchMat,
     int patches,
     int filters,
-    int inDim)
+    int inDim,
+    int layerIdx)
     {
         if (EnableGpu)
         {
+            var allocation = _cublasConvAllocations[layerIdx].GradPatchMat;
+
             GpuMatrixOps.RowMajorSgemmHostStaged(
-                GpuMatrixOps.CublasOperation.NonTranspose,
-                GpuMatrixOps.CublasOperation.NonTranspose,
-                patches, inDim, filters,
-                1.0f,
-                preGradMatrix.Pointer, preGradMatrix.ColumnsStride,
-                weightMat.Pointer, weightMat.ColumnsStride,
-                0.0f,
-                gradPatchMat.Pointer, gradPatchMat.ColumnsStride); 
+                allocation,
+                patches,
+                inDim,
+                filters,
+                preGradMatrix.Pointer,
+                flattenedWeightMatrix.Pointer,
+                gradPatchMat.Pointer); 
         }
         else
         {
             float* pGradPatch = gradPatchMat.Pointer;
             float* pPreGradMat = preGradMatrix.Pointer;
-            float* pWeightMat = weightMat.Pointer;
+            float* pWeightMat = flattenedWeightMatrix.Pointer;
 
             int gradPatchStride = gradPatchMat.ColumnsStride;
-            int weightMatStride = weightMat.ColumnsStride;
+            int weightMatStride = flattenedWeightMatrix.ColumnsStride;
             int preGradMatStride = preGradMatrix.ColumnsStride;
 
             // gradPatch[p, i] = Σ_f preGrad[p, f] * weight[f, i]
@@ -898,26 +996,26 @@ public sealed unsafe class CnnNeuralFramework
         }
     }
 
-    private static void ComputeWeightGradient(
+    private void ComputeWeightGradient(
     NeuralMatrix colInput,
     NeuralMatrix preGradMatrix,
     NeuralMatrix dW,
     int patches,
     int filters,
-    int inDim)
+    int inDim,
+    int layerIdx)
     {
         if (EnableGpu)
         {
+            var allocation = _cublasConvAllocations[layerIdx].DWeights;
+
             // dW = preGradMatrixᵀ · colInput  →  (filters, inDim)
             GpuMatrixOps.RowMajorSgemmHostStaged(
-                GpuMatrixOps.CublasOperation.Transpose,
-                GpuMatrixOps.CublasOperation.NonTranspose,
+                allocation,
                 filters, inDim, patches,
-                1.0f,
-                preGradMatrix.Pointer, preGradMatrix.ColumnsStride,
-                colInput.Pointer, colInput.ColumnsStride,
-                0.0f,
-                dW.Pointer, dW.ColumnsStride);
+                preGradMatrix.Pointer,
+                colInput.Pointer,
+                dW.Pointer);
         }
         else
         {
@@ -1230,7 +1328,7 @@ public sealed unsafe class CnnNeuralFramework
 
         current.Im2Col(colInput, layer.KernelHeight, layer.KernelWidth, layer.Stride, layer.Padding);
         UpdateFlattenConvWeights(weights, flattenedWeights);
-        ComputeConvolution(colInput, flattenedWeights, convolution);
+        ComputeConvolution(colInput, flattenedWeights, convolution, layerIdx);
         AddBias(convolution, biases);
         FillToCnnMatrix(convolution, preAct);
     }
@@ -1270,7 +1368,7 @@ public sealed unsafe class CnnNeuralFramework
         return weightMat;
     }
 
-    private void ComputeConvolution(NeuralMatrix colInput, NeuralMatrix flattenedWeights, NeuralMatrix convolution)
+    private void ComputeConvolution(NeuralMatrix colInput, NeuralMatrix flattenedWeights, NeuralMatrix convolution, int layerIdx)
     {
         int patches = colInput.Rows;
         int filters = flattenedWeights.Rows;
@@ -1278,15 +1376,14 @@ public sealed unsafe class CnnNeuralFramework
 
         if (EnableGpu)
         {
+            var allocation = _cublasConvAllocations[layerIdx].Convolution;
+
             GpuMatrixOps.RowMajorSgemmHostStaged(
-                GpuMatrixOps.CublasOperation.NonTranspose,
-                GpuMatrixOps.CublasOperation.Transpose,
+                allocation,
                 patches, filters, innerDim,
-                1.0f,
-                colInput.Pointer, colInput.ColumnsStride,
-                flattenedWeights.Pointer, flattenedWeights.ColumnsStride,
-                0.0f,
-                convolution.Pointer, convolution.ColumnsStride);
+                colInput.Pointer,
+                flattenedWeights.Pointer,
+                convolution.Pointer);
         }
         else
         {
@@ -1577,15 +1674,14 @@ public sealed unsafe class CnnNeuralFramework
 
             if (EnableGpu)
             {
+                var allocation = _cublasDenseAllocations[i].Layer;
+
                 GpuMatrixOps.RowMajorSgemmHostStaged(
-                    GpuMatrixOps.CublasOperation.NonTranspose,
-                    GpuMatrixOps.CublasOperation.Transpose,
+                    allocation,
                     batchSize, outFeatures, inFeatures,
-                    1.0f,
-                    current.Pointer, current.ColumnsStride,
-                    weights.Pointer, weights.ColumnsStride,
-                    0.0f,
-                    result.Pointer, result.ColumnsStride);
+                    current.Pointer,
+                    weights.Pointer,
+                    result.Pointer);
 
                 for (int b = 0; b < batchSize; b++)
                 {
@@ -1829,15 +1925,14 @@ public sealed unsafe class CnnNeuralFramework
 
             if (EnableGpu)
             {
+                var allocation = _cublasReverseDenseAllocations[i].DWeights;
+
                 GpuMatrixOps.RowMajorSgemmHostStaged(
-                    GpuMatrixOps.CublasOperation.Transpose,
-                    GpuMatrixOps.CublasOperation.NonTranspose,
+                    allocation,
                     inDim, outDim, batch,
-                    1.0f,
-                    inputToLayer.Pointer, inputToLayer.ColumnsStride,
-                    gradPre.Pointer, gradPre.ColumnsStride,
-                    0.0f,
-                    dW.Pointer, dW.ColumnsStride);
+                    inputToLayer.Pointer,
+                    gradPre.Pointer,
+                    dW.Pointer);
             }
             else
             {
@@ -1930,15 +2025,14 @@ public sealed unsafe class CnnNeuralFramework
 
             if (EnableGpu)
             {
+                var allocation = _cublasReverseDenseAllocations[i].GradInput;
+
                 GpuMatrixOps.RowMajorSgemmHostStaged(
-                    GpuMatrixOps.CublasOperation.NonTranspose,
-                    GpuMatrixOps.CublasOperation.NonTranspose,
+                    allocation,
                     batch, weightInDim, weightOutDim,
-                    1.0f,
-                    gradPre.Pointer, gradPre.ColumnsStride,
-                    weights.Pointer, weights.ColumnsStride,
-                    0.0f,
-                    gradInput.Pointer, gradInput.ColumnsStride);
+                    gradPre.Pointer,
+                    weights.Pointer,
+                    gradInput.Pointer);
             }
             else   // CPU path
             {
@@ -2356,15 +2450,4 @@ public sealed unsafe class CnnNeuralFramework
         sb.AppendLine($"  {(ok ? "✔" : "✘")} {label}   actual={Fmt(m)}");
         return ok;
     }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static NeuralMatrix RentNeural(int rows, int cols, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
-        => NeuralMatrix.GetOrCreate(rows, cols, fp, ln);
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static CnnMatrix RentCnn(int batch, int channels, int h, int w, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
-        => CnnMatrix.GetOrCreate(batch, channels, h, w, fp, ln);
-
-    private static CnnMatrix RentCnn(CnnSize cnnSize, [CallerFilePath] string fp = "", [CallerLineNumber] int ln = 0)
-        => CnnMatrix.GetOrCreate(cnnSize.BatchSize, cnnSize.Channels, cnnSize.Height, cnnSize.Width, fp, ln);
 }
