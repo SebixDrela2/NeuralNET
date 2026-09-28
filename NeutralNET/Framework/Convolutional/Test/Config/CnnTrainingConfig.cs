@@ -24,6 +24,8 @@ public class CnnTrainingConfig
 
     public static CnnTrainingConfig CreateDefault(int numClasses)
     {
+        const int BatchSize = 128;
+
         return new CnnTrainingConfig
         {
             CnnArchitecture = new CnnArchitectureConfig
@@ -66,7 +68,7 @@ public class CnnTrainingConfig
             {
                 LearningRate = 1e-4f,
                 WeightDecay = 0f,
-                BatchSize = 128,
+                BatchSize = BatchSize,
                 Epochs = 200,
                 DropoutRate = 0.1f,
                 WithShuffle = true,
@@ -74,8 +76,8 @@ public class CnnTrainingConfig
             },
 
             LearningRate = 1e-4f,
-            MaxTrainSamples = 1024 * 100,
-            MaxTestSamples = 1024,
+            MaxTrainSamples = BatchSize * 32,
+            MaxTestSamples = BatchSize,
         };
     }
 }
