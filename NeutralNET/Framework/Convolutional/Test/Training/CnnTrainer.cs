@@ -43,6 +43,8 @@ public class CnnTrainer : IDisposable
             Random.Shared.Shuffle(indexes);
             var totalLoss = 0.0f;
 
+            //_network.SetPerf();
+
             for (var batchIdx = 0; batchIdx < trainN; batchIdx++)
             {
                 var index = indexes[batchIdx];
@@ -50,6 +52,8 @@ public class CnnTrainer : IDisposable
 
                 totalLoss += loss;
             }
+
+            //_network.Report();
 
             if (!ProcessLoss(dataSet, numClasses, display, results, totalLoss))
             {

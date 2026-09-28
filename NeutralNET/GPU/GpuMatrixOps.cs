@@ -1,6 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 using NeutralNET.Framework.Convolutional.Native;
+using NeutralNET.Framework.Neural.CNN;
 
 namespace NeutralNET.GPU
 {
@@ -20,6 +21,22 @@ namespace NeutralNET.GPU
 
         [DllImport(CudaRtDll, CallingConvention = CallingConvention.Cdecl)]
         public static extern int cudaMemcpy(IntPtr dst, IntPtr src, nuint count, int kind);
+
+        [DllImport(CudaRtDll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int cudaStreamCreate(out IntPtr stream);
+
+        [DllImport(CudaRtDll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int cudaStreamDestroy(IntPtr stream);
+
+        [DllImport(CudaRtDll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int cudaStreamSynchronize(IntPtr stream);
+
+        [DllImport(CudaRtDll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int cudaMemcpyAsync(
+            IntPtr dst, IntPtr src, nuint count, int kind, IntPtr stream);
+
+        // NOTE: cublasSetStream_v2 lives in cublas64_13.dll, NOT cudart64_13.dll.
+        //       It is declared in GpuMatrixOps below, not here.
     }
 
     public enum CublasOperation
@@ -54,6 +71,9 @@ namespace NeutralNET.GPU
         public static extern CublasStatus cublasDestroy_v2(IntPtr handle);
 
         [DllImport(CublasDll, CallingConvention = CallingConvention.Cdecl)]
+        public static extern CublasStatus cublasSetStream_v2(IntPtr handle, IntPtr streamId);
+
+        [DllImport(CublasDll, CallingConvention = CallingConvention.Cdecl)]
         public static extern CublasStatus cublasSgemm_v2(
             IntPtr handle,
             CublasOperation transa,
@@ -66,6 +86,7 @@ namespace NeutralNET.GPU
             float* C, int ldc);
 
         private static IntPtr _cublasHandle;
+        private static IntPtr _stream;
 
         static GpuMatrixOps()
         {
@@ -75,7 +96,24 @@ namespace NeutralNET.GPU
             {
                 throw new Exception($"Failed to initialize cuBLAS handle. Status code: {status}");
             }
+
+            int err = CudaInterop.cudaStreamCreate(out _stream);
+            if (err != 0)
+            {
+                throw new Exception($"Failed to create CUDA stream. Error code: {err}");
+            }
+
+            CublasStatus s = cublasSetStream_v2(_cublasHandle, _stream);
+            if (s != CublasStatus.Success)
+            {
+                throw new Exception($"Failed to bind cuBLAS to stream. Status code: {s}");
+            }
         }
+
+        public static PerfCounter? Perf { get; set; }
+
+        public static IntPtr CublasHandle => _cublasHandle;
+        public static IntPtr Stream => _stream;
 
         /// <summary>
         /// Convenience wrapper for isolated host-to-host operations that require temporary staging.
@@ -88,18 +126,29 @@ namespace NeutralNET.GPU
             var transitions = alloc.GetTransitions();
             var strides = alloc.GetStrides();
 
-            CudaInterop.cudaMemcpy(pointers.A, (IntPtr)A, sizes.A, CudaInterop.CudaMemcpyHostToDevice);
-            CudaInterop.cudaMemcpy(pointers.B, (IntPtr)B, sizes.B, CudaInterop.CudaMemcpyHostToDevice);
+            using (Perf?.Measure("GEMM.H2D_A"))
+                CudaInterop.cudaMemcpyAsync(pointers.A, (IntPtr)A, sizes.A,
+                    CudaInterop.CudaMemcpyHostToDevice, _stream);
 
-            RowMajorSgemmDevice(transitions.A, transitions.B, m, n, k, 1.0f, pointers.A, strides.A, pointers.B, strides.B, 0.0f, pointers.C, strides.C);
+            using (Perf?.Measure("GEMM.H2D_B"))
+                CudaInterop.cudaMemcpyAsync(pointers.B, (IntPtr)B, sizes.B,
+                    CudaInterop.CudaMemcpyHostToDevice, _stream);
 
-            CudaInterop.cudaMemcpy((IntPtr)C, pointers.C, sizes.C, CudaInterop.CudaMemcpyDeviceToHost);
+            using (Perf?.Measure("GEMM.cuBLAS"))
+                RowMajorSgemmDevice(transitions.A, transitions.B, m, n, k, 1.0f,
+                    pointers.A, strides.A, pointers.B, strides.B, 0.0f, pointers.C, strides.C);
+
+            using (Perf?.Measure("GEMM.D2H_C"))
+                CudaInterop.cudaMemcpyAsync((IntPtr)C, pointers.C, sizes.C,
+                    CudaInterop.CudaMemcpyDeviceToHost, _stream);
+
+            using (Perf?.Measure("GEMM.Sync"))
+                CudaInterop.cudaStreamSynchronize(_stream);
         }
 
         /// <summary>
         /// Core GEMM operating directly on GPU Device pointers (eliminates PCIe round-trip overhead).
         /// </summary>
-        /// 
         private static void RowMajorSgemmDevice(
             CublasOperation transA, CublasOperation transB,
             int m, int n, int k,
@@ -124,6 +173,5 @@ namespace NeutralNET.GPU
                 throw new InvalidOperationException($"cuBLAS SGEMM execution failed with status code: {status}");
             }
         }
-
     }
 }

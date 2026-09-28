@@ -16,7 +16,10 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
 
     private int _t;
 
-    // Conv state
+    // Running powers for bias correction — avoids MathF.Pow every step.
+    private float _b1_pow = 1.0f;
+    private float _b2_pow = 1.0f;
+
     private readonly AdamHyperLayerParameters _convHyperParameters;
     private readonly AdamHyperLayerParameters _denseHyperParameters;
 
@@ -35,10 +38,14 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
         _denseHyperParameters = denseHyperParameters;
     }
 
+    // =====================================================================
+    // Convolution update
+    // =====================================================================
     public unsafe void Update(CnnMatrix weights, CnnMatrix biases, NeuralMatrix dW, NeuralMatrix dB)
     {
-        int innerDim = dW.Rows;
-        int filters = dW.UsedColumns;
+        // dW is (filters, inDim): Rows = filters, UsedColumns = inDim.
+        int filterCount = dW.Rows;
+        int innerDim = dW.UsedColumns;
 
         var mWeights = _convHyperParameters.MWeights;
         var vWeights = _convHyperParameters.VWeights;
@@ -46,22 +53,14 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
         var vBiases = _convHyperParameters.VBiases;
 
         _t++;
-        float lr = _learningRate;
-        float wd = _weightDecay;
-        float b1 = _beta1;
-        float b2 = _beta2;
-        float eps = _epsilon;
-        float t = _t;
+        _b1_pow *= _beta1;
+        _b2_pow *= _beta2;
+        float c_m = 1.0f / (1.0f - _b1_pow);
+        float c_v = 1.0f / (1.0f - _b2_pow);
+        float one_minus_b1 = 1.0f - _beta1;
+        float one_minus_b2 = 1.0f - _beta2;
 
-        float c_m = 1.0f / (1.0f - MathF.Pow(b1, t));
-        float c_v = 1.0f / (1.0f - MathF.Pow(b2, t));
-        float one_minus_b1 = 1.0f - b1;
-        float one_minus_b2 = 1.0f - b2;
-
-        bool hasAvx512 = Avx512F.IsSupported;
-        bool hasAvx2 = Avx2.IsSupported;
-
-        float* pW = weights.Pointer;
+        float* pW = weights.Pointer; 
         float* pBiases = biases.Pointer;
         float* pdW = dW.Pointer;
         float* pdB = dB.Pointer;
@@ -74,55 +73,43 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
         int mStride = mWeights.ColumnsStride;
         int vStride = vWeights.ColumnsStride;
 
-        // =========================================================================
-        // 1. CONVOLUTION WEIGHTS UPDATE
-        // =========================================================================
-        for (int inner = 0; inner < innerDim; inner++)
+        for (int f = 0; f < filterCount; f++)
         {
-            float* rowDW = pdW + inner * dWStride;
-            float* rowM = pM + inner * mStride;
-            float* rowV = pV + inner * vStride;
-            float* pWBase = pW + inner;
+            float* rowW = pW + f * innerDim;    
+            float* rowDW = pdW + f * dWStride; 
+            float* rowM = pM + f * mStride;
+            float* rowV = pV + f * vStride;
 
-            int f = 0;
+            int i = 0;
 
-            if (hasAvx512)
+            if (Avx512F.IsSupported)
             {
-                var vB1 = Vector512.Create(b1);
+                var vB1 = Vector512.Create(_beta1);
                 var vOneMinusB1 = Vector512.Create(one_minus_b1);
-                var vB2 = Vector512.Create(b2);
+                var vB2 = Vector512.Create(_beta2);
                 var vOneMinusB2 = Vector512.Create(one_minus_b2);
                 var vCm = Vector512.Create(c_m);
                 var vCv = Vector512.Create(c_v);
-                var vLr = Vector512.Create(lr);
-                var vWd = Vector512.Create(wd);
-                var vEps = Vector512.Create(eps);
+                var vLr = Vector512.Create(_learningRate);
+                var vWd = Vector512.Create(_weightDecay);
+                var vEps = Vector512.Create(_epsilon);
 
-                int vecLimit = filters - (filters % 16);
-                for (; f < vecLimit; f += 16)
+                int vecLimit = innerDim - (innerDim % 16);
+                for (; i < vecLimit; i += 16)
                 {
-                    var vW = Vector512.Create(
-                        pWBase[(f + 0) * innerDim], pWBase[(f + 1) * innerDim],
-                        pWBase[(f + 2) * innerDim], pWBase[(f + 3) * innerDim],
-                        pWBase[(f + 4) * innerDim], pWBase[(f + 5) * innerDim],
-                        pWBase[(f + 6) * innerDim], pWBase[(f + 7) * innerDim],
-                        pWBase[(f + 8) * innerDim], pWBase[(f + 9) * innerDim],
-                        pWBase[(f + 10) * innerDim], pWBase[(f + 11) * innerDim],
-                        pWBase[(f + 12) * innerDim], pWBase[(f + 13) * innerDim],
-                        pWBase[(f + 14) * innerDim], pWBase[(f + 15) * innerDim]
-                    );
-
-                    var vGrad = Vector512.Load(rowDW + f);
-                    var vM = Vector512.Load(rowM + f);
-                    var vV = Vector512.Load(rowV + f);
+                    // All loads/stores contiguous — 1 cache line each.
+                    var vW = Vector512.Load(rowW + i);
+                    var vGrad = Vector512.Load(rowDW + i);
+                    var vM = Vector512.Load(rowM + i);
+                    var vV = Vector512.Load(rowV + i);
 
                     vGrad = vGrad + (vWd * vW);
 
                     var vMNew = (vB1 * vM) + (vOneMinusB1 * vGrad);
-                    vMNew.Store(rowM + f);
+                    vMNew.Store(rowM + i);
 
                     var vVNew = (vB2 * vV) + (vOneMinusB2 * (vGrad * vGrad));
-                    vVNew.Store(rowV + f);
+                    vVNew.Store(rowV + i);
 
                     var vMHat = vMNew * vCm;
                     var vVHat = vVNew * vCv;
@@ -131,58 +118,36 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
                     var vStep = (vLr * vMHat) / vDenom;
 
                     var vWNew = vW - vStep;
-
-                    pWBase[(f + 0) * innerDim] = vWNew.GetElement(0);
-                    pWBase[(f + 1) * innerDim] = vWNew.GetElement(1);
-                    pWBase[(f + 2) * innerDim] = vWNew.GetElement(2);
-                    pWBase[(f + 3) * innerDim] = vWNew.GetElement(3);
-                    pWBase[(f + 4) * innerDim] = vWNew.GetElement(4);
-                    pWBase[(f + 5) * innerDim] = vWNew.GetElement(5);
-                    pWBase[(f + 6) * innerDim] = vWNew.GetElement(6);
-                    pWBase[(f + 7) * innerDim] = vWNew.GetElement(7);
-                    pWBase[(f + 8) * innerDim] = vWNew.GetElement(8);
-                    pWBase[(f + 9) * innerDim] = vWNew.GetElement(9);
-                    pWBase[(f + 10) * innerDim] = vWNew.GetElement(10);
-                    pWBase[(f + 11) * innerDim] = vWNew.GetElement(11);
-                    pWBase[(f + 12) * innerDim] = vWNew.GetElement(12);
-                    pWBase[(f + 13) * innerDim] = vWNew.GetElement(13);
-                    pWBase[(f + 14) * innerDim] = vWNew.GetElement(14);
-                    pWBase[(f + 15) * innerDim] = vWNew.GetElement(15);
+                    vWNew.Store(rowW + i);
                 }
             }
-            else if (hasAvx2)
+            else if (Avx2.IsSupported)
             {
-                var vB1 = Vector256.Create(b1);
+                var vB1 = Vector256.Create(_beta1);
                 var vOneMinusB1 = Vector256.Create(one_minus_b1);
-                var vB2 = Vector256.Create(b2);
+                var vB2 = Vector256.Create(_beta2);
                 var vOneMinusB2 = Vector256.Create(one_minus_b2);
                 var vCm = Vector256.Create(c_m);
                 var vCv = Vector256.Create(c_v);
-                var vLr = Vector256.Create(lr);
-                var vWd = Vector256.Create(wd);
-                var vEps = Vector256.Create(eps);
+                var vLr = Vector256.Create(_learningRate);
+                var vWd = Vector256.Create(_weightDecay);
+                var vEps = Vector256.Create(_epsilon);
 
-                int vecLimit = filters - (filters % 8);
-                for (; f < vecLimit; f += 8)
+                int vecLimit = innerDim - (innerDim % 8);
+                for (; i < vecLimit; i += 8)
                 {
-                    var vW = Vector256.Create(
-                        pWBase[(f + 0) * innerDim], pWBase[(f + 1) * innerDim],
-                        pWBase[(f + 2) * innerDim], pWBase[(f + 3) * innerDim],
-                        pWBase[(f + 4) * innerDim], pWBase[(f + 5) * innerDim],
-                        pWBase[(f + 6) * innerDim], pWBase[(f + 7) * innerDim]
-                    );
-
-                    var vGrad = Vector256.Load(rowDW + f);
-                    var vM = Vector256.Load(rowM + f);
-                    var vV = Vector256.Load(rowV + f);
+                    var vW = Vector256.Load(rowW + i);
+                    var vGrad = Vector256.Load(rowDW + i);
+                    var vM = Vector256.Load(rowM + i);
+                    var vV = Vector256.Load(rowV + i);
 
                     vGrad = vGrad + (vWd * vW);
 
                     var vMNew = (vB1 * vM) + (vOneMinusB1 * vGrad);
-                    vMNew.Store(rowM + f);
+                    vMNew.Store(rowM + i);
 
                     var vVNew = (vB2 * vV) + (vOneMinusB2 * (vGrad * vGrad));
-                    vVNew.Store(rowV + f);
+                    vVNew.Store(rowV + i);
 
                     var vMHat = vMNew * vCm;
                     var vVHat = vVNew * vCv;
@@ -191,52 +156,42 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
                     var vStep = (vLr * vMHat) / vDenom;
 
                     var vWNew = vW - vStep;
-
-                    pWBase[(f + 0) * innerDim] = vWNew.GetElement(0);
-                    pWBase[(f + 1) * innerDim] = vWNew.GetElement(1);
-                    pWBase[(f + 2) * innerDim] = vWNew.GetElement(2);
-                    pWBase[(f + 3) * innerDim] = vWNew.GetElement(3);
-                    pWBase[(f + 4) * innerDim] = vWNew.GetElement(4);
-                    pWBase[(f + 5) * innerDim] = vWNew.GetElement(5);
-                    pWBase[(f + 6) * innerDim] = vWNew.GetElement(6);
-                    pWBase[(f + 7) * innerDim] = vWNew.GetElement(7);
+                    vWNew.Store(rowW + i);
                 }
             }
 
-            for (; f < filters; f++)
+            for (; i < innerDim; i++)
             {
-                float w = pWBase[f * innerDim];
-                float grad = rowDW[f] + wd * w;
+                float w = rowW[i];
+                float grad = rowDW[i] + _weightDecay * w;
 
-                float m = b1 * rowM[f] + one_minus_b1 * grad;
-                rowM[f] = m;
+                float m = _beta1 * rowM[i] + one_minus_b1 * grad;
+                rowM[i] = m;
 
-                float v = b2 * rowV[f] + one_minus_b2 * grad * grad;
-                rowV[f] = v;
+                float v = _beta2 * rowV[i] + one_minus_b2 * grad * grad;
+                rowV[i] = v;
 
                 float mHat = m * c_m;
                 float vHat = v * c_v;
 
-                pWBase[f * innerDim] -= lr * mHat / (MathF.Sqrt(vHat) + eps);
+                rowW[i] = w - _learningRate * mHat / (MathF.Sqrt(vHat) + _epsilon);
             }
         }
 
-        // =========================================================================
-        // 2. CONVOLUTION BIASES UPDATE
-        // =========================================================================
         int fb = 0;
-        if (hasAvx512)
+
+        if (Avx512F.IsSupported)
         {
-            var vB1 = Vector512.Create(b1);
+            var vB1 = Vector512.Create(_beta1);
             var vOneMinusB1 = Vector512.Create(one_minus_b1);
-            var vB2 = Vector512.Create(b2);
+            var vB2 = Vector512.Create(_beta2);
             var vOneMinusB2 = Vector512.Create(one_minus_b2);
             var vCm = Vector512.Create(c_m);
             var vCv = Vector512.Create(c_v);
-            var vLr = Vector512.Create(lr);
-            var vEps = Vector512.Create(eps);
+            var vLr = Vector512.Create(_learningRate);
+            var vEps = Vector512.Create(_epsilon);
 
-            int vecLimit = filters - (filters % 16);
+            int vecLimit = filterCount - (filterCount % 16);
             for (; fb < vecLimit; fb += 16)
             {
                 var vGrad = Vector512.Load(pdB + fb);
@@ -256,22 +211,21 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
                 var vDenom = Vector512.Sqrt(vVHat) + vEps;
                 var vStep = (vLr * vMHat) / vDenom;
 
-                var vBNew = vB - vStep;
-                vBNew.Store(pBiases + fb);
+                (vB - vStep).Store(pBiases + fb);
             }
         }
-        else if (hasAvx2)
+        else if (Avx2.IsSupported)
         {
-            var vB1 = Vector256.Create(b1);
+            var vB1 = Vector256.Create(_beta1);
             var vOneMinusB1 = Vector256.Create(one_minus_b1);
-            var vB2 = Vector256.Create(b2);
+            var vB2 = Vector256.Create(_beta2);
             var vOneMinusB2 = Vector256.Create(one_minus_b2);
             var vCm = Vector256.Create(c_m);
             var vCv = Vector256.Create(c_v);
-            var vLr = Vector256.Create(lr);
-            var vEps = Vector256.Create(eps);
+            var vLr = Vector256.Create(_learningRate);
+            var vEps = Vector256.Create(_epsilon);
 
-            int vecLimit = filters - (filters % 8);
+            int vecLimit = filterCount - (filterCount % 8);
             for (; fb < vecLimit; fb += 8)
             {
                 var vGrad = Vector256.Load(pdB + fb);
@@ -291,24 +245,23 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
                 var vDenom = Vector256.Sqrt(vVHat) + vEps;
                 var vStep = (vLr * vMHat) / vDenom;
 
-                var vBNew = vB - vStep;
-                vBNew.Store(pBiases + fb);
+                (vB - vStep).Store(pBiases + fb);
             }
         }
 
-        for (; fb < filters; fb++)
+        for (; fb < filterCount; fb++)
         {
             float grad = pdB[fb];
-            float m = b1 * pMBiases[fb] + one_minus_b1 * grad;
+            float m = _beta1 * pMBiases[fb] + one_minus_b1 * grad;
             pMBiases[fb] = m;
 
-            float v = b2 * pVBiases[fb] + one_minus_b2 * grad * grad;
+            float v = _beta2 * pVBiases[fb] + one_minus_b2 * grad * grad;
             pVBiases[fb] = v;
 
             float mHat = m * c_m;
             float vHat = v * c_v;
 
-            pBiases[fb] -= lr * mHat / (MathF.Sqrt(vHat) + eps);
+            pBiases[fb] -= _learningRate * mHat / (MathF.Sqrt(vHat) + _epsilon);
         }
     }
 
@@ -323,19 +276,15 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
         var vBiases = _denseHyperParameters.VBiases;
 
         _t++;
-        float lr = _learningRate;
-        float wd = _weightDecay;
-        float b1 = _beta1;
-        float b2 = _beta2;
-        float eps = _epsilon;
-        float t = _t;
+        _b1_pow *= _beta1;
+        _b2_pow *= _beta2;
+        float c_m = 1.0f / (1.0f - _b1_pow);
+        float c_v = 1.0f / (1.0f - _b2_pow);
+        float one_minus_b1 = 1.0f - _beta1;
+        float one_minus_b2 = 1.0f - _beta2;
 
-        float c_m = 1.0f / (1.0f - MathF.Pow(b1, t));
-        float c_v = 1.0f / (1.0f - MathF.Pow(b2, t));
-        float one_minus_b1 = 1.0f - b1;
-        float one_minus_b2 = 1.0f - b2;
 
-        float* pW = weights.Pointer;
+        float* pW = weights.Pointer;   
         float* pBiases = biases.Pointer;
         float* pdW = dW.Pointer;
         float* pdB = dB.Pointer;
@@ -349,55 +298,54 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
         int mStride = mWeights.ColumnsStride;
         int vStride = vWeights.ColumnsStride;
 
-        // =========================================================================
-        // 1. DENSE WEIGHTS UPDATE
-        // =========================================================================
         for (int inIdx = 0; inIdx < inputSize; inIdx++)
         {
             float* rowDW = pdW + inIdx * dWStride;
             float* rowM = pM + inIdx * mStride;
             float* rowV = pV + inIdx * vStride;
-            float* pWBase = pW + inIdx;
+            float* pWBase = pW + inIdx;   // stride wStride between outputs
 
-            int outIdx = 0;
+            int o = 0;
 
             if (Avx512F.IsSupported)
             {
-                var vB1 = Vector512.Create(b1);
+                var vB1 = Vector512.Create(_beta1);
                 var vOneMinusB1 = Vector512.Create(one_minus_b1);
-                var vB2 = Vector512.Create(b2);
+                var vB2 = Vector512.Create(_beta2);
                 var vOneMinusB2 = Vector512.Create(one_minus_b2);
                 var vCm = Vector512.Create(c_m);
                 var vCv = Vector512.Create(c_v);
-                var vLr = Vector512.Create(lr);
-                var vWd = Vector512.Create(wd);
-                var vEps = Vector512.Create(eps);
+                var vLr = Vector512.Create(_learningRate);
+                var vWd = Vector512.Create(_weightDecay);
+                var vEps = Vector512.Create(_epsilon);
 
                 int vecLimit = outputSize - (outputSize % 16);
-                for (; outIdx < vecLimit; outIdx += 16)
+                for (; o < vecLimit; o += 16)
                 {
-                    var vW = Vector512.Create(
-                        pWBase[(outIdx + 0) * wStride], pWBase[(outIdx + 1) * wStride],
-                        pWBase[(outIdx + 2) * wStride], pWBase[(outIdx + 3) * wStride],
-                        pWBase[(outIdx + 4) * wStride], pWBase[(outIdx + 5) * wStride],
-                        pWBase[(outIdx + 6) * wStride], pWBase[(outIdx + 7) * wStride],
-                        pWBase[(outIdx + 8) * wStride], pWBase[(outIdx + 9) * wStride],
-                        pWBase[(outIdx + 10) * wStride], pWBase[(outIdx + 11) * wStride],
-                        pWBase[(outIdx + 12) * wStride], pWBase[(outIdx + 13) * wStride],
-                        pWBase[(outIdx + 14) * wStride], pWBase[(outIdx + 15) * wStride]
-                    );
+                    // Vector loads for grad/m/v (contiguous).
+                    var vGrad = Vector512.Load(rowDW + o);
+                    var vM = Vector512.Load(rowM + o);
+                    var vV = Vector512.Load(rowV + o);
 
-                    var vGrad = Vector512.Load(rowDW + outIdx);
-                    var vM = Vector512.Load(rowM + outIdx);
-                    var vV = Vector512.Load(rowV + outIdx);
+                    // Weight load: still strided, but only here.
+                    var vW = Vector512.Create(
+                        pWBase[(o + 0) * wStride], pWBase[(o + 1) * wStride],
+                        pWBase[(o + 2) * wStride], pWBase[(o + 3) * wStride],
+                        pWBase[(o + 4) * wStride], pWBase[(o + 5) * wStride],
+                        pWBase[(o + 6) * wStride], pWBase[(o + 7) * wStride],
+                        pWBase[(o + 8) * wStride], pWBase[(o + 9) * wStride],
+                        pWBase[(o + 10) * wStride], pWBase[(o + 11) * wStride],
+                        pWBase[(o + 12) * wStride], pWBase[(o + 13) * wStride],
+                        pWBase[(o + 14) * wStride], pWBase[(o + 15) * wStride]
+                    );
 
                     vGrad = vGrad + (vWd * vW);
 
                     var vMNew = (vB1 * vM) + (vOneMinusB1 * vGrad);
-                    vMNew.Store(rowM + outIdx);
+                    vMNew.Store(rowM + o);
 
                     var vVNew = (vB2 * vV) + (vOneMinusB2 * (vGrad * vGrad));
-                    vVNew.Store(rowV + outIdx);
+                    vVNew.Store(rowV + o);
 
                     var vMHat = vMNew * vCm;
                     var vVHat = vVNew * vCv;
@@ -407,57 +355,58 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
 
                     var vWNew = vW - vStep;
 
-                    pWBase[(outIdx + 0) * wStride] = vWNew.GetElement(0);
-                    pWBase[(outIdx + 1) * wStride] = vWNew.GetElement(1);
-                    pWBase[(outIdx + 2) * wStride] = vWNew.GetElement(2);
-                    pWBase[(outIdx + 3) * wStride] = vWNew.GetElement(3);
-                    pWBase[(outIdx + 4) * wStride] = vWNew.GetElement(4);
-                    pWBase[(outIdx + 5) * wStride] = vWNew.GetElement(5);
-                    pWBase[(outIdx + 6) * wStride] = vWNew.GetElement(6);
-                    pWBase[(outIdx + 7) * wStride] = vWNew.GetElement(7);
-                    pWBase[(outIdx + 8) * wStride] = vWNew.GetElement(8);
-                    pWBase[(outIdx + 9) * wStride] = vWNew.GetElement(9);
-                    pWBase[(outIdx + 10) * wStride] = vWNew.GetElement(10);
-                    pWBase[(outIdx + 11) * wStride] = vWNew.GetElement(11);
-                    pWBase[(outIdx + 12) * wStride] = vWNew.GetElement(12);
-                    pWBase[(outIdx + 13) * wStride] = vWNew.GetElement(13);
-                    pWBase[(outIdx + 14) * wStride] = vWNew.GetElement(14);
-                    pWBase[(outIdx + 15) * wStride] = vWNew.GetElement(15);
+                    // Scatter back to the strided weight buffer.
+                    pWBase[(o + 0) * wStride] = vWNew.GetElement(0);
+                    pWBase[(o + 1) * wStride] = vWNew.GetElement(1);
+                    pWBase[(o + 2) * wStride] = vWNew.GetElement(2);
+                    pWBase[(o + 3) * wStride] = vWNew.GetElement(3);
+                    pWBase[(o + 4) * wStride] = vWNew.GetElement(4);
+                    pWBase[(o + 5) * wStride] = vWNew.GetElement(5);
+                    pWBase[(o + 6) * wStride] = vWNew.GetElement(6);
+                    pWBase[(o + 7) * wStride] = vWNew.GetElement(7);
+                    pWBase[(o + 8) * wStride] = vWNew.GetElement(8);
+                    pWBase[(o + 9) * wStride] = vWNew.GetElement(9);
+                    pWBase[(o + 10) * wStride] = vWNew.GetElement(10);
+                    pWBase[(o + 11) * wStride] = vWNew.GetElement(11);
+                    pWBase[(o + 12) * wStride] = vWNew.GetElement(12);
+                    pWBase[(o + 13) * wStride] = vWNew.GetElement(13);
+                    pWBase[(o + 14) * wStride] = vWNew.GetElement(14);
+                    pWBase[(o + 15) * wStride] = vWNew.GetElement(15);
                 }
             }
             else if (Avx2.IsSupported)
             {
-                var vB1 = Vector256.Create(b1);
+                var vB1 = Vector256.Create(_beta1);
                 var vOneMinusB1 = Vector256.Create(one_minus_b1);
-                var vB2 = Vector256.Create(b2);
+                var vB2 = Vector256.Create(_beta2);
                 var vOneMinusB2 = Vector256.Create(one_minus_b2);
                 var vCm = Vector256.Create(c_m);
                 var vCv = Vector256.Create(c_v);
-                var vLr = Vector256.Create(lr);
-                var vWd = Vector256.Create(wd);
-                var vEps = Vector256.Create(eps);
+                var vLr = Vector256.Create(_learningRate);
+                var vWd = Vector256.Create(_weightDecay);
+                var vEps = Vector256.Create(_epsilon);
 
                 int vecLimit = outputSize - (outputSize % 8);
-                for (; outIdx < vecLimit; outIdx += 8)
+                for (; o < vecLimit; o += 8)
                 {
-                    var vW = Vector256.Create(
-                        pWBase[(outIdx + 0) * wStride], pWBase[(outIdx + 1) * wStride],
-                        pWBase[(outIdx + 2) * wStride], pWBase[(outIdx + 3) * wStride],
-                        pWBase[(outIdx + 4) * wStride], pWBase[(outIdx + 5) * wStride],
-                        pWBase[(outIdx + 6) * wStride], pWBase[(outIdx + 7) * wStride]
-                    );
+                    var vGrad = Vector256.Load(rowDW + o);
+                    var vM = Vector256.Load(rowM + o);
+                    var vV = Vector256.Load(rowV + o);
 
-                    var vGrad = Vector256.Load(rowDW + outIdx);
-                    var vM = Vector256.Load(rowM + outIdx);
-                    var vV = Vector256.Load(rowV + outIdx);
+                    var vW = Vector256.Create(
+                        pWBase[(o + 0) * wStride], pWBase[(o + 1) * wStride],
+                        pWBase[(o + 2) * wStride], pWBase[(o + 3) * wStride],
+                        pWBase[(o + 4) * wStride], pWBase[(o + 5) * wStride],
+                        pWBase[(o + 6) * wStride], pWBase[(o + 7) * wStride]
+                    );
 
                     vGrad = vGrad + (vWd * vW);
 
                     var vMNew = (vB1 * vM) + (vOneMinusB1 * vGrad);
-                    vMNew.Store(rowM + outIdx);
+                    vMNew.Store(rowM + o);
 
                     var vVNew = (vB2 * vV) + (vOneMinusB2 * (vGrad * vGrad));
-                    vVNew.Store(rowV + outIdx);
+                    vVNew.Store(rowV + o);
 
                     var vMHat = vMNew * vCm;
                     var vVHat = vVNew * vCv;
@@ -467,63 +416,63 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
 
                     var vWNew = vW - vStep;
 
-                    pWBase[(outIdx + 0) * wStride] = vWNew.GetElement(0);
-                    pWBase[(outIdx + 1) * wStride] = vWNew.GetElement(1);
-                    pWBase[(outIdx + 2) * wStride] = vWNew.GetElement(2);
-                    pWBase[(outIdx + 3) * wStride] = vWNew.GetElement(3);
-                    pWBase[(outIdx + 4) * wStride] = vWNew.GetElement(4);
-                    pWBase[(outIdx + 5) * wStride] = vWNew.GetElement(5);
-                    pWBase[(outIdx + 6) * wStride] = vWNew.GetElement(6);
-                    pWBase[(outIdx + 7) * wStride] = vWNew.GetElement(7);
+                    pWBase[(o + 0) * wStride] = vWNew.GetElement(0);
+                    pWBase[(o + 1) * wStride] = vWNew.GetElement(1);
+                    pWBase[(o + 2) * wStride] = vWNew.GetElement(2);
+                    pWBase[(o + 3) * wStride] = vWNew.GetElement(3);
+                    pWBase[(o + 4) * wStride] = vWNew.GetElement(4);
+                    pWBase[(o + 5) * wStride] = vWNew.GetElement(5);
+                    pWBase[(o + 6) * wStride] = vWNew.GetElement(6);
+                    pWBase[(o + 7) * wStride] = vWNew.GetElement(7);
                 }
             }
 
-            for (; outIdx < outputSize; outIdx++)
+            for (; o < outputSize; o++)
             {
-                float w = pWBase[outIdx * wStride];
-                float grad = rowDW[outIdx] + wd * w;
+                float w = pWBase[o * wStride];
+                float grad = rowDW[o] + _weightDecay * w;
 
-                float m = b1 * rowM[outIdx] + one_minus_b1 * grad;
-                rowM[outIdx] = m;
+                float m = _beta1 * rowM[o] + one_minus_b1 * grad;
+                rowM[o] = m;
 
-                float v = b2 * rowV[outIdx] + one_minus_b2 * grad * grad;
-                rowV[outIdx] = v;
+                float v = _beta2 * rowV[o] + one_minus_b2 * grad * grad;
+                rowV[o] = v;
 
                 float mHat = m * c_m;
                 float vHat = v * c_v;
 
-                pWBase[outIdx * wStride] -= lr * mHat / (MathF.Sqrt(vHat) + eps);
+                pWBase[o * wStride] = w - _learningRate * mHat / (MathF.Sqrt(vHat) + _epsilon);
             }
         }
 
-        // =========================================================================
-        // 2. DENSE BIASES UPDATE
-        // =========================================================================
-        int i = 0;
+        // -----------------------------------------------------------------
+        // 2. DENSE BIASES
+        // -----------------------------------------------------------------
+        int bi = 0;
         if (Avx512F.IsSupported)
         {
-            var vB1 = Vector512.Create(b1);
+            var vB1 = Vector512.Create(_beta1);
             var vOneMinusB1 = Vector512.Create(one_minus_b1);
-            var vB2 = Vector512.Create(b2);
+            var vB2 = Vector512.Create(_beta2);
             var vOneMinusB2 = Vector512.Create(one_minus_b2);
             var vCm = Vector512.Create(c_m);
             var vCv = Vector512.Create(c_v);
-            var vLr = Vector512.Create(lr);
-            var vEps = Vector512.Create(eps);
+            var vLr = Vector512.Create(_learningRate);
+            var vEps = Vector512.Create(_epsilon);
 
             int vecLimit = outputSize - (outputSize % 16);
-            for (; i < vecLimit; i += 16)
+            for (; bi < vecLimit; bi += 16)
             {
-                var vGrad = Vector512.Load(pdB + i);
-                var vM = Vector512.Load(pMBiases + i);
-                var vV = Vector512.Load(pVBiases + i);
-                var vB = Vector512.Load(pBiases + i);
+                var vGrad = Vector512.Load(pdB + bi);
+                var vM = Vector512.Load(pMBiases + bi);
+                var vV = Vector512.Load(pVBiases + bi);
+                var vB = Vector512.Load(pBiases + bi);
 
                 var vMNew = (vB1 * vM) + (vOneMinusB1 * vGrad);
-                vMNew.Store(pMBiases + i);
+                vMNew.Store(pMBiases + bi);
 
                 var vVNew = (vB2 * vV) + (vOneMinusB2 * (vGrad * vGrad));
-                vVNew.Store(pVBiases + i);
+                vVNew.Store(pVBiases + bi);
 
                 var vMHat = vMNew * vCm;
                 var vVHat = vVNew * vCv;
@@ -531,34 +480,33 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
                 var vDenom = Vector512.Sqrt(vVHat) + vEps;
                 var vStep = (vLr * vMHat) / vDenom;
 
-                var vBNew = vB - vStep;
-                vBNew.Store(pBiases + i);
+                (vB - vStep).Store(pBiases + bi);
             }
         }
         else if (Avx2.IsSupported)
         {
-            var vB1 = Vector256.Create(b1);
+            var vB1 = Vector256.Create(_beta1);
             var vOneMinusB1 = Vector256.Create(one_minus_b1);
-            var vB2 = Vector256.Create(b2);
+            var vB2 = Vector256.Create(_beta2);
             var vOneMinusB2 = Vector256.Create(one_minus_b2);
             var vCm = Vector256.Create(c_m);
             var vCv = Vector256.Create(c_v);
-            var vLr = Vector256.Create(lr);
-            var vEps = Vector256.Create(eps);
+            var vLr = Vector256.Create(_learningRate);
+            var vEps = Vector256.Create(_epsilon);
 
             int vecLimit = outputSize - (outputSize % 8);
-            for (; i < vecLimit; i += 8)
+            for (; bi < vecLimit; bi += 8)
             {
-                var vGrad = Vector256.Load(pdB + i);
-                var vM = Vector256.Load(pMBiases + i);
-                var vV = Vector256.Load(pVBiases + i);
-                var vB = Vector256.Load(pBiases + i);
+                var vGrad = Vector256.Load(pdB + bi);
+                var vM = Vector256.Load(pMBiases + bi);
+                var vV = Vector256.Load(pVBiases + bi);
+                var vB = Vector256.Load(pBiases + bi);
 
                 var vMNew = (vB1 * vM) + (vOneMinusB1 * vGrad);
-                vMNew.Store(pMBiases + i);
+                vMNew.Store(pMBiases + bi);
 
                 var vVNew = (vB2 * vV) + (vOneMinusB2 * (vGrad * vGrad));
-                vVNew.Store(pVBiases + i);
+                vVNew.Store(pVBiases + bi);
 
                 var vMHat = vMNew * vCm;
                 var vVHat = vVNew * vCv;
@@ -566,24 +514,23 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
                 var vDenom = Vector256.Sqrt(vVHat) + vEps;
                 var vStep = (vLr * vMHat) / vDenom;
 
-                var vBNew = vB - vStep;
-                vBNew.Store(pBiases + i);
+                (vB - vStep).Store(pBiases + bi);
             }
         }
 
-        for (; i < outputSize; i++)
+        for (; bi < outputSize; bi++)
         {
-            float grad = pdB[i];
-            float m = b1 * pMBiases[i] + one_minus_b1 * grad;
-            pMBiases[i] = m;
+            float grad = pdB[bi];
+            float m = _beta1 * pMBiases[bi] + one_minus_b1 * grad;
+            pMBiases[bi] = m;
 
-            float v = b2 * pVBiases[i] + one_minus_b2 * grad * grad;
-            pVBiases[i] = v;
+            float v = _beta2 * pVBiases[bi] + one_minus_b2 * grad * grad;
+            pVBiases[bi] = v;
 
             float mHat = m * c_m;
             float vHat = v * c_v;
 
-            pBiases[i] -= lr * mHat / (MathF.Sqrt(vHat) + eps);
+            pBiases[bi] -= _learningRate * mHat / (MathF.Sqrt(vHat) + _epsilon);
         }
     }
 

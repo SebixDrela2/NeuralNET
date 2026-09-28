@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using NeutralNET.Framework.Connected;
 using NeutralNET.Framework.Convolutional;
+using NeutralNET.GPU;
 using NeutralNET.Matrices;
 
 namespace NeutralNET.Framework.Neural.CNN;
@@ -15,9 +16,24 @@ public class CnnNetwork
         _framework = framework;
     }
 
+    public void SetPerf()
+    {
+        _framework.Perf = null;//new PerfCounter("CNN");
+        GpuMatrixOps.Perf = null;//new PerfCounter("OPS");
+    }
+
+    public void Report()
+    {
+        _framework.Perf!.Report();
+        GpuMatrixOps.Perf!.Report();
+
+        GpuMatrixOps.Perf = null;
+        _framework.Perf = null;
+    }
+
     public float TrainBatch(CnnMatrix input, NeuralMatrix target, float learningRate)
     {
-        return _framework.Train(input, target, learningRate);
+        return _framework.TrainBatch(input, target, learningRate);
     }
 
     public NeuralMatrix Forward(CnnMatrix input)
