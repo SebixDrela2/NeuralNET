@@ -902,8 +902,8 @@ public sealed unsafe class CnnNeuralFramework
         NeuralMatrix gradPatchMat = cnvParams.GradPatchMat;
 
         dW.Clear();      
-        dB.Clear();      
-        gradInput.Clear()
+        dB.Clear();
+        gradInput.Clear();
 
         BackPropagateThroughPool(currentGrad, layer, gradInput, indices);
         ComputePreGradient(layer, preGrad, postAct, gradInput);
