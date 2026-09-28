@@ -62,6 +62,7 @@ public class CnnTrainer : IDisposable
     {
         var testImg = dataSet.Test.ImagesData;
         var testLbl = dataSet.Test.LabelsData;
+        if (testImg is []) throw new InvalidOperationException();
 
         display.TotalLoss = totalLoss;
 
@@ -69,59 +70,64 @@ public class CnnTrainer : IDisposable
         display.Accuracy = result.Accuracy;
 
         var offset = 0;
+        var sampleBatch = testImg[0];
+        var sampleLabels = testLbl[0];
+        using var pred = _network.Forward(sampleBatch);
 
-        if (testImg.Length > 0)
-        {
-            var sampleBatch = testImg[0];
-            var sampleLabels = testLbl[0];
-            var pred = _network.Forward(sampleBatch);
+        var numSamples = Math.Min(numClasses, sampleBatch.Batch);
 
-            var numSamples = Math.Min(numClasses, sampleBatch.Batch);
-
-            var orderedSamples = Enumerable
-                .Range(0, sampleBatch.Batch)
-                .Select(i =>
-                {
-                    var actual = GetActualLabelFromRow(sampleLabels, i, numClasses);
-                    var pred2 = pred.GetRowSpan(i);
-                    var maxError = 0f;
-
-                    for (var j = 0; j < pred2.Length; ++j)
-                    {
-                        if (j == actual)
-                        {
-                            var error = 1 - pred2[j];
-                            maxError = float.Max(maxError, error);
-                        }
-                        else
-                        {
-                            var error = pred2[j];
-                            maxError = float.Max(maxError, error);
-                        }
-                    }
-                    return (Index: i, Letter: actual, Error: maxError);
-                })
-                .OrderBy(x => x.Letter)
-                .ThenByDescending(x => x.Error)
-                .ToArray();
-            var distinctOrderedSamples = orderedSamples.DistinctBy(x => x.Letter).ToArray();
-
-            for (int i = 0; i < distinctOrderedSamples.Length; i++)
+        var orderedSamples = Enumerable
+            .Range(0, sampleBatch.Batch)
+            .Select(i =>
             {
-                var distinctOrderedSample = distinctOrderedSamples[i];
-                results[offset++] = distinctOrderedSample.Letter;
+                var actual = GetActualLabelFromRow(sampleLabels, i, numClasses);
+                var pred2 = pred.GetRowSpan(i);
+                //var maxError = 0f;
+                var maxErr = (Index: 0, Value: 0f);
+                var maxArg = (Index: 0, Value: 0f);
 
-                var probs = results[offset..(offset += numClasses)];
-                pred.GetRowSpan(distinctOrderedSample.Index).CopyTo(probs);
-            }
+                for (var j = 0; j < pred2.Length; ++j)
+                {
+                    float arg = pred2[j];
+                    float error = j == actual ? 1 - arg : arg;
+
+                    if (j == 0)
+                    {
+                        maxArg = (j, arg);
+                        maxErr = (j, error);
+                    }
+                    else
+                    {
+                        if (arg > maxArg.Value) maxArg = (j, arg);
+                        if (error > maxErr.Value) maxErr = (j, error);
+                    }
+                }
+                return (Index: i, Letter: actual, Result: maxArg.Index == actual, MaxError: maxErr.Value);
+            })
+            .OrderBy(x => x.Letter)
+            .ThenByDescending(x => x.MaxError)
+            .ToArray();
+        var distinctOrderedSamples = orderedSamples.GroupBy(
+            x => x.Letter,
+            (k, x) => (Letter: k, Items: x.OrderByDescending(y => y.MaxError).Select(y => (y.Index, y.Result, y.MaxError)).ToArray())
+        ).ToArray();
+
+        for (int i = 0; i < distinctOrderedSamples.Length; i++)
+        {
+            var (letter, items) = distinctOrderedSamples[i];
+
+            results[offset++] = letter;
+            var probs = results[offset..(offset += numClasses)];
+            var topIndex = items[0].Index;
+            pred.GetRowSpan(topIndex).CopyTo(probs);
         }
 
-        return DisplayWithControlFlow(display, dataSet, results, offset);
+        return DisplayWithControlFlow(display, dataSet, results[..offset], distinctOrderedSamples);
     }
 
-    private bool DisplayWithControlFlow(CnnDisplayWriter display, NeuralDataSet dataset, Span<float> results, int offset)
+    private bool DisplayWithControlFlow(CnnDisplayWriter display, NeuralDataSet dataset, Span<float> results, (int Letter, (int Index, bool Result, float MaxError)[] Items)[] results2)
     {
-        display.Update(results[..offset]);
+        display.Update(results, results2);
 
         if (display.EpochsSinceBest == 1)
         {

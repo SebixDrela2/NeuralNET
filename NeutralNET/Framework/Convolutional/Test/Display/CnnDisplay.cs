@@ -38,7 +38,7 @@ public class CnnDisplayWriter(char[] items, int dataSetSize)
         Console.Write("\e[2J\e[3J\e[H");
     }
 
-    public void Update(ReadOnlySpan<float> xss)
+    public void Update(ReadOnlySpan<float> xss, (int Letter, (int Index, bool Result, float MaxError)[] Items)[] results2)
     {
         var prevTs = Exchange(ref TimeStamp, Stopwatch.GetTimestamp());
         var elapsed = prevTs is 0 ? default : Stopwatch.GetElapsedTime(prevTs, TimeStamp);
@@ -71,12 +71,29 @@ public class CnnDisplayWriter(char[] items, int dataSetSize)
                 Console.Write($"{FmtPogression(probs[j], j == actual)}");
             }
 
-            bool isOk = predicted == actual;
-            var mark = isOk ? AsGreen("✓") : AsRed("✗");
-            var lhs = predChar.ToString();
-            var rhs = actualChar.ToString();
 
-            Console.WriteLine($"│ {lhs} {mark} {rhs}\e[K");
+            if (results2.FirstOrDefault(x => x.Letter == actual) is { Items: var rs })
+            {
+                var lhs = predChar.ToString();
+                var rhs = actualChar.ToString();
+                Console.Write($"│ {lhs} ");
+                foreach (var (_, isOk, _) in rs)
+                {
+                    var mark = isOk ? AsGreen("✓") : AsRed("✗");
+                    Console.Write($"{mark}");
+                }
+                Console.WriteLine($" {rhs}\e[K");
+
+            }
+            else
+            {
+                bool isOk = predicted == actual;
+                var mark = isOk ? AsGreen("✓") : AsRed("✗");
+                var lhs = predChar.ToString();
+                var rhs = actualChar.ToString();
+                Console.WriteLine($"│ {lhs} {mark} {rhs}\e[K");
+            }
+
 
         }
 
