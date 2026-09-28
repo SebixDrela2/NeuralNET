@@ -840,7 +840,7 @@ public sealed unsafe class CnnNeuralFramework
         foreach (var elem in _convHyperParameters)
         {
             elem.SetBatchLimit(limit);
-            elem.Input.Batch = limit;
+            elem.Input.Batch = limit; 
         }
 
         foreach (var (_, _, preAct, postAct) in _denseHyperParameters)
@@ -848,6 +848,21 @@ public sealed unsafe class CnnNeuralFramework
             preAct.SetRowSize(limit);
             postAct.SetRowSize(limit);
         }
+
+        foreach (var m in _denseLayerMatrixes)
+        {
+            m.SetRowSize(limit);
+        }
+
+        foreach (var r in _reverseDenseHyperParameters)
+        {
+            r.GradPre.SetRowSize(limit);
+            r.GradInput.SetRowSize(limit);
+        }
+
+        _flattenedInput!.SetRowSize(limit);
+        _pooledOutputGrad.SetBatch(limit); 
+        _outputGrad.SetRowSize(limit);
     }
 
     private void PerformConvolutionBackwardPass()
@@ -885,6 +900,10 @@ public sealed unsafe class CnnNeuralFramework
         NeuralMatrix dB = cnvParams.DBiases;
         CnnMatrix inputGrad = cnvParams.InputGrad;
         NeuralMatrix gradPatchMat = cnvParams.GradPatchMat;
+
+        dW.Clear();      
+        dB.Clear();      
+        gradInput.Clear()
 
         BackPropagateThroughPool(currentGrad, layer, gradInput, indices);
         ComputePreGradient(layer, preGrad, postAct, gradInput);
@@ -1210,10 +1229,11 @@ public sealed unsafe class CnnNeuralFramework
 
     private void BulkMemoryCopy()
     {
-        float* pDenseGrad = _outputGrad.Pointer;
+        var denseGradInput = _reverseDenseHyperParameters[0].GradInput;
+        float* pDenseGrad = denseGradInput.Pointer;
         float* pPooledGrad = _pooledOutputGrad.Pointer;
 
-        int denseStride = _outputGrad.ColumnsStride;
+        int denseStride = denseGradInput.ColumnsStride;
         int spatialDim = _pooledOutputGrad.Channels * _pooledOutputGrad.Height * _pooledOutputGrad.Width;
 
         for (int b = 0; b < _pooledOutputGrad.Batch; b++)
@@ -1221,7 +1241,6 @@ public sealed unsafe class CnnNeuralFramework
             float* srcRow = pDenseGrad + b * denseStride;
             float* dstRow = pPooledGrad + b * spatialDim;
             nuint bytesToCopy = (nuint)spatialDim * sizeof(float);
-
             NativeMemory.Copy(srcRow, dstRow, bytesToCopy);
         }
     }

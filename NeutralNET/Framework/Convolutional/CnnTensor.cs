@@ -111,6 +111,14 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
         NativeMemory.Copy(other.Pointer, Pointer, nuint.Min(MemoryHandle.ByteSize, other.MemoryHandle.ByteSize));
     }
 
+    public void SetBatch(int batch)
+    {
+        Batch = batch;
+        UnsafeSize = batch * Channels * Height * Width;
+        // Note: MemoryHandle.ByteSize stays at the allocation size,
+        // which is intentionally larger than UnsafeSize after shrinking.
+    }
+
     public void Im2Col(NeuralMatrix colInput, int kernelH, int kernelW, int stride, int padding)
     {
         EnsureNotDisposed();
