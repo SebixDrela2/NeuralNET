@@ -156,7 +156,6 @@ public class CnnTrainer : IDisposable
             return false;
         }
 
-
         if (display.Accuracy is >= 1)
         {
             Console.Write("\e[J");
