@@ -34,19 +34,23 @@ public class CnnTrainingConfig
                 [
                     new() {
                         KernelHeight = 3, KernelWidth = 3, Filters = 32, Stride = 1, Padding = 1,
-                        Activation = ActivationType.LeakyReLU, UseMaxPool = true, PoolSize = 2
+                        Activation = ActivationType.LeakyReLU, UseMaxPool = true, PoolSize = 2,
+                        UseBatchNorm = true, BatchNormMomentum = 0.1f, BatchNormEpsilon = 1e-5f,
                     },
                     new() {
                         KernelHeight = 3, KernelWidth = 3, Filters = 64, Stride = 1, Padding = 1,
-                        Activation = ActivationType.LeakyReLU, UseMaxPool = true, PoolSize = 2
+                        Activation = ActivationType.LeakyReLU, UseMaxPool = true, PoolSize = 2,
+                        UseBatchNorm = true, BatchNormMomentum = 0.1f, BatchNormEpsilon = 1e-5f,
                     },
                     new() {
                         KernelHeight = 3, KernelWidth = 3, Filters = 128, Stride = 1, Padding = 1,
-                        Activation = ActivationType.LeakyReLU, UseMaxPool = true, PoolSize = 2
+                        Activation = ActivationType.LeakyReLU, UseMaxPool = true, PoolSize = 2,
+                        UseBatchNorm = true, BatchNormMomentum = 0.1f, BatchNormEpsilon = 1e-5f,
                     },
                     new() {
                         KernelHeight = 3, KernelWidth = 3, Filters = 128, Stride = 1, Padding = 1,
-                        Activation = ActivationType.LeakyReLU, UseMaxPool = false
+                        Activation = ActivationType.LeakyReLU, UseMaxPool = false,
+                        UseBatchNorm = true, BatchNormMomentum = 0.1f, BatchNormEpsilon = 1e-5f,
                     },
                 ],
                 DenseArchitecture = [512, numClasses],

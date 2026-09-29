@@ -1,6 +1,4 @@
 using System.Runtime.InteropServices;
-using System.Runtime.Intrinsics;
-using System.Runtime.Intrinsics.X86;
 using System.Text.RegularExpressions;
 using NeutralNET.Activation;
 using NeutralNET.Framework.Connected.Neural;
@@ -17,11 +15,17 @@ namespace NeutralNET.Framework.Neural.CNN;
 using static ConvRenter;
 using static NeuralRenter;
 
+
+using System;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
+
 /// <summary>
 /// Zero-GC CNN framework with full object and buffer pooling, pluggable optimizers,
 /// and low-latency P/Invoke CUDA/cuBLAS GPU matrix acceleration.
+/// Optionally inserts BatchNorm between Conv+Bias and Activation, per layer.
 /// </summary>
-public sealed unsafe class CnnNeuralFramework
+public sealed unsafe partial class CnnNeuralFramework
 {
     public const bool EnableGpu = true;
     private const int Avx256Size = 8;
@@ -39,6 +43,10 @@ public sealed unsafe class CnnNeuralFramework
     private readonly List<DerivativeFunction> _denseDerivatives;
     private readonly List<ICnnOptimizer> _convOptimizers;
     private readonly List<ICnnOptimizer> _denseOptimizers;
+
+    // BatchNorm state — one entry per conv layer, null when UseBatchNorm = false.
+    // BatchNormParams owns its own AdamW moments and step counter.
+    private readonly List<BatchNormParams?> _bnParams = [];
 
     private readonly List<NeuralMatrix> _denseLayerMatrixes = [];
     private readonly List<DenseHyperParameters> _denseHyperParameters = [];
@@ -246,9 +254,50 @@ public sealed unsafe class CnnNeuralFramework
 
         SetUpOptimizerPerCnnLayer(dW);
 
+        if (layer.UseBatchNorm)
+        {
+            var bn = SetupBatchNormParams(layer.Filters, convOutSz, layer.BatchNormMomentum, layer.BatchNormEpsilon);
+            _bnParams.Add(bn);
+        }
+        else
+        {
+            _bnParams.Add(null);
+        }
+
         prevInput = nextLayer;
 
         return prevInput;
+    }
+
+    private BatchNormParams SetupBatchNormParams(int channels, CnnSize convOutSz, float momentum, float epsilon)
+    {
+        var bn = new BatchNormParams
+        {
+            Channels = channels,
+            Momentum = momentum,
+            Epsilon = epsilon,
+
+            Gamma = RentNeural(1, channels),
+            Beta = RentNeural(1, channels),
+            RunningMean = RentNeural(1, channels),
+            RunningVar = RentNeural(1, channels),
+            Mean = RentNeural(1, channels),
+            InvStd = RentNeural(1, channels),
+            GradGamma = RentNeural(1, channels),
+            GradBeta = RentNeural(1, channels),
+            MGamma = RentNeural(1, channels),
+            VGamma = RentNeural(1, channels),
+            MBeta = RentNeural(1, channels),
+            VBeta = RentNeural(1, channels),
+
+            Normalized = RentCnn(convOutSz),
+            Output = RentCnn(convOutSz),
+            GradInput = RentCnn(convOutSz),
+        };
+
+        bn.Init();
+
+        return bn;
     }
 
     private void SetUpOptimizerPerCnnLayer(NeuralMatrix dW)
@@ -267,6 +316,9 @@ public sealed unsafe class CnnNeuralFramework
         _convOptimizers.Add(opt);
     }
 
+    // =====================================================================
+    // BatchNorm forward / backward
+    // =====================================================================
     private void SetUpCublasForDense()
     {
         for (var i = 0; i < _denseHyperParameters.Count; i++)
@@ -472,11 +524,24 @@ public sealed unsafe class CnnNeuralFramework
             var convPreAct = _convHyperParameters[i].PreAct;
             var pooled = _convHyperParameters[i].Pooled;
 
-            var pAct = convPreAct.Pointer;
-            var totalElements = convPreAct.Batch * convPreAct.Channels * convPreAct.Height * convPreAct.Width;
+            var bn = _bnParams[i];
+
+            CnnMatrix activationInput;
+            if (bn != null)
+            {
+                VectorizedBatchNorm.BatchNormInference(convPreAct, bn);
+                activationInput = bn.Output;
+            }
+            else
+            {
+                activationInput = convPreAct;
+            }
+
+            var pAct = activationInput.Pointer;
+            var totalElements = activationInput.Batch * activationInput.Channels * activationInput.Height * activationInput.Width;
 
             ApplyActivationVectorized(pAct, totalElements, layer.Activation);
-            MaxPoolForwardInPlace(convPreAct, pooled, layer.PoolSize);
+            MaxPoolForwardInPlace(activationInput, pooled, layer.PoolSize);
 
             output[i] = pooled;
         }
@@ -496,6 +561,16 @@ public sealed unsafe class CnnNeuralFramework
         {
             SaveCnnMatrix(writer, _convHyperParameters[i].Weights);
             SaveCnnMatrix(writer, _convHyperParameters[i].Biases);
+
+            var bn = _bnParams[i];
+            writer.Write(bn != null);
+            if (bn != null)
+            {
+                SaveNeuralMatrix(writer, bn.Gamma);
+                SaveNeuralMatrix(writer, bn.Beta);
+                SaveNeuralMatrix(writer, bn.RunningMean);
+                SaveNeuralMatrix(writer, bn.RunningVar);
+            }
         }
 
         for (int i = 0; i < _denseHyperParameters.Count; i++)
@@ -540,6 +615,25 @@ public sealed unsafe class CnnNeuralFramework
         {
             LoadCnnMatrix(reader, _convHyperParameters[i].Weights);
             LoadCnnMatrix(reader, _convHyperParameters[i].Biases);
+
+            var bn = _bnParams[i];
+            bool savedHasBn = reader.ReadBoolean();
+
+            if (savedHasBn != (bn != null))
+            {
+                throw new InvalidOperationException(
+                    $"BatchNorm presence mismatch at conv layer {i}: " +
+                    $"checkpoint has {(savedHasBn ? "BN" : "no BN")}, " +
+                    $"framework has {(bn != null ? "BN" : "no BN")}.");
+            }
+
+            if (bn != null)
+            {
+                LoadNeuralMatrix(reader, bn.Gamma);
+                LoadNeuralMatrix(reader, bn.Beta);
+                LoadNeuralMatrix(reader, bn.RunningMean);
+                LoadNeuralMatrix(reader, bn.RunningVar);
+            }
         }
 
         for (int i = 0; i < _denseHyperParameters.Count; i++)
@@ -665,6 +759,7 @@ public sealed unsafe class CnnNeuralFramework
         foreach (var alloc in _cublasConvAllocations) alloc.Dispose();
         foreach (var alloc in _cublasDenseAllocations) alloc.Dispose();
         foreach (var alloc in _cublasReverseDenseAllocations) alloc.Dispose();
+        foreach (var bn in _bnParams) bn?.Dispose();
 
         _pooledOutputGrad.Dispose();
         _outputGrad.Dispose();
@@ -722,15 +817,28 @@ public sealed unsafe class CnnNeuralFramework
 
             var convPreAct = _convHyperParameters[layerIdx].PreAct;
             var pooled = _convHyperParameters[layerIdx].Pooled;
+            var bn = _bnParams[layerIdx];
 
-            var pAct = convPreAct.Pointer;
-            var totalElements = convPreAct.Batch * convPreAct.Channels * convPreAct.Height * convPreAct.Width;
+            CnnMatrix activationInput;
+            if (bn != null)
+            {
+                using (Perf?.Measure($"{prefix}.BatchNorm"))
+                    VectorizedBatchNorm.BatchNormInference(convPreAct, bn);
+                activationInput = bn.Output;
+            }
+            else
+            {
+                activationInput = convPreAct;
+            }
+
+            var pAct = activationInput.Pointer;
+            var totalElements = activationInput.Batch * activationInput.Channels * activationInput.Height * activationInput.Width;
 
             using (Perf?.Measure($"{prefix}.Activation"))
                 ApplyActivationVectorized(pAct, totalElements, layer.Activation);
 
             using (Perf?.Measure($"{prefix}.MaxPool"))
-                MaxPoolForwardInPlace(convPreAct, pooled, layer.PoolSize);
+                MaxPoolForwardInPlace(activationInput, pooled, layer.PoolSize);
 
             current = pooled;
         }
@@ -885,6 +993,14 @@ public sealed unsafe class CnnNeuralFramework
             r.GradInput.SetRowSize(limit);
         }
 
+        foreach (var bn in _bnParams)
+        {
+            if (bn is null) continue;
+            bn.Normalized.SetBatch(limit);
+            bn.Output.SetBatch(limit);
+            bn.GradInput.SetBatch(limit);
+        }
+
         _flattenedInput!.SetRowSize(limit);
         _pooledOutputGrad.SetBatch(limit);
         _outputGrad.SetRowSize(limit);
@@ -926,6 +1042,8 @@ public sealed unsafe class CnnNeuralFramework
         CnnMatrix inputGrad = cnvParams.InputGrad;
         NeuralMatrix gradPatchMat = cnvParams.GradPatchMat;
 
+        var bn = _bnParams[layerIdx];
+
         var prefix = $"ConvBack[{layerIdx}]";
 
         using (Perf?.Measure($"{prefix}.Clear"))
@@ -941,8 +1059,21 @@ public sealed unsafe class CnnNeuralFramework
         using (Perf?.Measure($"{prefix}.PreGradient"))
             ComputePreGradient(layer, preGrad, postAct, gradInput);
 
+        CnnMatrix convOutputGrad;
+        if (bn != null)
+        {
+            using (Perf?.Measure($"{prefix}.BatchNormBackward"))
+                VectorizedBatchNorm.BatchNormBackward(preGrad, bn);
+
+            convOutputGrad = bn.GradInput;
+        }
+        else
+        {
+            convOutputGrad = preGrad;
+        }
+
         using (Perf?.Measure($"{prefix}.ConvertPregrad"))
-            ConvertPregradToMatrix(preGrad, preGradMatrix);
+            ConvertPregradToMatrix(convOutputGrad, preGradMatrix);
 
         var patches = preGradMatrix.Rows;
         var filters = preGrad.Channels;
@@ -961,6 +1092,18 @@ public sealed unsafe class CnnNeuralFramework
                 cnvParams.Biases,
                 dW,
                 dB);
+        }
+
+        // BN gamma/beta: inline AdamW step owned by the params object.
+        if (bn != null)
+        {
+            using (Perf?.Measure($"{prefix}.BnStep"))
+                bn.Step(
+                    _cnnConfig.OptimizerConfig.LearningRate,
+                    _cnnConfig.OptimizerConfig.WeightDecay,
+                    _cnnConfig.OptimizerConfig.Beta1,
+                    _cnnConfig.OptimizerConfig.Beta2,
+                    _cnnConfig.OptimizerConfig.Epsilon);
         }
 
         using (Perf?.Measure($"{prefix}.InputGrad"))
@@ -1362,9 +1505,21 @@ public sealed unsafe class CnnNeuralFramework
 
             var preAct = _convHyperParameters[layerIdx].PreAct;
             var postAct = _convHyperParameters[layerIdx].PostAct;
+            var bn = _bnParams[layerIdx];
 
-            using (Perf?.Measure($"{prefix}.CopyPostAct"))
-                postAct.CopyFrom(preAct);
+            if (bn != null)
+            {
+                using (Perf?.Measure($"{prefix}.BatchNormForward"))
+                    VectorizedBatchNorm.BatchNormForward(preAct, bn);
+
+                using (Perf?.Measure($"{prefix}.CopyBnToPostAct"))
+                    postAct.CopyFrom(bn.Output);
+            }
+            else
+            {
+                using (Perf?.Measure($"{prefix}.CopyPostAct"))
+                    postAct.CopyFrom(preAct);
+            }
 
             using (Perf?.Measure($"{prefix}.Activation"))
                 ApplyActivation(postAct, layer.Activation);
@@ -1653,7 +1808,6 @@ public sealed unsafe class CnnNeuralFramework
         int spatialOutSize = outH * outW;
         int numSlices = batch * channels;
 
-        // Fast path for the common poolSize == 2 case.
         if (poolSize == 2)
         {
             for (int slice = 0; slice < numSlices; slice++)
@@ -1680,13 +1834,11 @@ public sealed unsafe class CnnNeuralFramework
                         float c = row1[x];
                         float d = row1[x + 1];
 
-                        // Pairwise max tree
                         float ab = a > b ? a : b;
                         float cd = c > d ? c : d;
                         bool topWins = ab > cd;
                         float maxVal = topWins ? ab : cd;
 
-                        // Index resolution: 2 comparisons per output pixel total
                         int maxIdx;
                         if (topWins)
                         {
@@ -1706,7 +1858,6 @@ public sealed unsafe class CnnNeuralFramework
             return;
         }
 
-        // Generic path for poolSize != 2 (unchanged semantics, minor cleanup).
         for (int slice = 0; slice < numSlices; slice++)
         {
             float* sliceIn = pIn + (slice * spatialInSize);
@@ -1762,8 +1913,6 @@ public sealed unsafe class CnnNeuralFramework
 
         int outH = gradOutput.Height;
         int outW = gradOutput.Width;
-
-        int totalInputElements = batch * channels * inH * inW;
 
         float* pGradOut = gradOutput.Pointer;
         float* pGradIn = gradInput.Pointer;
@@ -2198,7 +2347,7 @@ public sealed unsafe class CnnNeuralFramework
                         gradInput.Pointer);
                 }
             }
-            else   // CPU path
+            else
             {
                 using (Perf?.Measure($"{prefix}.GradInput"))
                 {
@@ -2472,6 +2621,7 @@ public sealed unsafe class CnnNeuralFramework
             sb.AppendLine($"    filters  : {L.Filters}");
             sb.AppendLine($"    pool     : use={L.UseMaxPool} size={L.PoolSize}");
             sb.AppendLine($"    act      : {L.Activation}");
+            sb.AppendLine($"    batchnorm: use={L.UseBatchNorm} (mom={L.BatchNormMomentum}, eps={L.BatchNormEpsilon})");
             sb.AppendLine($"    convOut  : {batch}x{L.Filters}x{outH}x{outW}");
             sb.AppendLine($"    pooled   : {batch}x{L.Filters}x{pooledH}x{pooledW}");
             int patchSize = ch * L.KernelHeight * L.KernelWidth;
@@ -2501,6 +2651,19 @@ public sealed unsafe class CnnNeuralFramework
             sb.AppendLine($"    PreAct             : {Fmt(p.PreAct)}");
             sb.AppendLine($"    PostAct            : {Fmt(p.PostAct)}");
             sb.AppendLine($"    PoolIndices        : {Fmt(p.PoolIndices)}");
+
+            var bn = _bnParams[i];
+            if (bn != null)
+            {
+                sb.AppendLine($"    BatchNorm:");
+                sb.AppendLine($"      Gamma        : {Fmt(bn.Gamma)}");
+                sb.AppendLine($"      Beta         : {Fmt(bn.Beta)}");
+                sb.AppendLine($"      RunningMean  : {Fmt(bn.RunningMean)}");
+                sb.AppendLine($"      RunningVar   : {Fmt(bn.RunningVar)}");
+                sb.AppendLine($"      Normalized   : {Fmt(bn.Normalized)}");
+                sb.AppendLine($"      Output       : {Fmt(bn.Output)}");
+                sb.AppendLine($"      GradInput    : {Fmt(bn.GradInput)}");
+            }
         }
 
         sb.AppendLine();
@@ -2562,6 +2725,26 @@ public sealed unsafe class CnnNeuralFramework
             ok &= Check(sb, $"conv[{i}].PoolIndices    expects ({_input.BatchSize * L.Filters * pOutH * pOutW},1)",
                         p.PoolIndices.Rows == _input.BatchSize * L.Filters * pOutH * pOutW
                         && p.PoolIndices.UsedColumns == 1, p.PoolIndices);
+
+            if (L.UseBatchNorm)
+            {
+                var bn = _bnParams[i];
+                if (bn == null)
+                {
+                    sb.AppendLine($"    conv[{i}] BN MISSING (UseBatchNorm=true but no params allocated)");
+                    ok = false;
+                }
+                else
+                {
+                    ok &= Check(sb, $"conv[{i}].Bn.Gamma expects (1,{L.Filters})",
+                                bn.Gamma.Rows == 1 && bn.Gamma.UsedColumns == L.Filters, bn.Gamma);
+                    ok &= Check(sb, $"conv[{i}].Bn.Beta  expects (1,{L.Filters})",
+                                bn.Beta.Rows == 1 && bn.Beta.UsedColumns == L.Filters, bn.Beta);
+                    ok &= Check(sb, $"conv[{i}].Bn.Output expects {_input.BatchSize}x{L.Filters}x{cOutH}x{cOutW}",
+                                bn.Output.Batch == _input.BatchSize && bn.Output.Channels == L.Filters
+                                && bn.Output.Height == cOutH && bn.Output.Width == cOutW, bn.Output);
+                }
+            }
 
             if (ok) sb.AppendLine($"    conv[{i}] OK");
 
