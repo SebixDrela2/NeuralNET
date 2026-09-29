@@ -12,6 +12,7 @@ namespace NeutralNET.Stuff;
 
 public static partial class GraphicsUtils
 {
+    public const bool EnableInputNormalization = true;
     public const int FontSize = Height / 2;
     public const int UpScale = 4;
 
@@ -114,6 +115,7 @@ public static partial class GraphicsUtils
                 {
                     var inPtr = (Color32bppArgb*)(void*)data.Scan0;
                     var outData = outItem.Pixels;
+
                     for (int y = 0, idx = 0; y < Height; ++y, inPtr = (Color32bppArgb*)(((byte*)inPtr) + data.Stride))
                     {
                         for (int x = 0; x < Width; ++x, ++idx)
@@ -121,14 +123,9 @@ public static partial class GraphicsUtils
                             ref readonly var src = ref inPtr[x];
                             ref var dst = ref outData[idx];
 
-                            const float mlt = 1.0f / byte.MaxValue;
-
-                            dst.R = float.Clamp(src.R * mlt, 0, 1);
-                            dst.G = float.Clamp(src.G * mlt, 0, 1);
-                            dst.B = float.Clamp(src.B * mlt, 0, 1);
+                            (dst.R, dst.G, dst.B) = InputNormalization.ApplyBgra(src.B, src.G, src.R);
                         }
                     }
-
                 }
                 finally
                 {
@@ -223,7 +220,7 @@ public static partial class GraphicsUtils
                     byte g = buffer[pixelOffset + 1];
                     byte r = buffer[pixelOffset + 2];
 
-                    pixels.Values[index] = (r / 255.0f, g / 255.0f, b / 255.0f);
+                    pixels.Values[index] = InputNormalization.ApplyBgra(b, g, r);
                 }
             }
         }

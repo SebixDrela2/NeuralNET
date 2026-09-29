@@ -261,7 +261,7 @@ public sealed unsafe class CnnNeuralFramework
         var mBiases = RentNeural(1, filters);
         var vBiases = RentNeural(1, filters);
 
-        var adamParameters = new AdamHyperLayerParameters(mWeights, vWeights, mBiases, vBiases);
+        var adamParameters = new OptimizerHyperLayerParameterSet(mWeights, vWeights, mBiases, vBiases);
         var opt = CnnOptimizerFactory.Create(_cnnConfig.OptimizerConfig, adamParameters, null!);
 
         _convOptimizers.Add(opt);
@@ -450,7 +450,7 @@ public sealed unsafe class CnnNeuralFramework
             var mBiases = RentNeural(1, oSize);
             var vBiases = RentNeural(1, oSize);
 
-            var adamParameters = new AdamHyperLayerParameters(mWeights, vWeights, mBiases, vBiases);
+            var adamParameters = new OptimizerHyperLayerParameterSet(mWeights, vWeights, mBiases, vBiases);
             var opt = CnnOptimizerFactory.Create(_cnnConfig.OptimizerConfig, null!, adamParameters);
 
             _denseOptimizers.Add(opt);

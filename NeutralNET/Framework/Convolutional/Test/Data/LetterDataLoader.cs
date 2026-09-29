@@ -29,9 +29,62 @@ public class LetterDataLoader : DataLoaderBase, IDataLoader<LetterDataLoader>
     public override int ImageHeight => GraphicsUtils.Height;
 
     public override string DatasetName => "LetterData";
-    public override int NumClasses => LettersCount; // 26 uppercase letters A-Z
+    public override int NumClasses => LettersCount; 
 
-    public static LetterDataLoader Create() => new();
+    private static bool _normalizationStatsReady;
+    private static readonly object _statsLock = new();
+
+    public static LetterDataLoader Create()
+    {
+        EnsureNormalizationStats();
+        return new();
+    }
+
+    private static void EnsureNormalizationStats()
+    {
+        if (_normalizationStatsReady) return;
+
+        lock (_statsLock)
+        {
+            if (_normalizationStatsReady) return;
+
+            var prevEnabled = InputNormalization.Enabled;
+            InputNormalization.Enabled = false;
+
+            try
+            {
+                const int SampleCount = 2000;
+                var rng = Random.Shared;
+
+                var transforms = new GraphicsUtils.CharTransformation[SampleCount];
+                for (int i = 0; i < SampleCount; i++)
+                {
+                    transforms[i] = new(
+                        FontFamilies[rng.Next(FontFamilies.Length)],
+                        GraphicsUtils.ImageTransformation.CreateRandom(rng),
+                        Color.GetRandomColors());
+                }
+
+                var samples = GraphicsUtils.GetLettersDataSetRGB(
+                    transforms,
+                    GraphicsUtils.DefaultLetters,
+                    randomCharOrder: true);
+
+                InputNormalization.ComputeStats(samples);
+
+                Console.WriteLine(
+                    $"[InputNormalization] mean=({InputNormalization.MeanR:F4}, " +
+                    $"{InputNormalization.MeanG:F4}, {InputNormalization.MeanB:F4})  " +
+                    $"invStd=({InputNormalization.InvStdR:F4}, " +
+                    $"{InputNormalization.InvStdG:F4}, {InputNormalization.InvStdB:F4})");
+            }
+            finally
+            {
+                InputNormalization.Enabled = prevEnabled;
+                _normalizationStatsReady = true;
+            }
+        }
+    }
 
     protected override NeuralDataSet LoadBatches(int batchSize, (int Train, int Test) samples)
     {
@@ -40,6 +93,7 @@ public class LetterDataLoader : DataLoaderBase, IDataLoader<LetterDataLoader>
 
         return new(trainSet, testSet);
     }
+
     protected override void UpdateBatches(int batchSize, (int Train, int Test) samples, NeuralDataSet dataSet)
     {
         UpdateTrainSet(DataSetType.Train, batchSize, samples.Train, dataSet.Train);
@@ -79,7 +133,6 @@ public class LetterDataLoader : DataLoaderBase, IDataLoader<LetterDataLoader>
         }
     }
 
-    // private static void PopulateTensorFromPixels(PixelStructRGB pixels, CnnMatrix imgMat, int batchIndex) => PopulateTensorFromPixels(pixels, imgMat, batchIndex, imgMat.Width, imgMat.Height);
     private static void PopulateTensorFromPixels(PixelStructRGB pixels, CnnMatrix imgMat, int batchIndex)
     {
         Debug.Assert(imgMat.Width == GraphicsUtils.Width);
@@ -87,13 +140,17 @@ public class LetterDataLoader : DataLoaderBase, IDataLoader<LetterDataLoader>
         Debug.Assert(imgMat.Channels == PixelStructRGB.Channels);
         Debug.Assert(batchIndex < imgMat.Batch);
 
+        int width = GraphicsUtils.Width;
+        int height = GraphicsUtils.Height;
+
         for (int c = 0; c < PixelStructRGB.Channels; ++c)
         {
-            for (int y = 0; y < GraphicsUtils.Height; ++y)
+            for (int y = 0; y < height; ++y)
             {
-                for (int x = 0; x < GraphicsUtils.Width; ++x)
+                int rowOffset = y * width;   // BUG FIX: was `y * height`
+                for (int x = 0; x < width; ++x)
                 {
-                    imgMat[batchIndex, c, y, x] = pixels[(y * GraphicsUtils.Height) + x][c];
+                    imgMat[batchIndex, c, y, x] = pixels[rowOffset + x][c];
                 }
             }
         }
@@ -102,23 +159,28 @@ public class LetterDataLoader : DataLoaderBase, IDataLoader<LetterDataLoader>
     private static void PopulateTensorFromPixels(float[] pixels, CnnMatrix imgMat, int batchIndex, int scale)
     {
         var i = 0;
+        bool normalize = InputNormalization.Enabled;
 
         for (int y = 0; y < scale; y++)
         {
             for (int x = 0; x < scale; x++)
             {
-                for (int c = 0; c < Channels; c++, i++)
+                float r = pixels[i++];
+                float g = pixels[i++];
+                float b = pixels[i++];
+
+                if (normalize)
                 {
-                    imgMat[batchIndex, c, y, x] = pixels[i];
+                    (r, g, b) = InputNormalization.Normalize(r, g, b);
                 }
+
+                imgMat[batchIndex, 0, y, x] = r;
+                imgMat[batchIndex, 1, y, x] = g;
+                imgMat[batchIndex, 2, y, x] = b;
             }
         }
     }
 
-    /// <summary>
-    /// Static helper method for Windows Forms to generate a single sample using the exact
-    /// same generation pipeline as the training dataset, returning both the network tensor and UI bitmap.
-    /// </summary>
     public static (CnnMatrix ImageTensor, Bitmap DisplayBitmap) GenerateSampleForUI(char targetChar)
     {
         var displayBmp = new Bitmap(GraphicsUtils.Width, GraphicsUtils.Height, PixelFormat.Format32bppArgb);
@@ -126,10 +188,6 @@ public class LetterDataLoader : DataLoaderBase, IDataLoader<LetterDataLoader>
         return (mat, displayBmp);
     }
 
-    /// <summary>
-    /// Static helper method for Windows Forms to generate a single sample using the exact
-    /// same generation pipeline as the training dataset, returning both the network tensor and UI bitmap.
-    /// </summary>
     public static CnnMatrix GenerateSampleForUI(char targetChar, Bitmap output)
     {
         var rng = Random.Shared;
@@ -147,25 +205,38 @@ public class LetterDataLoader : DataLoaderBase, IDataLoader<LetterDataLoader>
 
         PopulateTensorFromPixels(sample, imgMat, 0);
 
-        // var displayBmp = new Bitmap(GraphicsUtils.Width, GraphicsUtils.Height, PixelFormat.Format32bppArgb);
         Debug.Assert(output.Width == GraphicsUtils.Width);
         Debug.Assert(output.Height == GraphicsUtils.Height);
+
+        bool denormalize = InputNormalization.Enabled;
+
         for (int y = 0; y < GraphicsUtils.Height; ++y)
         {
             for (int x = 0; x < GraphicsUtils.Width; ++x)
             {
-                int r = (int)(imgMat[0, 0, y, x] * 0xFF);
-                int g = (int)(imgMat[0, 1, y, x] * 0xFF);
-                int b = (int)(imgMat[0, 2, y, x] * 0xFF);
+                float r = imgMat[0, 0, y, x];
+                float g = imgMat[0, 1, y, x];
+                float b = imgMat[0, 2, y, x];
 
-                output.SetPixel(x, y, Color.FromArgb(byte.CreateSaturating(r), byte.CreateSaturating(g), byte.CreateSaturating(b)));
+                if (denormalize)
+                {
+                    (r, g, b) = InputNormalization.Denormalize(r, g, b);
+                }
+
+                int rb = (int)(Math.Clamp(r, 0f, 1f) * 0xFF);
+                int gb = (int)(Math.Clamp(g, 0f, 1f) * 0xFF);
+                int bb = (int)(Math.Clamp(b, 0f, 1f) * 0xFF);
+
+                output.SetPixel(x, y, Color.FromArgb((byte)rb, (byte)gb, (byte)bb));
             }
         }
 
         return imgMat;
     }
 
-    public static CnnMatrix LoadInputFromBitmap(Bitmap bmp) => LoadInputFromPixels(GraphicsUtils.GetPixels(bmp), (bmp.Width, bmp.Height));
+    public static CnnMatrix LoadInputFromBitmap(Bitmap bmp)
+        => LoadInputFromPixels(GraphicsUtils.GetPixels(bmp), (bmp.Width, bmp.Height));
+
     public static CnnMatrix LoadInputFromPixels(PixelStructRGB pixels, (int Width, int Height) size)
     {
         var imgMat = CnnMatrix.GetOrCreate(1, Channels, size.Width, size.Height);

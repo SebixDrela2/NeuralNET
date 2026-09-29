@@ -1,116 +1,134 @@
+using System;
 using NeutralNET.Framework.Convolutional;
 using NeutralNET.Matrices;
 
 namespace NeutralNET.Framework.Neural.CNN;
 
-public class CnnSGDOptimizer : ICnnOptimizer
+public class CnnSGDOptimizer : ICnnOptimizer, IDisposable
 {
     private readonly float _learningRate;
     private readonly float _weightDecay;
     private readonly float _momentum;
 
-    private NeuralMatrix? _convVelocityWeights;
-    private NeuralMatrix? _convVelocityBiases;
-    private NeuralMatrix? _denseVelocityWeights;
-    private NeuralMatrix? _denseVelocityBiases;
+    private readonly OptimizerHyperLayerParameterSet _convHyperParameters;
+    private readonly OptimizerHyperLayerParameterSet _denseHyperParameters;
 
-    public CnnSGDOptimizer(CnnOptimizerConfig config)
+    private bool _disposed;
+
+    public CnnSGDOptimizer(
+        CnnOptimizerConfig config,
+        OptimizerHyperLayerParameterSet convHyperParameters,
+        OptimizerHyperLayerParameterSet denseHyperParameters)
     {
         _learningRate = config.LearningRate;
         _weightDecay = config.WeightDecay;
         _momentum = config.Momentum;
+        _convHyperParameters = convHyperParameters;
+        _denseHyperParameters = denseHyperParameters;
     }
 
-    public void Update(CnnMatrix weights, CnnMatrix biases, NeuralMatrix dW, NeuralMatrix dB)
+    public unsafe void Update(CnnMatrix weights, CnnMatrix biases, NeuralMatrix dW, NeuralMatrix dB)
     {
-        int innerDim = dW.Rows;
-        int filters = dW.UsedColumns;
+        int filterCount = dW.Rows;
+        int innerDim = dW.UsedColumns;
 
-        if (_convVelocityWeights == null || _convVelocityWeights.Rows != innerDim || _convVelocityWeights.UsedColumns != filters)
-        {
-            _convVelocityWeights?.Dispose();
-            _convVelocityWeights = NeuralMatrix.GetOrCreate(innerDim, filters);
-            _convVelocityWeights.Clear();
-        }
-        if (_convVelocityBiases == null || _convVelocityBiases.Rows != 1 || _convVelocityBiases.UsedColumns != filters)
-        {
-            _convVelocityBiases?.Dispose();
-            _convVelocityBiases = NeuralMatrix.GetOrCreate(1, filters);
-            _convVelocityBiases.Clear();
-        }
+        var mWeights = _convHyperParameters.MWeights;
+        var mBiases = _convHyperParameters.MBiases;
 
         float lr = _learningRate;
         float wd = _weightDecay;
         float mu = _momentum;
 
-        for (int f = 0; f < filters; f++)
-            for (int inner = 0; inner < innerDim; inner++)
-            {
-                int c = inner / (weights.Height * weights.Width);
-                int rem = inner % (weights.Height * weights.Width);
-                int ky = rem / weights.Width;
-                int kx = rem % weights.Width;
+        float* pW = weights.Pointer;
+        float* pBiases = biases.Pointer;
+        float* pdW = dW.Pointer;
+        float* pdB = dB.Pointer;
+        float* pVW = mWeights.Pointer;
+        float* pVB = mBiases.Pointer;
 
-                float grad = dW.At(inner, f) + wd * weights[f, c, ky, kx];
-                float vel = mu * _convVelocityWeights.At(inner, f) - lr * grad;
-                _convVelocityWeights.At(inner, f) = vel;
-                weights[f, c, ky, kx] += vel;
-            }
+        int dWStride = dW.ColumnsStride;
+        int vStride = mWeights.ColumnsStride;
 
-        for (int f = 0; f < filters; f++)
+        for (int f = 0; f < filterCount; f++)
         {
-            float grad = dB.At(0, f);
-            float vel = mu * _convVelocityBiases.At(0, f) - lr * grad;
-            _convVelocityBiases.At(0, f) = vel;
-            biases[0, f, 0, 0] += vel;
+            float* rowW = pW + f * innerDim;
+            float* rowDW = pdW + f * dWStride;
+            float* rowV = pVW + f * vStride;
+
+            for (int i = 0; i < innerDim; i++)
+            {
+                float grad = rowDW[i] + wd * rowW[i];
+                float vel = mu * rowV[i] - lr * grad;
+                rowV[i] = vel;
+                rowW[i] += vel;
+            }
+        }
+
+        for (int fb = 0; fb < filterCount; fb++)
+        {
+            float grad = pdB[fb];
+            float vel = mu * pVB[fb] - lr * grad;
+            pVB[fb] = vel;
+            pBiases[fb] += vel;
         }
     }
 
-    public void Update(NeuralMatrix weights, NeuralMatrix biases, NeuralMatrix dW, NeuralMatrix dB)
+    public unsafe void Update(NeuralMatrix weights, NeuralMatrix biases, NeuralMatrix dW, NeuralMatrix dB)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
         int inputSize = dW.Rows;
         int outputSize = dW.UsedColumns;
 
-        if (_denseVelocityWeights == null || _denseVelocityWeights.Rows != inputSize || _denseVelocityWeights.UsedColumns != outputSize)
-        {
-            _denseVelocityWeights?.Dispose();
-            _denseVelocityWeights = NeuralMatrix.GetOrCreate(inputSize, outputSize);
-            _denseVelocityWeights.Clear();
-        }
-        if (_denseVelocityBiases == null || _denseVelocityBiases.Rows != 1 || _denseVelocityBiases.UsedColumns != outputSize)
-        {
-            _denseVelocityBiases?.Dispose();
-            _denseVelocityBiases = NeuralMatrix.GetOrCreate(1, outputSize);
-            _denseVelocityBiases.Clear();
-        }
+        var mWeights = _denseHyperParameters.MWeights;
+        var mBiases = _denseHyperParameters.MBiases;
 
         float lr = _learningRate;
         float wd = _weightDecay;
         float mu = _momentum;
 
-        for (int outIdx = 0; outIdx < outputSize; outIdx++)
-            for (int inIdx = 0; inIdx < inputSize; inIdx++)
-            {
-                float grad = dW.At(inIdx, outIdx) + wd * weights.At(outIdx, inIdx);
-                float vel = mu * _denseVelocityWeights.At(inIdx, outIdx) - lr * grad;
-                _denseVelocityWeights.At(inIdx, outIdx) = vel;
-                weights.At(outIdx, inIdx) += vel;
-            }
+        float* pW = weights.Pointer;
+        float* pBiases = biases.Pointer;
+        float* pdW = dW.Pointer;
+        float* pdB = dB.Pointer;
+        float* pVW = mWeights.Pointer;
+        float* pVB = mBiases.Pointer;
 
-        for (int i = 0; i < outputSize; i++)
+        int wStride = weights.ColumnsStride;
+        int dWStride = dW.ColumnsStride;
+        int vStride = mWeights.ColumnsStride;
+
+        for (int inIdx = 0; inIdx < inputSize; inIdx++)
         {
-            float grad = dB.At(0, i);
-            float vel = mu * _denseVelocityBiases.At(0, i) - lr * grad;
-            _denseVelocityBiases.At(0, i) = vel;
-            biases.At(0, i) += vel;
+            float* rowDW = pdW + inIdx * dWStride;
+            float* rowV = pVW + inIdx * vStride;
+            float* pWBase = pW + inIdx;
+
+            for (int o = 0; o < outputSize; o++)
+            {
+                float w = pWBase[o * wStride];
+                float grad = rowDW[o] + wd * w;
+                float vel = mu * rowV[o] - lr * grad;
+                rowV[o] = vel;
+                pWBase[o * wStride] = w + vel;
+            }
+        }
+
+        for (int bi = 0; bi < outputSize; bi++)
+        {
+            float grad = pdB[bi];
+            float vel = mu * pVB[bi] - lr * grad;
+            pVB[bi] = vel;
+            pBiases[bi] += vel;
         }
     }
 
     public void Dispose()
     {
-        _convVelocityWeights?.Dispose();
-        _convVelocityBiases?.Dispose();
-        _denseVelocityWeights?.Dispose();
-        _denseVelocityBiases?.Dispose();
+        if (_disposed) return;
+        _disposed = true;
+
+        _denseHyperParameters?.Dispose();
+        _convHyperParameters?.Dispose();
     }
 }

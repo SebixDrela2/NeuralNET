@@ -55,7 +55,7 @@ public class CnnTrainingConfig
 
                 OptimizerConfig = new CnnOptimizerConfig
                 {
-                    OptimizerType = CnnOptimizerType.Adam,
+                    OptimizerType = CnnOptimizerType.AdamW,
                     LearningRate = 1e-4f,
                     WeightDecay = 0f,
                     Beta1 = 0.9f,
@@ -72,7 +72,7 @@ public class CnnTrainingConfig
                 Epochs = 200,
                 DropoutRate = 0.1f,
                 WithShuffle = true,
-                OptimizerType = OptimizerType.Adam,
+                OptimizerType = OptimizerType.AdamW,
             },
 
             LearningRate = 1e-4f,

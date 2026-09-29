@@ -6,7 +6,7 @@ using NeutralNET.Matrices;
 
 namespace NeutralNET.Framework.Neural.CNN;
 
-public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
+public class CnnAdamWOptimizer : ICnnOptimizer, IDisposable
 {
     private readonly float _learningRate;
     private readonly float _weightDecay;
@@ -15,15 +15,13 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
     private readonly float _epsilon;
 
     private int _t;
-
-    // Running powers for bias correction — avoids MathF.Pow every step.
     private float _b1_pow = 1.0f;
     private float _b2_pow = 1.0f;
 
     private readonly OptimizerHyperLayerParameterSet _convHyperParameters;
     private readonly OptimizerHyperLayerParameterSet _denseHyperParameters;
 
-    public CnnAdamOptimizer(
+    public CnnAdamWOptimizer(
         CnnOptimizerConfig config,
         OptimizerHyperLayerParameterSet convHyperParameters,
         OptimizerHyperLayerParameterSet denseHyperParameters)
@@ -38,12 +36,8 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
         _denseHyperParameters = denseHyperParameters;
     }
 
-    // =====================================================================
-    // Convolution update
-    // =====================================================================
     public unsafe void Update(CnnMatrix weights, CnnMatrix biases, NeuralMatrix dW, NeuralMatrix dB)
     {
-        // dW is (filters, inDim): Rows = filters, UsedColumns = inDim.
         int filterCount = dW.Rows;
         int innerDim = dW.UsedColumns;
 
@@ -60,7 +54,7 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
         float one_minus_b1 = 1.0f - _beta1;
         float one_minus_b2 = 1.0f - _beta2;
 
-        float* pW = weights.Pointer; 
+        float* pW = weights.Pointer;
         float* pBiases = biases.Pointer;
         float* pdW = dW.Pointer;
         float* pdB = dB.Pointer;
@@ -75,8 +69,8 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
 
         for (int f = 0; f < filterCount; f++)
         {
-            float* rowW = pW + f * innerDim;    
-            float* rowDW = pdW + f * dWStride; 
+            float* rowW = pW + f * innerDim;
+            float* rowDW = pdW + f * dWStride;
             float* rowM = pM + f * mStride;
             float* rowV = pV + f * vStride;
 
@@ -97,14 +91,10 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
                 int vecLimit = innerDim - (innerDim % 16);
                 for (; i < vecLimit; i += 16)
                 {
-                    // All loads/stores contiguous — 1 cache line each.
                     var vW = Vector512.Load(rowW + i);
                     var vGrad = Vector512.Load(rowDW + i);
                     var vM = Vector512.Load(rowM + i);
                     var vV = Vector512.Load(rowV + i);
-
-                    vGrad = vGrad + (vWd * vW);
-
                     var vMNew = (vB1 * vM) + (vOneMinusB1 * vGrad);
                     vMNew.Store(rowM + i);
 
@@ -116,8 +106,7 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
 
                     var vDenom = Vector512.Sqrt(vVHat) + vEps;
                     var vStep = (vLr * vMHat) / vDenom;
-
-                    var vWNew = vW - vStep;
+                    var vWNew = vW - vStep - (vLr * vWd * vW);
                     vWNew.Store(rowW + i);
                 }
             }
@@ -141,8 +130,6 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
                     var vM = Vector256.Load(rowM + i);
                     var vV = Vector256.Load(rowV + i);
 
-                    vGrad = vGrad + (vWd * vW);
-
                     var vMNew = (vB1 * vM) + (vOneMinusB1 * vGrad);
                     vMNew.Store(rowM + i);
 
@@ -155,7 +142,7 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
                     var vDenom = Vector256.Sqrt(vVHat) + vEps;
                     var vStep = (vLr * vMHat) / vDenom;
 
-                    var vWNew = vW - vStep;
+                    var vWNew = vW - vStep - (vLr * vWd * vW);
                     vWNew.Store(rowW + i);
                 }
             }
@@ -163,7 +150,7 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
             for (; i < innerDim; i++)
             {
                 float w = rowW[i];
-                float grad = rowDW[i] + _weightDecay * w;
+                float grad = rowDW[i];
 
                 float m = _beta1 * rowM[i] + one_minus_b1 * grad;
                 rowM[i] = m;
@@ -174,12 +161,12 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
                 float mHat = m * c_m;
                 float vHat = v * c_v;
 
-                rowW[i] = w - _learningRate * mHat / (MathF.Sqrt(vHat) + _epsilon);
+                float step = _learningRate * mHat / (MathF.Sqrt(vHat) + _epsilon);
+                rowW[i] = w - step - _learningRate * _weightDecay * w;
             }
         }
 
         int fb = 0;
-
         if (Avx512F.IsSupported)
         {
             var vB1 = Vector512.Create(_beta1);
@@ -283,8 +270,7 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
         float one_minus_b1 = 1.0f - _beta1;
         float one_minus_b2 = 1.0f - _beta2;
 
-
-        float* pW = weights.Pointer;   
+        float* pW = weights.Pointer;
         float* pBiases = biases.Pointer;
         float* pdW = dW.Pointer;
         float* pdB = dB.Pointer;
@@ -322,12 +308,9 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
                 int vecLimit = outputSize - (outputSize % 16);
                 for (; o < vecLimit; o += 16)
                 {
-                    // Vector loads for grad/m/v (contiguous).
                     var vGrad = Vector512.Load(rowDW + o);
                     var vM = Vector512.Load(rowM + o);
                     var vV = Vector512.Load(rowV + o);
-
-                    // Weight load: still strided, but only here.
                     var vW = Vector512.Create(
                         pWBase[(o + 0) * wStride], pWBase[(o + 1) * wStride],
                         pWBase[(o + 2) * wStride], pWBase[(o + 3) * wStride],
@@ -338,8 +321,6 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
                         pWBase[(o + 12) * wStride], pWBase[(o + 13) * wStride],
                         pWBase[(o + 14) * wStride], pWBase[(o + 15) * wStride]
                     );
-
-                    vGrad = vGrad + (vWd * vW);
 
                     var vMNew = (vB1 * vM) + (vOneMinusB1 * vGrad);
                     vMNew.Store(rowM + o);
@@ -352,10 +333,8 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
 
                     var vDenom = Vector512.Sqrt(vVHat) + vEps;
                     var vStep = (vLr * vMHat) / vDenom;
+                    var vWNew = vW - vStep - (vLr * vWd * vW);
 
-                    var vWNew = vW - vStep;
-
-                    // Scatter back to the strided weight buffer.
                     pWBase[(o + 0) * wStride] = vWNew.GetElement(0);
                     pWBase[(o + 1) * wStride] = vWNew.GetElement(1);
                     pWBase[(o + 2) * wStride] = vWNew.GetElement(2);
@@ -400,8 +379,6 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
                         pWBase[(o + 6) * wStride], pWBase[(o + 7) * wStride]
                     );
 
-                    vGrad = vGrad + (vWd * vW);
-
                     var vMNew = (vB1 * vM) + (vOneMinusB1 * vGrad);
                     vMNew.Store(rowM + o);
 
@@ -414,7 +391,7 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
                     var vDenom = Vector256.Sqrt(vVHat) + vEps;
                     var vStep = (vLr * vMHat) / vDenom;
 
-                    var vWNew = vW - vStep;
+                    var vWNew = vW - vStep - (vLr * vWd * vW);
 
                     pWBase[(o + 0) * wStride] = vWNew.GetElement(0);
                     pWBase[(o + 1) * wStride] = vWNew.GetElement(1);
@@ -430,7 +407,7 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
             for (; o < outputSize; o++)
             {
                 float w = pWBase[o * wStride];
-                float grad = rowDW[o] + _weightDecay * w;
+                float grad = rowDW[o];
 
                 float m = _beta1 * rowM[o] + one_minus_b1 * grad;
                 rowM[o] = m;
@@ -441,13 +418,11 @@ public class CnnAdamOptimizer : ICnnOptimizer, IDisposable
                 float mHat = m * c_m;
                 float vHat = v * c_v;
 
-                pWBase[o * wStride] = w - _learningRate * mHat / (MathF.Sqrt(vHat) + _epsilon);
+                float step = _learningRate * mHat / (MathF.Sqrt(vHat) + _epsilon);
+                pWBase[o * wStride] = w - step - _learningRate * _weightDecay * w;
             }
         }
 
-        // -----------------------------------------------------------------
-        // 2. DENSE BIASES
-        // -----------------------------------------------------------------
         int bi = 0;
         if (Avx512F.IsSupported)
         {
