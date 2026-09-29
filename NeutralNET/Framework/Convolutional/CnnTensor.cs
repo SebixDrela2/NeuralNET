@@ -204,10 +204,60 @@ public unsafe class CnnMatrix : CriticalFinalizerObject, IDisposable
                         }
                         else
                         {
-                            for (; ow < outW; ow++)
+                            int owMin = (padding - kx + stride - 1) / stride; 
+                            if (owMin < 0) owMin = 0;
+                            int owMax = (Width - 1 + padding - kx) / stride;   
+                            if (owMax >= outW) owMax = outW - 1;
+                            for (int ow2 = 0; ow2 < owMin; ow2++)
+                                colRowBase[ow2 * colStride] = 0.0f;
+
+                            if (owMin <= owMax)
                             {
-                                int iw = ow * stride - padding + kx;
-                                colRowBase[ow * colStride] = ((uint)iw < (uint)Width) ? srcChannel[ih * Width + iw] : 0.0f;
+                                int count = owMax - owMin + 1;
+
+                                if (stride == 1)
+                                {
+                                    int iw0 = owMin - padding + kx;
+                                    float* srcRow = srcChannel + ih * Width + iw0;
+                                    float* dstPtr = colRowBase + owMin * colStride;
+
+                                    int i = 0;
+
+                                    if (Avx512F.IsSupported)
+                                    {
+                                        for (; i + 16 <= count; i += 16)
+                                        {
+                                            var v = Avx512F.LoadVector512(srcRow + i);
+                                            for (int j = 0; j < 16; j++)
+                                                dstPtr[(i + j) * colStride] = v[j];
+                                        }
+                                    }
+                                    else if (Avx2.IsSupported)
+                                    {
+                                        for (; i + 8 <= count; i += 8)
+                                        {
+                                            var v = Avx2.LoadVector256(srcRow + i);
+                                            for (int j = 0; j < 8; j++)
+                                                dstPtr[(i + j) * colStride] = v[j];
+                                        }
+                                    }
+
+                                    for (; i < count; i++)
+                                        dstPtr[i * colStride] = srcRow[i];
+                                }
+                                else
+                                {
+                                    for (int ow2 = owMin; ow2 <= owMax; ow2++)
+                                    {
+                                        int iw = ow2 * stride - padding + kx;
+                                        colRowBase[ow2 * colStride] = srcChannel[ih * Width + iw];
+                                    }
+                                }
+                            }
+
+                            for (int ow2 = owMax + 1; ow2 < outW; ow2++)
+                            {
+                                colRowBase[ow2 * colStride] = 0.0f;
                             }
                         }
                     }
