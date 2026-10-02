@@ -2,12 +2,14 @@ using NeutralNET.Activation;
 using NeutralNET.Framework.Connected.Neural;
 using NeutralNET.Framework.Connected.Optimizers;
 using NeutralNET.Framework.Convolutional;
+using NeutralNET.Framework.Neural.CNN;
 using NeutralNET.Test.Data;
 
 namespace NeutralTest;
 
 public class CnnTrainingConfig
 {
+    public const bool EnableGpu = CnnNeuralFramework.EnableGpu;
     public DataSourceType DatasetKey { get; set; } = DataSourceType.Letters;
     public int BatchSize => DenseConfig.BatchSize;
     public required int MaxTrainSamples { get; set; }

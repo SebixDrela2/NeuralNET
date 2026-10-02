@@ -28,8 +28,16 @@ using System.Runtime.Intrinsics.X86;
 public sealed unsafe partial class CnnNeuralFramework
 {
     public const bool EnableGpu = true;
+    public const bool IgnoreSaveFile = true;
+
+    private const int Avx512Size = 16; // not size, count of elements when element type is float
     private const int Avx256Size = 8;
-    private const int Avx512Size = 16;
+
+    private const int Avx512ByteSize = 512 >> 3;
+    private const int Avx256ByteSize = 256 >> 3;
+
+    private const nuint Avx256UnalignedMask = Avx256ByteSize - 1;
+    private const nuint Avx512UnalignedMask = Avx512ByteSize - 1;
 
     private static readonly bool IsAvx512Supported = Avx512F.IsSupported;
     private static readonly bool IsAvx2Supported = Avx2.IsSupported;
@@ -647,6 +655,8 @@ public sealed unsafe partial class CnnNeuralFramework
 
     public bool LoadData<TEnum>(TEnum key, string directoryPath) where TEnum : struct, Enum
     {
+        if (IgnoreSaveFile) return false;
+
         var filePath = Path.Combine(directoryPath, $"{typeof(TEnum).Name}_{key}.bin");
 
         if (!File.Exists(filePath)) return false;
@@ -1118,6 +1128,71 @@ public sealed unsafe partial class CnnNeuralFramework
         return inputGrad;
     }
 
+    private void ComputeGradientWithRespectToInput_CPU(
+        NeuralMatrix flattenedWeightMatrix,
+        NeuralMatrix preGradMatrix,
+        NeuralMatrix gradPatchMat,
+        int patchesI32,
+        int filtersI32,
+        int inDimI32,
+        int layerIdxI32)
+    {
+        if (!Avx2.IsSupported) throw new NotSupportedException();
+
+        var (patches, filters, inDim, layerIdx) = ((nuint)patchesI32, (nuint)filtersI32, (nuint)inDimI32, (nuint)layerIdxI32);
+
+        float* pGradPatch = gradPatchMat.Pointer;
+        float* pPreGradMat = preGradMatrix.Pointer;
+        float* pWeightMat = flattenedWeightMatrix.Pointer;
+
+        nuint gradPatchStride = (nuint)gradPatchMat.ColumnsStride;
+        nuint weightMatStride = (nuint)flattenedWeightMatrix.ColumnsStride;
+        nuint preGradMatStride = (nuint)preGradMatrix.ColumnsStride;
+
+        nuint wFltStride = weightMatStride * filters;
+
+        gradPatchMat.Clear();
+        for (nuint patch = 0; patch < patches; ++patch)
+        {
+            float* rowPreGradMat = pPreGradMat + (patch * preGradMatStride);
+            float* patchDst = pGradPatch + (patch * gradPatchStride);
+
+            var dst = patchDst;
+            var end = patchDst + inDim;
+            var vecEnd = (float*)((nuint)end & ~Avx256UnalignedMask);
+
+            var srcBase = pWeightMat;
+
+            for (; dst != vecEnd; dst += Avx256Size, srcBase += Avx256Size)
+            {
+                var src = srcBase;
+                var srcEnd = src + wFltStride;
+                var pgv = rowPreGradMat;
+
+                var acc = Vector256<float>.Zero;
+                for (; src != srcEnd; src += weightMatStride, pgv += 1)
+                {
+                    acc = Fma.MultiplyAdd(Avx.LoadAlignedVector256(src), Vector256.Create(*pgv), acc);
+                }
+
+                Avx.StoreAligned(dst, Avx.Add(Avx.LoadAlignedVector256(dst), acc));
+            }
+            for (; dst != end; dst += 1, srcBase += 1)
+            {
+                var src = srcBase;
+                var srcEnd = src + wFltStride;
+                var pgv = rowPreGradMat;
+
+                float acc = 0;
+                for (; src != srcEnd; src += weightMatStride, pgv += 1)
+                {
+                    acc = float.FusedMultiplyAdd(*src, *pgv, acc);
+                }
+                *dst += acc;
+            }
+        }
+    }
+
     private void ComputeGradientWithRespectToInput(
         NeuralMatrix flattenedWeightMatrix,
         NeuralMatrix preGradMatrix,
@@ -1142,59 +1217,7 @@ public sealed unsafe partial class CnnNeuralFramework
         }
         else
         {
-            float* pGradPatch = gradPatchMat.Pointer;
-            float* pPreGradMat = preGradMatrix.Pointer;
-            float* pWeightMat = flattenedWeightMatrix.Pointer;
-
-            int gradPatchStride = gradPatchMat.ColumnsStride;
-            int weightMatStride = flattenedWeightMatrix.ColumnsStride;
-            int preGradMatStride = preGradMatrix.ColumnsStride;
-
-            for (int patch = 0; patch < patches; patch++)
-            {
-                float* rowPreGradMat = pPreGradMat + patch * preGradMatStride;
-                float* rowGradPatch = pGradPatch + patch * gradPatchStride;
-
-                Unsafe.InitBlockUnaligned(rowGradPatch, 0, (uint)(inDim * sizeof(float)));
-
-                for (int f = 0; f < filters; f++)
-                {
-                    float gv = rowPreGradMat[f];
-                    if (gv == 0f) continue;
-
-                    float* rowW = pWeightMat + f * weightMatStride;
-
-                    int i = 0;
-
-                    if (Avx512F.IsSupported)
-                    {
-                        var vg = Vector512.Create(gv);
-                        int limit = inDim - (inDim % Avx512Size);
-                        for (; i < limit; i += Avx512Size)
-                        {
-                            var vW = Vector512.LoadUnsafe(ref rowW[i]);
-                            var vGP = Vector512.LoadUnsafe(ref rowGradPatch[i]);
-                            var vRes = Avx512F.FusedMultiplyAdd(vg, vW, vGP);
-                            Vector512.StoreUnsafe(vRes, ref rowGradPatch[i]);
-                        }
-                    }
-                    else if (Avx2.IsSupported)
-                    {
-                        var vg = Vector256.Create(gv);
-                        int limit = inDim - (inDim % Avx256Size);
-                        for (; i < limit; i += Avx256Size)
-                        {
-                            var vW = Avx.LoadVector256(rowW + i);
-                            var vGP = Avx.LoadVector256(rowGradPatch + i);
-                            var vRes = Fma.MultiplyAdd(vg, vW, vGP);
-                            Avx.Store(rowGradPatch + i, vRes);
-                        }
-                    }
-
-                    for (; i < inDim; i++)
-                        rowGradPatch[i] += gv * rowW[i];
-                }
-            }
+            ComputeGradientWithRespectToInput_CPU(flattenedWeightMatrix, preGradMatrix, gradPatchMat, patches, filters, inDim, layerIdx);
         }
     }
 
