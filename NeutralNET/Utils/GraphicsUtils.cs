@@ -22,8 +22,8 @@ public static partial class GraphicsUtils
     private const int DigitLimit = 10;
     private const int Size = Width * Height;
 
-    public const int Width = 64;
-    public const int Height = 64;
+    public const int Width = 256;
+    public const int Height = 256;
 
     public const int PixelCount = Width * Height;
 

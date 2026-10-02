@@ -8,6 +8,7 @@ namespace NeutralNET.Matrices;
 [DebuggerDisplay($"{{{nameof(GetDebuggerDisplay)}(),nq}}")]
 public unsafe struct AllocationHandle(void* ptr, nuint byteSize) : IDisposable
 {
+    private const ulong SizeLimit = 8UL << 30;
     public void* Pointer = ptr;
     public nuint ByteSize = byteSize;
     public readonly string SizeString => FormatSize(ByteSize);
@@ -15,13 +16,21 @@ public unsafe struct AllocationHandle(void* ptr, nuint byteSize) : IDisposable
     public readonly bool IsNull { [MethodImpl(Inline)] get => Pointer is null; }
 
     [MethodImpl(Inline)]
-    public static AllocationHandle Alloc(nuint byteSize) => new(
+    public static AllocationHandle Alloc(nuint byteSize)
+    {
+        if (byteSize >= SizeLimit)
+        {
+            throw new OutOfMemoryException("No memories.");
+        }
+
+        return new(
         NativeMemory.AlignedAlloc(
             BitOperations.RoundUpToPowerOf2(byteSize),
             SIMD.ByteAlignSize
         ),
         byteSize
     );
+    }
 
     [MethodImpl(Inline)]
     public AllocationHandle Take() => Exchange(ref this, default);
