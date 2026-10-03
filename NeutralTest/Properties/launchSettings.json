@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "NeutralNET.Test": {
+      "commandName": "Project",
+      "debugEngines": "managed-dotnet,native"
+    }
+  }
+}

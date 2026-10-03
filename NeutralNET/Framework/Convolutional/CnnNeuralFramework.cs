@@ -27,7 +27,7 @@ using System.Runtime.Intrinsics.X86;
 /// </summary>
 public sealed unsafe partial class CnnNeuralFramework
 {
-    public const bool EnableGpu = true;
+    public const bool EnableGpu = false;
     public const bool IgnoreSaveFile = true;
 
     private const int Avx512Size = 16; // not size, count of elements when element type is float
@@ -1217,7 +1217,59 @@ public sealed unsafe partial class CnnNeuralFramework
         }
         else
         {
-            ComputeGradientWithRespectToInput_CPU(flattenedWeightMatrix, preGradMatrix, gradPatchMat, patches, filters, inDim, layerIdx);
+            float* pGradPatch = gradPatchMat.Pointer;
+            float* pPreGradMat = preGradMatrix.Pointer;
+            float* pWeightMat = flattenedWeightMatrix.Pointer;
+
+            int gradPatchStride = gradPatchMat.ColumnsStride;
+            int weightMatStride = flattenedWeightMatrix.ColumnsStride;
+            int preGradMatStride = preGradMatrix.ColumnsStride;
+
+            for (int patch = 0; patch < patches; patch++)
+            {
+                float* rowPreGradMat = pPreGradMat + patch * preGradMatStride;
+                float* rowGradPatch = pGradPatch + patch * gradPatchStride;
+
+                Unsafe.InitBlockUnaligned(rowGradPatch, 0, (uint)(inDim * sizeof(float)));
+
+                for (int f = 0; f < filters; f++)
+                {
+                    float gv = rowPreGradMat[f];
+                    if (gv == 0f) continue;
+
+                    float* rowW = pWeightMat + f * weightMatStride;
+
+                    int i = 0;
+
+                    if (Avx512F.IsSupported)
+                    {
+                        var vg = Vector512.Create(gv);
+                        int limit = inDim - (inDim % Avx512Size);
+                        for (; i < limit; i += Avx512Size)
+                        {
+                            var vW = Vector512.LoadUnsafe(ref rowW[i]);
+                            var vGP = Vector512.LoadUnsafe(ref rowGradPatch[i]);
+                            var vRes = Avx512F.FusedMultiplyAdd(vg, vW, vGP);
+                            Vector512.StoreUnsafe(vRes, ref rowGradPatch[i]);
+                        }
+                    }
+                    else if (Avx2.IsSupported)
+                    {
+                        var vg = Vector256.Create(gv);
+                        int limit = inDim - (inDim % Avx256Size);
+                        for (; i < limit; i += Avx256Size)
+                        {
+                            var vW = Avx.LoadVector256(rowW + i);
+                            var vGP = Avx.LoadVector256(rowGradPatch + i);
+                            var vRes = Fma.MultiplyAdd(vg, vW, vGP);
+                            Avx.Store(rowGradPatch + i, vRes);
+                        }
+                    }
+
+                    for (; i < inDim; i++)
+                        rowGradPatch[i] += gv * rowW[i];
+                }
+            }
         }
     }
 
@@ -1667,8 +1719,8 @@ public sealed unsafe partial class CnnNeuralFramework
                         int vectorizable = innerDim - (innerDim % Avx512Size);
                         for (; inner < vectorizable; inner += Avx512Size)
                         {
-                            var colVec = Avx512F.LoadAlignedVector512(colRow + inner);
-                            var weightVec = Avx512F.LoadAlignedVector512(weightRow + inner);
+                            var colVec = Vector512.Load(colRow + inner);
+                            var weightVec = Vector512.Load(weightRow + inner);
                             sumVec = Avx512F.FusedMultiplyAdd(colVec, weightVec, sumVec);
                         }
                         sum = Vector512.Sum(sumVec);
@@ -1679,8 +1731,8 @@ public sealed unsafe partial class CnnNeuralFramework
                         int vectorizable = innerDim - (innerDim % Avx256Size);
                         for (; inner < vectorizable; inner += Avx256Size)
                         {
-                            var colVec = Avx2.LoadAlignedVector256(colRow + inner);
-                            var weightVec = Avx2.LoadAlignedVector256(weightRow + inner);
+                            var colVec = Avx.LoadVector256(colRow + inner);
+                            var weightVec = Avx.LoadVector256(weightRow + inner);
                             sumVec = Fma.MultiplyAdd(colVec, weightVec, sumVec);
                         }
                         sum = Vector256.Sum(sumVec);
@@ -2374,6 +2426,8 @@ public sealed unsafe partial class CnnNeuralFramework
             {
                 using (Perf?.Measure($"{prefix}.GradInput"))
                 {
+                    gradInput.Clear();
+
                     float* pWeights = weights.Pointer;
                     float* pGradInput = gradInput.Pointer;
                     int strideWeights = weights.ColumnsStride;
