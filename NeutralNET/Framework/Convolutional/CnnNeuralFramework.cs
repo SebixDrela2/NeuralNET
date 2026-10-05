@@ -27,8 +27,8 @@ using System.Runtime.Intrinsics.X86;
 /// </summary>
 public sealed unsafe partial class CnnNeuralFramework
 {
-    public const bool EnableGpu = false;
-    public const bool IgnoreSaveFile = true;
+    public const bool EnableGpu = true;
+    public const bool IgnoreSaveFile = false;
 
     private const int Avx512Size = 16; // not size, count of elements when element type is float
     private const int Avx256Size = 8;

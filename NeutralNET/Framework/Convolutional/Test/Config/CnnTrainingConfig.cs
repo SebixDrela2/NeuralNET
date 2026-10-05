@@ -77,7 +77,7 @@ public class CnnTrainingConfig
             },
 
             LearningRate = 1e-4f,
-            MaxTrainSamples = BatchSize * 16,
+            MaxTrainSamples = BatchSize * 32,
             MaxTestSamples = BatchSize,
         };
     }
