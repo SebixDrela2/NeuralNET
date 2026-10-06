@@ -27,24 +27,15 @@ public unsafe class TransformerLayerBuffers : IDisposable
     public NeuralMatrix DebugDQ => dQ;
     public NeuralMatrix DebugDK => dK;
     public NeuralMatrix DebugDV => dV;
-    public NeuralMatrix DebugMWq => mWq;
-    public NeuralMatrix DebugVWq => vWq;
-    public NeuralMatrix DebugMWk => mWk;
-    public NeuralMatrix DebugVWk => vWk;
-    public NeuralMatrix DebugMWv => mWv;
-    public NeuralMatrix DebugVWv => vWv;
-    public NeuralMatrix DebugMWo => mWo;
-    public NeuralMatrix DebugVWo => vWo;
-    public NeuralMatrix DebugMWGate => mWGate;
-    public NeuralMatrix DebugVWGate => vWGate;
-    public NeuralMatrix DebugMWUp => mWUp;
-    public NeuralMatrix DebugVWUp => vWUp;
-    public NeuralMatrix DebugMWDown => mWDown;
-    public NeuralMatrix DebugVWDown => vWDown;
-    public NeuralMatrix DebugMNorm1 => mNorm1;
-    public NeuralMatrix DebugVNorm1 => vNorm1;
-    public NeuralMatrix DebugMNorm2 => mNorm2;
-    public NeuralMatrix DebugVNorm2 => vNorm2;
+    public NeuralMatrix DebugMWq => mWq; public NeuralMatrix DebugVWq => vWq;
+    public NeuralMatrix DebugMWk => mWk; public NeuralMatrix DebugVWk => vWk;
+    public NeuralMatrix DebugMWv => mWv; public NeuralMatrix DebugVWv => vWv;
+    public NeuralMatrix DebugMWo => mWo; public NeuralMatrix DebugVWo => vWo;
+    public NeuralMatrix DebugMWGate => mWGate; public NeuralMatrix DebugVWGate => vWGate;
+    public NeuralMatrix DebugMWUp => mWUp; public NeuralMatrix DebugVWUp => vWUp;
+    public NeuralMatrix DebugMWDown => mWDown; public NeuralMatrix DebugVWDown => vWDown;
+    public NeuralMatrix DebugMNorm1 => mNorm1; public NeuralMatrix DebugVNorm1 => vNorm1;
+    public NeuralMatrix DebugMNorm2 => mNorm2; public NeuralMatrix DebugVNorm2 => vNorm2;
 
     public static bool DiagEnabled = false;
     public static int DiagStep = 0;
@@ -78,11 +69,21 @@ public unsafe class TransformerLayerBuffers : IDisposable
     private NeuralMatrix dNorm1, dNorm2;
     private NeuralMatrix ScratchE;
 
+    // Preallocated transposed weights (only used in Backward).
+    private NeuralMatrix _WqT, _WkT, _WvT, _WoT;
+    private NeuralMatrix _WGateT, _WUpT, _WDownT;
+
+    private NeuralMatrix _ropeCos;
+    private NeuralMatrix _ropeSin;
+
     private float* _rBuffer;
     private bool _disposed;
 
     public TransformerLayerBuffers(int maxBatch, int maxSeq, int embedDim, int numHeads, int headDim, int mlpHiddenDim)
     {
+        if (headDim % 2 != 0)
+            throw new ArgumentException("HeadDim must be even for RoPE.");
+
         int E = embedDim;
         int F = mlpHiddenDim;
         MaxTokens = maxBatch * maxSeq;
@@ -149,7 +150,127 @@ public unsafe class TransformerLayerBuffers : IDisposable
         dNorm2 = NeuralMatrix.GetOrCreate(MaxTokens, E);
         ScratchE = NeuralMatrix.GetOrCreate(MaxTokens, E);
 
+        // Transposed weight buffers.
+        _WqT = NeuralMatrix.GetOrCreate(E, E);
+        _WkT = NeuralMatrix.GetOrCreate(E, E);
+        _WvT = NeuralMatrix.GetOrCreate(E, E);
+        _WoT = NeuralMatrix.GetOrCreate(E, E);
+        _WGateT = NeuralMatrix.GetOrCreate(F, E);
+        _WUpT = NeuralMatrix.GetOrCreate(F, E);
+        _WDownT = NeuralMatrix.GetOrCreate(E, F);
+
+        _ropeCos = NeuralMatrix.GetOrCreate(maxSeq, headDim);
+        _ropeSin = NeuralMatrix.GetOrCreate(maxSeq, headDim);
+        PrecomputeRoPE(maxSeq, headDim);
+
         _rBuffer = (float*)NativeMemory.Alloc((nuint)MaxTokens, sizeof(float));
+    }
+
+    private void PrecomputeRoPE(int maxSeq, int headDim)
+    {
+        float* c = _ropeCos.Pointer;
+        float* s = _ropeSin.Pointer;
+        int cStride = _ropeCos.ColumnsStride;
+        int sStride = _ropeSin.ColumnsStride;
+
+        for (int pos = 0; pos < maxSeq; pos++)
+        {
+            float* cRow = c + pos * cStride;
+            float* sRow = s + pos * sStride;
+
+            for (int i = 0; i < headDim / 2; i++)
+            {
+                float freq = 1.0f / MathF.Pow(10000f, 2.0f * i / headDim);
+                float angle = pos * freq;
+                float cc = MathF.Cos(angle);
+                float ss = MathF.Sin(angle);
+                cRow[2 * i] = cc; cRow[2 * i + 1] = cc;
+                sRow[2 * i] = ss; sRow[2 * i + 1] = ss;
+            }
+        }
+    }
+
+    private void ApplyRoPEForward(int batch, int seq)
+    {
+        int H = NumHeads;
+        int D = HeadDim;
+        int T = batch * seq;
+
+        float* pQ = Q.Pointer; int qStride = Q.ColumnsStride;
+        float* pK = K.Pointer; int kStride = K.ColumnsStride;
+        float* cAll = _ropeCos.Pointer; int cStride = _ropeCos.ColumnsStride;
+        float* sAll = _ropeSin.Pointer; int sStride = _ropeSin.ColumnsStride;
+
+        Parallel.For(0, T, t =>
+        {
+            int pos = t % seq;
+            float* cRow = cAll + pos * cStride;
+            float* sRow = sAll + pos * sStride;
+
+            for (int h = 0; h < H; h++)
+            {
+                float* qHead = pQ + t * qStride + h * D;
+                float* kHead = pK + t * kStride + h * D;
+
+                for (int d = 0; d < D; d += 2)
+                {
+                    float c = cRow[d]; float s = sRow[d];
+                    float q0 = qHead[d]; float q1 = qHead[d + 1];
+                    qHead[d] = q0 * c - q1 * s;
+                    qHead[d + 1] = q0 * s + q1 * c;
+                    float k0 = kHead[d]; float k1 = kHead[d + 1];
+                    kHead[d] = k0 * c - k1 * s;
+                    kHead[d + 1] = k0 * s + k1 * c;
+                }
+            }
+        });
+    }
+
+    private void ApplyRoPEBackward(int batch, int seq)
+    {
+        int H = NumHeads;
+        int D = HeadDim;
+        int T = batch * seq;
+
+        float* pDQ = dQ.Pointer; int dqStride = dQ.ColumnsStride;
+        float* pDK = dK.Pointer; int dkStride = dK.ColumnsStride;
+        float* cAll = _ropeCos.Pointer; int cStride = _ropeCos.ColumnsStride;
+        float* sAll = _ropeSin.Pointer; int sStride = _ropeSin.ColumnsStride;
+
+        Parallel.For(0, T, t =>
+        {
+            int pos = t % seq;
+            float* cRow = cAll + pos * cStride;
+            float* sRow = sAll + pos * sStride;
+
+            for (int h = 0; h < H; h++)
+            {
+                float* dqHead = pDQ + t * dqStride + h * D;
+                float* dkHead = pDK + t * dkStride + h * D;
+
+                for (int d = 0; d < D; d += 2)
+                {
+                    float c = cRow[d]; float s = sRow[d];
+                    float dq0 = dqHead[d]; float dq1 = dqHead[d + 1];
+                    dqHead[d] = dq0 * c + dq1 * s;
+                    dqHead[d + 1] = -dq0 * s + dq1 * c;
+                    float dk0 = dkHead[d]; float dk1 = dkHead[d + 1];
+                    dkHead[d] = dk0 * c + dk1 * s;
+                    dkHead[d + 1] = -dk0 * s + dk1 * c;
+                }
+            }
+        });
+    }
+
+    private void RefreshTransposedWeights()
+    {
+        NeuralMatrix.TransposeInto(Wq, _WqT);
+        NeuralMatrix.TransposeInto(Wk, _WkT);
+        NeuralMatrix.TransposeInto(Wv, _WvT);
+        NeuralMatrix.TransposeInto(Wo, _WoT);
+        NeuralMatrix.TransposeInto(WGate, _WGateT);
+        NeuralMatrix.TransposeInto(WUp, _WUpT);
+        NeuralMatrix.TransposeInto(WDown, _WDownT);
     }
 
     public void SetBatchAndSequenceLimit(int batchSize, int seqLen)
@@ -190,24 +311,26 @@ public unsafe class TransformerLayerBuffers : IDisposable
         CopyRows(residual, InputResidual, T, E);
         ApplyRmsNorm(residual, Norm1Out, Norm1Scale, T);
 
-        Norm1Out.Dot(Wq, Q);
-        Norm1Out.Dot(Wk, K);
-        Norm1Out.Dot(Wv, V);
+        // Forward uses the natural weights.
+        Norm1Out.DotTransposed(Wq, Q);
+        Norm1Out.DotTransposed(Wk, K);
+        Norm1Out.DotTransposed(Wv, V);
 
+        ApplyRoPEForward(batch, seq);
         AttentionForward(batch, seq);
 
-        AttnOut.Dot(Wo, ScratchE);
+        AttnOut.DotTransposed(Wo, ScratchE);
         residual.SumVectorized(ScratchE);
 
         CopyRows(residual, ResidualMid, T, E);
         ApplyRmsNorm(residual, Norm2Out, Norm2Scale, T);
 
-        Norm2Out.Dot(WGate, GatePre);
-        Norm2Out.Dot(WUp, UpBranch);
+        Norm2Out.DotTransposed(WGate, GatePre);
+        Norm2Out.DotTransposed(WUp, UpBranch);
 
         ComputeSwiGlu(T);
 
-        MlpActivated.Dot(WDown, ScratchE);
+        MlpActivated.DotTransposed(WDown, ScratchE);
         residual.SumVectorized(ScratchE);
     }
 
@@ -215,8 +338,11 @@ public unsafe class TransformerLayerBuffers : IDisposable
     {
         int T = batch * seqLen;
 
+        // Refresh transposed weight caches (used only in backward).
+        RefreshTransposedWeights();
+
         // ---- MLP backward ----
-        residualGrad.DotTranspose(WDown, dMlpPreDown);
+        residualGrad.DotTransposed(_WDownT, dMlpPreDown);
         UpdateWeightsAdamW(MlpActivated, residualGrad, WDown, mWDown, vWDown, lr, stepCount, "WDown");
 
         BackwardSwiGlu(T, dMlpPreDown, dGatePre, dUp);
@@ -224,8 +350,8 @@ public unsafe class TransformerLayerBuffers : IDisposable
         UpdateWeightsAdamW(Norm2Out, dGatePre, WGate, mWGate, vWGate, lr, stepCount, "WGate");
         UpdateWeightsAdamW(Norm2Out, dUp, WUp, mWUp, vWUp, lr, stepCount, "WUp");
 
-        dGatePre.DotTranspose(WGate, dNorm2);
-        dUp.DotTranspose(WUp, ScratchE);
+        dGatePre.DotTransposed(_WGateT, dNorm2);
+        dUp.DotTransposed(_WUpT, ScratchE);
         dNorm2.SumVectorized(ScratchE);
 
         RmsNormBackward(ResidualMid, dNorm2, Norm2Scale, ScratchE, dNorm2Scale, T);
@@ -233,19 +359,20 @@ public unsafe class TransformerLayerBuffers : IDisposable
         UpdateScaleAdamW(dNorm2Scale, Norm2Scale, mNorm2, vNorm2, lr, stepCount);
 
         // ---- Attention backward ----
-        residualGrad.DotTranspose(Wo, dAttnOut);
+        residualGrad.DotTransposed(_WoT, dAttnOut);
         UpdateWeightsAdamW(AttnOut, residualGrad, Wo, mWo, vWo, lr, stepCount, "Wo");
 
         AttentionBackward(batch, seqLen, dAttnOut);
+        ApplyRoPEBackward(batch, seqLen);
 
         UpdateWeightsAdamW(Norm1Out, dQ, Wq, mWq, vWq, lr, stepCount, "Wq");
         UpdateWeightsAdamW(Norm1Out, dK, Wk, mWk, vWk, lr, stepCount, "Wk");
         UpdateWeightsAdamW(Norm1Out, dV, Wv, mWv, vWv, lr, stepCount, "Wv");
 
-        dQ.DotTranspose(Wq, dNorm1);
-        dK.DotTranspose(Wk, ScratchE);
+        dQ.DotTransposed(_WqT, dNorm1);
+        dK.DotTransposed(_WkT, ScratchE);
         dNorm1.SumVectorized(ScratchE);
-        dV.DotTranspose(Wv, ScratchE);
+        dV.DotTransposed(_WvT, ScratchE);
         dNorm1.SumVectorized(ScratchE);
 
         RmsNormBackward(InputResidual, dNorm1, Norm1Scale, ScratchE, dNorm1Scale, T);
@@ -351,12 +478,7 @@ public unsafe class TransformerLayerBuffers : IDisposable
                 float* dq = pdQ + row * dqStride + h * D;
                 float* dk = pdK + row * dkStride + h * D;
                 float* dv = pdV + row * dvStride + h * D;
-                for (int d = 0; d < D; d++)
-                {
-                    dq[d] = 0f;
-                    dk[d] = 0f;
-                    dv[d] = 0f;
-                }
+                for (int d = 0; d < D; d++) { dq[d] = 0f; dk[d] = 0f; dv[d] = 0f; }
             }
 
             for (int q = 0; q < seq; q++)
@@ -375,14 +497,12 @@ public unsafe class TransformerLayerBuffers : IDisposable
                     float* vHead = pV + (b * seq + k) * vStride + h * D;
                     float* dvHead = pdV + (b * seq + k) * dvStride + h * D;
                     float p = scoreRow[k];
-
                     float dot = 0f;
                     for (int d = 0; d < D; d++)
                     {
                         dot += doutHead[d] * vHead[d];
                         dvHead[d] += p * doutHead[d];
                     }
-
                     dS[k] = dot;
                     sumDS += dot * p;
                 }
@@ -391,10 +511,8 @@ public unsafe class TransformerLayerBuffers : IDisposable
                 {
                     float p = scoreRow[k];
                     float dSoftmax = p * (dS[k] - sumDS) * invSqrtD;
-
                     float* kHead = pK + (b * seq + k) * kStride + h * D;
                     float* dkHead = pdK + (b * seq + k) * dkStride + h * D;
-
                     for (int d = 0; d < D; d++)
                     {
                         dqHead[d] += dSoftmax * kHead[d];
@@ -459,7 +577,6 @@ public unsafe class TransformerLayerBuffers : IDisposable
                 float sig = 1f / (1f + MathF.Exp(-gi));
                 float silu = gi * sig;
                 float dSilu = sig * (1f + gi * (1f - sig));
-
                 float dOut = dM[i];
                 dG[i] = dOut * ui * dSilu;
                 dU[i] = dOut * silu;
@@ -496,10 +613,8 @@ public unsafe class TransformerLayerBuffers : IDisposable
             float* dxRow = pDX + row * dxStride;
             float r = rBuf[row];
             float r3n = r * r * r / E;
-
             float s = 0f;
             for (int i = 0; i < E; i++) s += dyRow[i] * xRow[i] * pScale[i];
-
             for (int i = 0; i < E; i++)
                 dxRow[i] = r * pScale[i] * dyRow[i] - r3n * xRow[i] * s;
         });
@@ -565,7 +680,6 @@ public unsafe class TransformerLayerBuffers : IDisposable
                     var vIn0 = Vector256.Load(inRow + i);
                     var vSc0 = Vector256.Load(pScale + i);
                     Avx.Multiply(Avx.Multiply(vIn0, vScaleFact), vSc0).Store(outRow + i);
-
                     var vIn1 = Vector256.Load(inRow + i + 8);
                     var vSc1 = Vector256.Load(pScale + i + 8);
                     Avx.Multiply(Avx.Multiply(vIn1, vScaleFact), vSc1).Store(outRow + i + 8);
@@ -578,14 +692,14 @@ public unsafe class TransformerLayerBuffers : IDisposable
     }
 
     private void UpdateWeightsAdamW(
-    NeuralMatrix inputActivations,
-    NeuralMatrix outputGrads,
-    NeuralMatrix weight,
-    NeuralMatrix mState,
-    NeuralMatrix vState,
-    float lr,
-    int stepCount,
-    string name = "?")
+        NeuralMatrix inputActivations,
+        NeuralMatrix outputGrads,
+        NeuralMatrix weight,
+        NeuralMatrix mState,
+        NeuralMatrix vState,
+        float lr,
+        int stepCount,
+        string name = "?")
     {
         const float beta1 = 0.9f;
         const float beta2 = 0.999f;
@@ -595,8 +709,8 @@ public unsafe class TransformerLayerBuffers : IDisposable
         float bc1 = 1f - MathF.Pow(beta1, stepCount);
         float bc2 = 1f - MathF.Pow(beta2, stepCount);
 
-        int rows = weight.Rows;        // in_features
-        int cols = weight.UsedColumns; // out_features
+        int rows = weight.Rows;
+        int cols = weight.UsedColumns;
         int T = inputActivations.Rows;
         if (T == 0) return;
 
@@ -606,16 +720,11 @@ public unsafe class TransformerLayerBuffers : IDisposable
         float* pM = mState.Pointer;
         float* pV = vState.Pointer;
 
-        // Row-major scratch for the full gradient matrix [rows, cols].
         float* gradW = (float*)NativeMemory.Alloc((nuint)(rows * cols), sizeof(float));
         try
         {
-            // Clear the scratch. rows*cols is at most 128*512 = 65536 floats = 256 KB.
             new Span<float>(gradW, rows * cols).Clear();
 
-            // Pass 1: accumulate gradW[r, c] = sum_t X[t, r] * dY[t, c]
-            // Parallelize over r. Inner loop reads dY[t, :] sequentially, so every
-            // cache line of dY is fully consumed in one pass.
             Parallel.For(0, rows, r =>
             {
                 float* gRow = gradW + r * cols;
@@ -629,7 +738,6 @@ public unsafe class TransformerLayerBuffers : IDisposable
                 }
             });
 
-            // Pass 2: AdamW elementwise.
             Parallel.For(0, rows, r =>
             {
                 float* wRow = pW + r * wStride;
@@ -642,10 +750,8 @@ public unsafe class TransformerLayerBuffers : IDisposable
                     float grad = gRow[c];
                     mRow[c] = beta1 * mRow[c] + (1f - beta1) * grad;
                     vRow[c] = beta2 * vRow[c] + (1f - beta2) * (grad * grad);
-
                     float mHat = mRow[c] / bc1;
                     float vHat = vRow[c] / bc2;
-
                     wRow[c] -= lr * (mHat / (MathF.Sqrt(vHat) + eps) + weightDecay * wRow[c]);
                 }
             });
@@ -709,6 +815,12 @@ public unsafe class TransformerLayerBuffers : IDisposable
         dMlpPreDown.Dispose(); dGatePre.Dispose(); dUp.Dispose();
         dQ.Dispose(); dK.Dispose(); dV.Dispose(); dAttnOut.Dispose();
         dNorm1.Dispose(); dNorm2.Dispose(); ScratchE.Dispose();
+
+        _WqT.Dispose(); _WkT.Dispose(); _WvT.Dispose(); _WoT.Dispose();
+        _WGateT.Dispose(); _WUpT.Dispose(); _WDownT.Dispose();
+
+        _ropeCos.Dispose();
+        _ropeSin.Dispose();
 
         if (_rBuffer != null)
         {

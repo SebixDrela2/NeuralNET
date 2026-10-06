@@ -9,7 +9,7 @@ namespace NeutralNET.Framework.Neural.GPT;
 
 public class GptTrainingRunner
 {
-    private const int CheckpointMagic = 0x47505431;  // 'GPT1'
+    private const int CheckpointMagic = 0x47505432;  // 'GPT2'
 
     public static unsafe (float AvgLoss, float Accuracy) Evaluate(GptNeuralFramework gpt, List<int[][]> testMiniBatches)
     {
@@ -204,10 +204,6 @@ public class GptTrainingRunner
         WriteMatrix(gpt.DebugMTokEmb);
         WriteMatrix(gpt.DebugVTokEmb);
 
-        WriteMatrix(gpt.PositionalEmbeddings);
-        WriteMatrix(gpt.DebugMPosEmb);
-        WriteMatrix(gpt.DebugVPosEmb);
-
         WriteMatrix(gpt.OutputProjection);
         WriteMatrix(gpt.DebugMOutProj);
         WriteMatrix(gpt.DebugVOutProj);
@@ -326,10 +322,6 @@ public class GptTrainingRunner
         ReadMatrix(gpt.TokenEmbeddings);
         ReadMatrix(gpt.DebugMTokEmb);
         ReadMatrix(gpt.DebugVTokEmb);
-
-        ReadMatrix(gpt.PositionalEmbeddings);
-        ReadMatrix(gpt.DebugMPosEmb);
-        ReadMatrix(gpt.DebugVPosEmb);
 
         ReadMatrix(gpt.OutputProjection);
         ReadMatrix(gpt.DebugMOutProj);

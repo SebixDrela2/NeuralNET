@@ -485,3 +485,5 @@ $RECYCLE.BIN/
 
 NeutralNET.CodeGen/
 Build/checkpoints/
+
+Build/magnificency/**/*.bin

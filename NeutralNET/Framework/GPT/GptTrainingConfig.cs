@@ -3,12 +3,13 @@ namespace NeutralNET.Framework.Neural.GPT;
 public class TrainingConfig
 {
     // Model
+    // Model
     public int ContextSize { get; set; } = 256;
-    public int EmbedDim { get; set; } = 128;
-    public int IntermediateDim { get; set; } = 512;
-    public int NumHeads { get; set; } = 4;
-    public int NumLayers { get; set; } = 2;
-    public int MaxBatchSize { get; set; } = 64;
+    public int EmbedDim { get; set; } = 256;        
+    public int IntermediateDim { get; set; } = 1024;
+    public int NumHeads { get; set; } = 8;          
+    public int NumLayers { get; set; } = 4;         
+    public int MaxBatchSize { get; set; } = 32;     
 
     // Training
     public float LearningRate { get; set; } = 0.0003f;

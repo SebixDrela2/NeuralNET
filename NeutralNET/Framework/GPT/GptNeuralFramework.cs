@@ -12,7 +12,7 @@ namespace NeutralNET.Framework.Neural.GPT;
 
 public unsafe class GptNeuralFramework : IDisposable
 {
-    public GptConfig Config;   // mutable so LR can be changed during warmup
+    public GptConfig Config;
     public readonly int MaxBatchSize;
     public readonly int MaxSequenceLength;
     public readonly int VocabSize;
@@ -26,14 +26,12 @@ public unsafe class GptNeuralFramework : IDisposable
     public int CurrentSeqLen { get; private set; }
 
     public NeuralMatrix TokenEmbeddings;
-    public NeuralMatrix PositionalEmbeddings;
     public NeuralMatrix OutputProjection;
     public TransformerLayerBuffers[] Layers;
 
     private NeuralMatrix _mTokEmb, _vTokEmb;
-    private NeuralMatrix _mPosEmb, _vPosEmb;
     private NeuralMatrix _mOutProj, _vOutProj;
-    private NeuralMatrix _gTokEmb, _gPosEmb;
+    private NeuralMatrix _gTokEmb;
     private int _stepCount = 0;
 
     public NeuralMatrix InputTokenIds;
@@ -43,8 +41,6 @@ public unsafe class GptNeuralFramework : IDisposable
 
     public NeuralMatrix DebugMTokEmb => _mTokEmb;
     public NeuralMatrix DebugVTokEmb => _vTokEmb;
-    public NeuralMatrix DebugMPosEmb => _mPosEmb;
-    public NeuralMatrix DebugVPosEmb => _vPosEmb;
     public NeuralMatrix DebugMOutProj => _mOutProj;
     public NeuralMatrix DebugVOutProj => _vOutProj;
 
@@ -111,23 +107,18 @@ public unsafe class GptNeuralFramework : IDisposable
         CurrentSeqLen = maxSequenceLength;
 
         TokenEmbeddings = NeuralMatrix.GetOrCreate(VocabSize, EmbedDim);
-        PositionalEmbeddings = NeuralMatrix.GetOrCreate(MaxSequenceLength, EmbedDim);
         OutputProjection = NeuralMatrix.GetOrCreate(EmbedDim, VocabSize);
 
         _mTokEmb = NeuralMatrix.GetOrCreate(VocabSize, EmbedDim);
         _vTokEmb = NeuralMatrix.GetOrCreate(VocabSize, EmbedDim);
-        _mPosEmb = NeuralMatrix.GetOrCreate(MaxSequenceLength, EmbedDim);
-        _vPosEmb = NeuralMatrix.GetOrCreate(MaxSequenceLength, EmbedDim);
         _mOutProj = NeuralMatrix.GetOrCreate(EmbedDim, VocabSize);
         _vOutProj = NeuralMatrix.GetOrCreate(EmbedDim, VocabSize);
         _gTokEmb = NeuralMatrix.GetOrCreate(VocabSize, EmbedDim);
-        _gPosEmb = NeuralMatrix.GetOrCreate(MaxSequenceLength, EmbedDim);
 
         float std = 0.02f;
         float projStd = std / MathF.Sqrt(2f * NumLayers);
 
         TokenEmbeddings.RandomizeGaussian(0f, std);
-        PositionalEmbeddings.RandomizeGaussian(0f, std);
         OutputProjection.RandomizeGaussian(0f, projStd);
 
         Layers = new TransformerLayerBuffers[NumLayers];
@@ -210,7 +201,6 @@ public unsafe class GptNeuralFramework : IDisposable
 
         try
         {
-            // 1. CE gradient: (softmax(logits) - onehot) / T
             Parallel.For(0, totalTokens, idx =>
             {
                 int target = pTargets[idx];
@@ -237,18 +227,11 @@ public unsafe class GptNeuralFramework : IDisposable
                 {
                     float prob = gradRow[v] * invSum;
                     float g = (prob - (v == target ? 1.0f : 0.0f)) / totalTokens;
-
-                    // Clip per-element gradient to prevent runaway when logits grow large.
-                    // Natural scale is ~1/99/T ~= 6e-7, so 1e-3 is ~1600x the natural magnitude.
-                    const float clip = 1e-3f;
-                    if (g > clip) g = clip;
-                    else if (g < -clip) g = -clip;
-
+                    
                     gradRow[v] = g;
                 }
             });
 
-            // 2. dx residual: dX = dY * OutputProjection^T
             Parallel.For(0, totalTokens, t =>
             {
                 float* dy = pGradients + t * logitsStride;
@@ -262,7 +245,6 @@ public unsafe class GptNeuralFramework : IDisposable
                 }
             });
 
-            // Optional second-stage clip on dX to prevent runaway into the layers.
             Parallel.For(0, totalTokens, t =>
             {
                 float* dx = pResGrad + t * resStride;
@@ -273,7 +255,6 @@ public unsafe class GptNeuralFramework : IDisposable
                 }
             });
 
-            // 3. OutputProjection AdamW
             float* mProj = _mOutProj.Pointer;
             float* vProj = _vOutProj.Pointer;
 
@@ -302,11 +283,9 @@ public unsafe class GptNeuralFramework : IDisposable
                 }
             });
 
-            // 4. Layers backward
             for (int l = NumLayers - 1; l >= 0; l--)
                 Layers[l].Backward(ResidualGrad, batchSize, seqLen, lr, _stepCount);
 
-            // 5. Embeddings backward
             BackwardEmbeddings(batchSize, seqLen, lr, biasCorrection1, biasCorrection2, beta1, beta2, eps, weightDecay);
         }
         finally
@@ -325,13 +304,9 @@ public unsafe class GptNeuralFramework : IDisposable
         int resStride = ResidualGrad.ColumnsStride;
 
         int tokStride = TokenEmbeddings.ColumnsStride;
-        int posStride = PositionalEmbeddings.ColumnsStride;
 
         _gTokEmb.Clear();
-        _gPosEmb.Clear();
-
         float* pGTok = _gTokEmb.Pointer;
-        float* pGPos = _gPosEmb.Pointer;
 
         for (int b = 0; b < batchSize; b++)
         {
@@ -342,13 +317,10 @@ public unsafe class GptNeuralFramework : IDisposable
 
                 float* gradRow = pResGrad + (b * seqLen + s) * resStride;
                 float* gTokRow = pGTok + tokenId * tokStride;
-                float* gPosRow = pGPos + s * posStride;
 
                 for (int d = 0; d < EmbedDim; d++)
                 {
-                    float g = gradRow[d];
-                    gTokRow[d] += g;
-                    gPosRow[d] += g;
+                    gTokRow[d] += gradRow[d];
                 }
             }
         }
@@ -363,33 +335,6 @@ public unsafe class GptNeuralFramework : IDisposable
             float* w = pTok + v * tokStride;
             float* m = mTok + v * tokStride;
             float* vv = vTok + v * tokStride;
-
-            for (int d = 0; d < EmbedDim; d++)
-            {
-                float gi = g[d];
-                m[d] = beta1 * m[d] + (1f - beta1) * gi;
-                vv[d] = beta2 * vv[d] + (1f - beta2) * (gi * gi);
-
-                float mHat = m[d] / biasCorrection1;
-                float vHat = vv[d] / biasCorrection2;
-
-                float weight = w[d];
-                weight -= lr * weightDecay * weight;
-                weight -= lr * (mHat / (MathF.Sqrt(vHat) + eps));
-                w[d] = weight;
-            }
-        });
-
-        float* pPos = PositionalEmbeddings.Pointer;
-        float* mPos = _mPosEmb.Pointer;
-        float* vPos = _vPosEmb.Pointer;
-
-        Parallel.For(0, seqLen, s =>
-        {
-            float* g = pGPos + s * posStride;
-            float* w = pPos + s * posStride;
-            float* m = mPos + s * posStride;
-            float* vv = vPos + s * posStride;
 
             for (int d = 0; d < EmbedDim; d++)
             {
@@ -519,11 +464,9 @@ public unsafe class GptNeuralFramework : IDisposable
     {
         int embedDim = EmbedDim;
         int tokStride = TokenEmbeddings.ColumnsStride;
-        int posStride = PositionalEmbeddings.ColumnsStride;
         int resStride = residual.ColumnsStride;
 
         float* pTok = TokenEmbeddings.Pointer;
-        float* pPos = PositionalEmbeddings.Pointer;
         float* pRes = residual.Pointer;
 
         Parallel.For(0, batch, b =>
@@ -534,7 +477,6 @@ public unsafe class GptNeuralFramework : IDisposable
                 int tokenRowIndex = (tokenId >= 0 && tokenId < VocabSize) ? tokenId : 0;
 
                 float* tokRow = pTok + (tokenRowIndex * tokStride);
-                float* posRow = pPos + (s * posStride);
                 float* dstRow = pRes + ((b * seq + s) * resStride);
 
                 int i = 0;
@@ -544,8 +486,7 @@ public unsafe class GptNeuralFramework : IDisposable
                     for (; i < vecLimit; i += 16)
                     {
                         var vT = Vector512.Load(tokRow + i);
-                        var vP = Vector512.Load(posRow + i);
-                        (vT + vP).Store(dstRow + i);
+                        vT.Store(dstRow + i);
                     }
                 }
                 else if (Avx2.IsSupported)
@@ -554,12 +495,11 @@ public unsafe class GptNeuralFramework : IDisposable
                     for (; i < vecLimit; i += 8)
                     {
                         var vT = Vector256.Load(tokRow + i);
-                        var vP = Vector256.Load(posRow + i);
-                        (vT + vP).Store(dstRow + i);
+                        vT.Store(dstRow + i);
                     }
                 }
 
-                for (; i < embedDim; i++) dstRow[i] = tokRow[i] + posRow[i];
+                for (; i < embedDim; i++) dstRow[i] = tokRow[i];
             }
         });
     }
@@ -567,39 +507,16 @@ public unsafe class GptNeuralFramework : IDisposable
     private void LmHeadForwardInPlace(NeuralMatrix inputStream, NeuralMatrix logitsOut)
     {
         inputStream.Dot(OutputProjection, logitsOut);
-
-        ClipLogits(logitsOut, -20f, 20f);
     }
-
-    private unsafe void ClipLogits(NeuralMatrix logits, float min, float max)
-    {
-        int rows = logits.Rows;
-        int cols = logits.UsedColumns;
-        float* p = logits.Pointer;
-        int stride = logits.ColumnsStride;
-        Parallel.For(0, rows, r =>
-        {
-            float* row = p + r * stride;
-            for (int v = 0; v < cols; v++)
-            {
-                if (row[v] > max) row[v] = max;
-                else if (row[v] < min) row[v] = min;
-            }
-        });
-    }
-
     public void Dispose()
     {
         if (_disposed) return;
 
         TokenEmbeddings.Dispose();
-        PositionalEmbeddings.Dispose();
         OutputProjection.Dispose();
         _mTokEmb.Dispose(); _vTokEmb.Dispose();
-        _mPosEmb.Dispose(); _vPosEmb.Dispose();
         _mOutProj.Dispose(); _vOutProj.Dispose();
         _gTokEmb.Dispose();
-        _gPosEmb.Dispose();
 
         InputTokenIds.Dispose();
         ResidualStream.Dispose();

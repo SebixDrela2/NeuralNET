@@ -115,24 +115,21 @@ public class GptTrainer
         float* q = _gpt.Layers[0].Wq.Pointer;
         float* out2 = _gpt.OutputProjection.Pointer;
         float* tok = _gpt.TokenEmbeddings.Pointer;
-        float* pos = _gpt.PositionalEmbeddings.Pointer;
         float* logits = _gpt.LogitsOutput.Pointer;
 
         int qCount = _gpt.Layers[0].Wq.Rows * _gpt.Layers[0].Wq.ColumnsStride;
         int outCount = _gpt.OutputProjection.Rows * _gpt.OutputProjection.ColumnsStride;
         int tokCount = _gpt.TokenEmbeddings.Rows * _gpt.TokenEmbeddings.ColumnsStride;
-        int posCount = _gpt.PositionalEmbeddings.Rows * _gpt.PositionalEmbeddings.ColumnsStride;
         int logCount = _gpt.LogitsOutput.Rows * _gpt.LogitsOutput.ColumnsStride;
 
-        float qMax = 0f, outMax = 0f, tokMax = 0f, posMax = 0f, logMax = 0f;
+        float qMax = 0f, outMax = 0f, tokMax = 0f, logMax = 0f;
         for (int i = 0; i < qCount; i++) if (MathF.Abs(q[i]) > qMax) qMax = MathF.Abs(q[i]);
         for (int i = 0; i < outCount; i++) if (MathF.Abs(out2[i]) > outMax) outMax = MathF.Abs(out2[i]);
         for (int i = 0; i < tokCount; i++) if (MathF.Abs(tok[i]) > tokMax) tokMax = MathF.Abs(tok[i]);
-        for (int i = 0; i < posCount; i++) if (MathF.Abs(pos[i]) > posMax) posMax = MathF.Abs(pos[i]);
         for (int i = 0; i < logCount; i++) if (MathF.Abs(logits[i]) > logMax) logMax = MathF.Abs(logits[i]);
 
         Console.WriteLine(
             $"[batch-diag] |Wq|max={qMax:G4} |Wo|max={outMax:G4} |tok|max={tokMax:G4} " +
-            $"|pos|max={posMax:G4} |logits|max={logMax:G4}");
+            $"|logits|max={logMax:G4}");
     }
 }

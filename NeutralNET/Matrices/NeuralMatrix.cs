@@ -65,10 +65,12 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void DotVectorized(NeuralMatrix other, NeuralMatrix result)
     {
-        // Standard matmul: A[m, k] @ B[k, n] = C[m, n]
         int m = Rows;
         int k = UsedColumns;
         int n = other.UsedColumns;
+
+        if (k != other.Rows)
+            throw new ArgumentException($"Dot shape mismatch: A columns ({k}) != B rows ({other.Rows})");
 
         float* pA = Pointer; int aStride = ColumnsStride;
         float* pB = other.Pointer; int bStride = other.ColumnsStride;
@@ -79,11 +81,8 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
             float* aRow = pA + i * aStride;
             float* rRow = pR + i * rStride;
 
-            // Zero the output row (only the used columns; padding can stay whatever).
             for (int j = 0; j < n; j++) rRow[j] = 0f;
 
-            // C[i, :] += A[i, p] * B[p, :] for each p in [0, k)
-            // This is a row-of-A scalars times rows-of-B, accumulated into C's row.
             for (int p = 0; p < k; p++)
             {
                 float aVal = aRow[p];
@@ -119,73 +118,133 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
                     }
                 }
 
-                for (; j < n; j++)
-                {
-                    rRow[j] += aVal * bRow[j];
-                }
+                for (; j < n; j++) rRow[j] += aVal * bRow[j];
             }
         });
     }
 
+    /// <summary>
+    /// this @ w, where both are read row-major.
+    /// this: [m, k], w: [k, n], result: [m, n].
+    /// Used both for standard matmul with pre-transposed weights (backward)
+    /// and for standard matmul with the natural weight (forward).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void DotTransposed(NeuralMatrix w, NeuralMatrix result)
+    {
+        int m = Rows;
+        int k = UsedColumns;
+        int n = w.UsedColumns;
+
+        if (k != w.Rows)
+            throw new ArgumentException(
+                $"DotTransposed shape mismatch: this cols ({k}) != w rows ({w.Rows})");
+
+        float* pA = Pointer; int aStride = ColumnsStride;
+        float* pW = w.Pointer; int wStride = w.ColumnsStride;
+        float* pR = result.Pointer; int rStride = result.ColumnsStride;
+
+        Parallel.For(0, m, i =>
+        {
+            float* aRow = pA + i * aStride;
+            float* rRow = pR + i * rStride;
+
+            for (int j = 0; j < n; j++) rRow[j] = 0f;
+
+            for (int p = 0; p < k; p++)
+            {
+                float aVal = aRow[p];
+                if (aVal == 0f) continue;
+
+                float* wRow = pW + p * wStride;
+                int j = 0;
+
+                if (Avx512F.IsSupported)
+                {
+                    var vA = Vector512.Create(aVal);
+                    int vecLimit = n - (n % 16);
+                    for (; j < vecLimit; j += 16)
+                    {
+                        var rVec = Vector512.Load(rRow + j);
+                        var wVec = Vector512.Load(wRow + j);
+                        rVec = Avx512F.FusedMultiplyAdd(vA, wVec, rVec);
+                        rVec.Store(rRow + j);
+                    }
+                }
+                else if (Avx2.IsSupported)
+                {
+                    var vA = Vector256.Create(aVal);
+                    int vecLimit = n - (n % 8);
+                    for (; j < vecLimit; j += 8)
+                    {
+                        var rVec = Vector256.Load(rRow + j);
+                        var wVec = Vector256.Load(wRow + j);
+                        rVec = Fma.IsSupported
+                            ? Fma.MultiplyAdd(vA, wVec, rVec)
+                            : Avx.Add(rVec, Avx.Multiply(vA, wVec));
+                        rVec.Store(rRow + j);
+                    }
+                }
+
+                for (; j < n; j++) rRow[j] += aVal * wRow[j];
+            }
+        });
+    }
+
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void DotTranspose(NeuralMatrix other, NeuralMatrix result)
     {
-        // Dla A * B^T: Liczba kolumn A musi zgadzać się z liczbą kolumn B
+        // A[m, k] @ B[n, k]^T = C[m, n]
         if (UsedColumns != other.UsedColumns)
         {
-            throw new ArgumentException($"Dimension mismatch for DotTranspose: Left columns ({UsedColumns}) != Right columns ({other.UsedColumns})");
+            throw new ArgumentException(
+                $"Dimension mismatch for DotTranspose: Left columns ({UsedColumns}) != Right columns ({other.UsedColumns})");
         }
 
-        int batchSize = Rows;
-        int outFeatures = other.Rows;
-        int inFeatures = UsedColumns;
+        int m = Rows;
+        int n = other.Rows;
+        int k = UsedColumns;
 
-        float* pInput = Pointer;
-        float* pResult = result.Pointer;
-        float* pOther = other.Pointer;
+        float* pA = Pointer; int aStride = ColumnsStride;
+        float* pB = other.Pointer; int bStride = other.ColumnsStride;
+        float* pR = result.Pointer; int rStride = result.ColumnsStride;
 
-        int inStride = ColumnsStride;
-        int resStride = result.ColumnsStride;
-        int othStride = other.ColumnsStride;
-
-        Parallel.For(0, batchSize, row =>
+        Parallel.For(0, m, i =>
         {
-            float* inputRow = pInput + row * inStride;
-            float* resultRow = pResult + row * resStride;
+            float* aRow = pA + i * aStride;
+            float* rRow = pR + i * rStride;
 
-            for (int neuronIdx = 0; neuronIdx < outFeatures; neuronIdx++)
+            for (int j = 0; j < n; j++)
             {
-                float* weights = pOther + neuronIdx * othStride;
+                float* bRow = pB + j * bStride;
                 float sum = 0f;
-                int k = 0;
+                int p = 0;
 
                 if (Avx512F.IsSupported)
                 {
                     var sumVec = Vector512<float>.Zero;
-                    int vecLimit = inFeatures - (inFeatures % 16);
-
-                    for (; k < vecLimit; k += 16)
+                    int vecLimit = k - (k % 16);
+                    for (; p < vecLimit; p += 16)
                     {
-                        var inputVec = Vector512.Load(inputRow + k);
-                        var weightVec = Vector512.Load(weights + k);
-                        sumVec = Avx512F.FusedMultiplyAdd(inputVec, weightVec, sumVec);
+                        var aVec = Vector512.Load(aRow + p);
+                        var bVec = Vector512.Load(bRow + p);
+                        sumVec = Avx512F.FusedMultiplyAdd(aVec, bVec, sumVec);
                     }
                     sum += Vector512.Sum(sumVec);
                 }
                 else if (Avx2.IsSupported)
                 {
                     var sumVec = Vector256<float>.Zero;
-                    int vecLimit = inFeatures - (inFeatures % 8);
-
-                    for (; k < vecLimit; k += 8)
+                    int vecLimit = k - (k % 8);
+                    for (; p < vecLimit; p += 8)
                     {
-                        var inputVec = Vector256.Load(inputRow + k);
-                        var weightVec = Vector256.Load(weights + k);
+                        var aVec = Vector256.Load(aRow + p);
+                        var bVec = Vector256.Load(bRow + p);
                         sumVec = Fma.IsSupported
-                            ? Fma.MultiplyAdd(inputVec, weightVec, sumVec)
-                            : Avx.Add(sumVec, Avx.Multiply(inputVec, weightVec));
+                            ? Fma.MultiplyAdd(aVec, bVec, sumVec)
+                            : Avx.Add(sumVec, Avx.Multiply(aVec, bVec));
                     }
-
                     var hi = Avx.ExtractVector128(sumVec, 1);
                     var lo = sumVec.GetLower();
                     var sum128 = Sse.Add(lo, hi);
@@ -194,12 +253,9 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
                     sum += sum128.ToScalar();
                 }
 
-                for (; k < inFeatures; k++)
-                {
-                    sum += inputRow[k] * weights[k];
-                }
+                for (; p < k; p++) sum += aRow[p] * bRow[p];
 
-                resultRow[neuronIdx] = sum;
+                rRow[j] = sum;
             }
         });
     }
@@ -435,5 +491,41 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
     ~NeuralMatrix()
     {
         MemoryHandle.Free();
+    }
+
+    /// <summary>
+    /// Transposes src [r, c] into dst [c, r]. Row-major input, row-major output.
+    /// Used by the matmul to convert column-strided reads into sequential reads.
+    /// dst must have Rows == src.UsedColumns and UsedColumns == src.Rows.
+    /// </summary>
+    internal static unsafe void TransposeInto(NeuralMatrix src, NeuralMatrix dst)
+    {
+        int r = src.Rows;
+        int c = src.UsedColumns;
+
+        float* sp = src.Pointer; int sStride = src.ColumnsStride;
+        float* dp = dst.Pointer; int dStride = dst.ColumnsStride;
+
+        // Blocked transpose for cache friendliness. 32x32 blocks are a good
+        // compromise for typical L1/L2 sizes.
+        const int Block = 32;
+
+        for (int i0 = 0; i0 < r; i0 += Block)
+        {
+            int iMax = Math.Min(i0 + Block, r);
+            for (int j0 = 0; j0 < c; j0 += Block)
+            {
+                int jMax = Math.Min(j0 + Block, c);
+                for (int i = i0; i < iMax; i++)
+                {
+                    float* sRow = sp + i * sStride;
+                    for (int j = j0; j < jMax; j++)
+                    {
+                        float* dRow = dp + j * dStride;
+                        dRow[i] = sRow[j];
+                    }
+                }
+            }
+        }
     }
 }
