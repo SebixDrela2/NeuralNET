@@ -1,5 +1,9 @@
+using System;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
+using System.Threading.Tasks;
 using NeutralNET.Matrices;
 
 namespace NeutralNET.Framework.Neural.GPT;
@@ -11,137 +15,484 @@ public unsafe class TransformerLayerBuffers : IDisposable
     public readonly int HeadDim;
     public readonly int MlpHiddenDim;
 
+    private readonly int MaxTokens;
+
+    public NeuralMatrix DebugAttnOut => AttnOut;
+    public NeuralMatrix DebugWo => Wo;
+    public NeuralMatrix DebugWq => Wq;
+    public NeuralMatrix DebugQ => Q;
+    public NeuralMatrix DebugK => K;
+    public NeuralMatrix DebugV => V;
+    public NeuralMatrix DebugDAttnOut => dAttnOut;
+    public NeuralMatrix DebugDQ => dQ;
+    public NeuralMatrix DebugDK => dK;
+    public NeuralMatrix DebugDV => dV;
+
+    public static bool DiagEnabled = false;
+    public static int DiagStep = 0;
+    public static int DiagLayerLimit = 99;
+
     public NeuralMatrix Wq, Wk, Wv, Wo;
     public NeuralMatrix WGate, WUp, WDown;
     public NeuralMatrix Norm1Scale, Norm2Scale;
 
-    public NeuralMatrix QScratch;
-    public NeuralMatrix KScratch;
-    public NeuralMatrix VScratch;
-    public NeuralMatrix AttnScoresScratch;
-    public NeuralMatrix MlpHiddenScratch;
-    public NeuralMatrix NormScratch;
-    public NeuralMatrix ContextScratch;
+    private NeuralMatrix mWq, vWq, mWk, vWk, mWv, vWv, mWo, vWo;
+    private NeuralMatrix mWGate, vWGate, mWUp, vWUp, mWDown, vWDown;
+    private NeuralMatrix mNorm1, vNorm1, mNorm2, vNorm2;
+    private NeuralMatrix dNorm1Scale, dNorm2Scale;
 
-    public NeuralMatrix KeyCache;
-    public NeuralMatrix ValueCache;
+    private NeuralMatrix InputResidual;
+    private NeuralMatrix Norm1Out;
+    private NeuralMatrix Q, K, V;
+    private NeuralMatrix AttnOut;
+    private NeuralMatrix AttnScores;
+    private NeuralMatrix ResidualMid;
+    private NeuralMatrix Norm2Out;
+    private NeuralMatrix GatePre;
+    private NeuralMatrix UpBranch;
+    private NeuralMatrix MlpActivated;
 
+    private NeuralMatrix dMlpPreDown;
+    private NeuralMatrix dGatePre;
+    private NeuralMatrix dUp;
+    private NeuralMatrix dQ, dK, dV;
+    private NeuralMatrix dAttnOut;
+    private NeuralMatrix dNorm1, dNorm2;
+    private NeuralMatrix ScratchE;
+
+    private float* _rBuffer;
     private bool _disposed;
 
-    public TransformerLayerBuffers(
-        int maxBatch,
-        int maxSeq,
-        int embedDim,
-        int numHeads,
-        int headDim,
-        int mlpHiddenDim)
+    public TransformerLayerBuffers(int maxBatch, int maxSeq, int embedDim, int numHeads, int headDim, int mlpHiddenDim)
     {
+        int E = embedDim;
+        int F = mlpHiddenDim;
+        MaxTokens = maxBatch * maxSeq;
         EmbedDim = embedDim;
         NumHeads = numHeads;
         HeadDim = headDim;
         MlpHiddenDim = mlpHiddenDim;
 
-        // Weights initialization
-        Wq = NeuralMatrix.GetOrCreate(embedDim, embedDim);
-        Wk = NeuralMatrix.GetOrCreate(embedDim, embedDim);
-        Wv = NeuralMatrix.GetOrCreate(embedDim, embedDim);
-        Wo = NeuralMatrix.GetOrCreate(embedDim, embedDim);
+        Wq = NeuralMatrix.GetOrCreate(E, E);
+        Wk = NeuralMatrix.GetOrCreate(E, E);
+        Wv = NeuralMatrix.GetOrCreate(E, E);
+        Wo = NeuralMatrix.GetOrCreate(E, E);
+        WGate = NeuralMatrix.GetOrCreate(E, F);
+        WUp = NeuralMatrix.GetOrCreate(E, F);
+        WDown = NeuralMatrix.GetOrCreate(F, E);
 
-        WGate = NeuralMatrix.GetOrCreate(embedDim, mlpHiddenDim);
-        WUp = NeuralMatrix.GetOrCreate(embedDim, mlpHiddenDim);
-        WDown = NeuralMatrix.GetOrCreate(mlpHiddenDim, embedDim);
+        Norm1Scale = NeuralMatrix.GetOrCreate(1, E);
+        Norm2Scale = NeuralMatrix.GetOrCreate(1, E);
+        Norm1Scale.Fill(1f);
+        Norm2Scale.Fill(1f);
 
-        Norm1Scale = NeuralMatrix.GetOrCreate(1, embedDim);
-        Norm2Scale = NeuralMatrix.GetOrCreate(1, embedDim);
+        const float std = 0.02f;
+        Wq.RandomizeGaussian(0f, std);
+        Wk.RandomizeGaussian(0f, std);
+        Wv.RandomizeGaussian(0f, std);
+        Wo.RandomizeGaussian(0f, std);
+        WGate.RandomizeGaussian(0f, std);
+        WUp.RandomizeGaussian(0f, std);
+        WDown.RandomizeGaussian(0f, std);
 
-        // Fill normalization weights with 1.0
-        Norm1Scale.Fill(1.0f);
-        Norm2Scale.Fill(1.0f);
+        mWq = NeuralMatrix.GetOrCreate(E, E); vWq = NeuralMatrix.GetOrCreate(E, E);
+        mWk = NeuralMatrix.GetOrCreate(E, E); vWk = NeuralMatrix.GetOrCreate(E, E);
+        mWv = NeuralMatrix.GetOrCreate(E, E); vWv = NeuralMatrix.GetOrCreate(E, E);
+        mWo = NeuralMatrix.GetOrCreate(E, E); vWo = NeuralMatrix.GetOrCreate(E, E);
+        mWGate = NeuralMatrix.GetOrCreate(E, F); vWGate = NeuralMatrix.GetOrCreate(E, F);
+        mWUp = NeuralMatrix.GetOrCreate(E, F); vWUp = NeuralMatrix.GetOrCreate(E, F);
+        mWDown = NeuralMatrix.GetOrCreate(F, E); vWDown = NeuralMatrix.GetOrCreate(F, E);
+        mNorm1 = NeuralMatrix.GetOrCreate(1, E); vNorm1 = NeuralMatrix.GetOrCreate(1, E);
+        mNorm2 = NeuralMatrix.GetOrCreate(1, E); vNorm2 = NeuralMatrix.GetOrCreate(1, E);
+        dNorm1Scale = NeuralMatrix.GetOrCreate(1, E);
+        dNorm2Scale = NeuralMatrix.GetOrCreate(1, E);
 
-        // Randomize weight matrices
-        Wq.RandomizeGaussian(0f, 0.02f);
-        Wk.RandomizeGaussian(0f, 0.02f);
-        Wv.RandomizeGaussian(0f, 0.02f);
-        Wo.RandomizeGaussian(0f, 0.02f);
-        WGate.RandomizeGaussian(0f, 0.02f);
-        WUp.RandomizeGaussian(0f, 0.02f);
-        WDown.RandomizeGaussian(0f, 0.02f);
+        InputResidual = NeuralMatrix.GetOrCreate(MaxTokens, E);
+        Norm1Out = NeuralMatrix.GetOrCreate(MaxTokens, E);
+        Q = NeuralMatrix.GetOrCreate(MaxTokens, E);
+        K = NeuralMatrix.GetOrCreate(MaxTokens, E);
+        V = NeuralMatrix.GetOrCreate(MaxTokens, E);
+        AttnOut = NeuralMatrix.GetOrCreate(MaxTokens, E);
+        AttnScores = NeuralMatrix.GetOrCreate(maxBatch * numHeads * maxSeq, maxSeq);
+        ResidualMid = NeuralMatrix.GetOrCreate(MaxTokens, E);
+        Norm2Out = NeuralMatrix.GetOrCreate(MaxTokens, E);
+        GatePre = NeuralMatrix.GetOrCreate(MaxTokens, F);
+        UpBranch = NeuralMatrix.GetOrCreate(MaxTokens, F);
+        MlpActivated = NeuralMatrix.GetOrCreate(MaxTokens, F);
 
-        // Scratch buffers for activations
-        QScratch = NeuralMatrix.GetOrCreate(maxBatch * maxSeq, embedDim);
-        KScratch = NeuralMatrix.GetOrCreate(maxBatch * maxSeq, embedDim);
-        VScratch = NeuralMatrix.GetOrCreate(maxBatch * maxSeq, embedDim);
-        AttnScoresScratch = NeuralMatrix.GetOrCreate(maxBatch * numHeads * maxSeq, maxSeq);
-        ContextScratch = NeuralMatrix.GetOrCreate(maxBatch * maxSeq, embedDim);
-        MlpHiddenScratch = NeuralMatrix.GetOrCreate(maxBatch * maxSeq, mlpHiddenDim);
-        NormScratch = NeuralMatrix.GetOrCreate(maxBatch * maxSeq, embedDim);
+        dMlpPreDown = NeuralMatrix.GetOrCreate(MaxTokens, F);
+        dGatePre = NeuralMatrix.GetOrCreate(MaxTokens, F);
+        dUp = NeuralMatrix.GetOrCreate(MaxTokens, F);
+        dQ = NeuralMatrix.GetOrCreate(MaxTokens, E);
+        dK = NeuralMatrix.GetOrCreate(MaxTokens, E);
+        dV = NeuralMatrix.GetOrCreate(MaxTokens, E);
+        dAttnOut = NeuralMatrix.GetOrCreate(MaxTokens, E);
+        dNorm1 = NeuralMatrix.GetOrCreate(MaxTokens, E);
+        dNorm2 = NeuralMatrix.GetOrCreate(MaxTokens, E);
+        ScratchE = NeuralMatrix.GetOrCreate(MaxTokens, E);
 
-        // KV Cache
-        KeyCache = NeuralMatrix.GetOrCreate(maxBatch * numHeads * maxSeq, headDim);
-        ValueCache = NeuralMatrix.GetOrCreate(maxBatch * numHeads * maxSeq, headDim);
+        _rBuffer = (float*)NativeMemory.Alloc((nuint)MaxTokens, sizeof(float));
     }
 
     public void SetBatchAndSequenceLimit(int batchSize, int seqLen)
     {
-        int totalTokens = batchSize * seqLen;
-        QScratch.SetRowSize(totalTokens);
-        KScratch.SetRowSize(totalTokens);
-        VScratch.SetRowSize(totalTokens);
-        ContextScratch.SetRowSize(totalTokens);
-        MlpHiddenScratch.SetRowSize(totalTokens);
-        NormScratch.SetRowSize(totalTokens);
+        int T = batchSize * seqLen;
+        int scoreRows = batchSize * NumHeads * seqLen;
+
+        InputResidual.SetRowSize(T);
+        Norm1Out.SetRowSize(T);
+        Q.SetRowSize(T);
+        K.SetRowSize(T);
+        V.SetRowSize(T);
+        AttnOut.SetRowSize(T);
+        AttnScores.SetRowSize(scoreRows);
+        ResidualMid.SetRowSize(T);
+        Norm2Out.SetRowSize(T);
+        GatePre.SetRowSize(T);
+        UpBranch.SetRowSize(T);
+        MlpActivated.SetRowSize(T);
+
+        dMlpPreDown.SetRowSize(T);
+        dGatePre.SetRowSize(T);
+        dUp.SetRowSize(T);
+        dQ.SetRowSize(T);
+        dK.SetRowSize(T);
+        dV.SetRowSize(T);
+        dAttnOut.SetRowSize(T);
+        dNorm1.SetRowSize(T);
+        dNorm2.SetRowSize(T);
+        ScratchE.SetRowSize(T);
     }
 
     public void Forward(NeuralMatrix residual, int batch, int seq)
     {
-        int totalTokens = batch * seq;
+        int T = batch * seq;
+        int E = EmbedDim;
 
-        // 1. RMSNorm + Self-Attention Block
-        ApplyRmsNorm(residual, NormScratch, Norm1Scale, totalTokens);
+        CopyRows(residual, InputResidual, T, E);
+        ApplyRmsNorm(residual, Norm1Out, Norm1Scale, T);
 
-        NormScratch.Dot(Wq, QScratch);
-        NormScratch.Dot(Wk, KScratch);
-        NormScratch.Dot(Wv, VScratch);
+        Norm1Out.Dot(Wq, Q);
+        Norm1Out.Dot(Wk, K);
+        Norm1Out.Dot(Wv, V);
 
-        UpdateKvCache(batch, seq, 0);
-        ComputeCausalAttention(batch, seq, seq);
+        AttentionForward(batch, seq);
 
-        ContextScratch.Dot(Wo, NormScratch);
-        residual.SumVectorized(NormScratch);
+        AttnOut.Dot(Wo, ScratchE);
+        residual.SumVectorized(ScratchE);
 
-        // 2. RMSNorm + SwiGLU MLP Block
-        ApplyRmsNorm(residual, NormScratch, Norm2Scale, totalTokens);
+        CopyRows(residual, ResidualMid, T, E);
+        ApplyRmsNorm(residual, Norm2Out, Norm2Scale, T);
 
-        ComputeSwiGluMlp(totalTokens);
+        Norm2Out.Dot(WGate, GatePre);
+        Norm2Out.Dot(WUp, UpBranch);
 
-        MlpHiddenScratch.Dot(WDown, NormScratch);
-        residual.SumVectorized(NormScratch);
+        ComputeSwiGlu(T);
+
+        MlpActivated.Dot(WDown, ScratchE);
+        residual.SumVectorized(ScratchE);
     }
 
-    public void ForwardStep(NeuralMatrix residual, int batch, int stepIndex)
+    public void Backward(NeuralMatrix residualGrad, int batch, int seqLen, float lr, int stepCount)
     {
-        int totalTokens = batch;
+        int T = batch * seqLen;
 
-        // 1. RMSNorm + Self-Attention Block
-        ApplyRmsNorm(residual, NormScratch, Norm1Scale, totalTokens);
+        // ---- MLP backward ----
+        residualGrad.DotTranspose(WDown, dMlpPreDown);
+        UpdateWeightsAdamW(MlpActivated, residualGrad, WDown, mWDown, vWDown, lr, stepCount, "WDown");
 
-        NormScratch.Dot(Wq, QScratch);
-        NormScratch.Dot(Wk, KScratch);
-        NormScratch.Dot(Wv, VScratch);
+        BackwardSwiGlu(T, dMlpPreDown, dGatePre, dUp);
 
-        UpdateKvCache(batch, 1, stepIndex);
-        ComputeCausalAttention(batch, 1, stepIndex + 1);
+        UpdateWeightsAdamW(Norm2Out, dGatePre, WGate, mWGate, vWGate, lr, stepCount, "WGate");
+        UpdateWeightsAdamW(Norm2Out, dUp, WUp, mWUp, vWUp, lr, stepCount, "WUp");
 
-        ContextScratch.Dot(Wo, NormScratch);
-        residual.SumVectorized(NormScratch);
+        dGatePre.DotTranspose(WGate, dNorm2);
+        dUp.DotTranspose(WUp, ScratchE);
+        dNorm2.SumVectorized(ScratchE);
 
-        // 2. RMSNorm + SwiGLU MLP Block
-        ApplyRmsNorm(residual, NormScratch, Norm2Scale, totalTokens);
+        RmsNormBackward(ResidualMid, dNorm2, Norm2Scale, ScratchE, dNorm2Scale, T);
+        residualGrad.SumVectorized(ScratchE);
+        UpdateScaleAdamW(dNorm2Scale, Norm2Scale, mNorm2, vNorm2, lr, stepCount);
 
-        ComputeSwiGluMlp(totalTokens);
+        // ---- Attention backward ----
+        residualGrad.DotTranspose(Wo, dAttnOut);
+        UpdateWeightsAdamW(AttnOut, residualGrad, Wo, mWo, vWo, lr, stepCount, "Wo");
 
-        MlpHiddenScratch.Dot(WDown, NormScratch);
-        residual.SumVectorized(NormScratch);
+        AttentionBackward(batch, seqLen, dAttnOut);
+
+        UpdateWeightsAdamW(Norm1Out, dQ, Wq, mWq, vWq, lr, stepCount, "Wq");
+        UpdateWeightsAdamW(Norm1Out, dK, Wk, mWk, vWk, lr, stepCount, "Wk");
+        UpdateWeightsAdamW(Norm1Out, dV, Wv, mWv, vWv, lr, stepCount, "Wv");
+
+        dQ.DotTranspose(Wq, dNorm1);
+        dK.DotTranspose(Wk, ScratchE);
+        dNorm1.SumVectorized(ScratchE);
+        dV.DotTranspose(Wv, ScratchE);
+        dNorm1.SumVectorized(ScratchE);
+
+        RmsNormBackward(InputResidual, dNorm1, Norm1Scale, ScratchE, dNorm1Scale, T);
+        residualGrad.SumVectorized(ScratchE);
+        UpdateScaleAdamW(dNorm1Scale, Norm1Scale, mNorm1, vNorm1, lr, stepCount);
+    }
+
+    private static void CopyRows(NeuralMatrix src, NeuralMatrix dst, int T, int E)
+    {
+        int sStride = src.ColumnsStride;
+        int dStride = dst.ColumnsStride;
+        float* sP = src.Pointer;
+        float* dP = dst.Pointer;
+        Parallel.For(0, T, i =>
+        {
+            float* s = sP + i * sStride;
+            float* d = dP + i * dStride;
+            for (int j = 0; j < E; j++) d[j] = s[j];
+        });
+    }
+
+    private void AttentionForward(int batch, int seq)
+    {
+        int H = NumHeads;
+        int D = HeadDim;
+        float invSqrtD = 1f / MathF.Sqrt(D);
+
+        float* pQ = Q.Pointer; int qStride = Q.ColumnsStride;
+        float* pK = K.Pointer; int kStride = K.ColumnsStride;
+        float* pV = V.Pointer; int vStride = V.ColumnsStride;
+        float* pOut = AttnOut.Pointer; int outStride = AttnOut.ColumnsStride;
+        float* pScores = AttnScores.Pointer; int scoreStride = AttnScores.ColumnsStride;
+
+        Parallel.For(0, batch * H, bh =>
+        {
+            int b = bh / H;
+            int h = bh % H;
+
+            for (int q = 0; q < seq; q++)
+            {
+                int qRow = b * seq + q;
+                float* qHead = pQ + qRow * qStride + h * D;
+                float* scoreRow = pScores + (bh * seq + q) * scoreStride;
+
+                float maxScore = float.NegativeInfinity;
+                for (int k = 0; k <= q; k++)
+                {
+                    float* kHead = pK + (b * seq + k) * kStride + h * D;
+                    float dot = 0f;
+                    for (int d = 0; d < D; d++) dot += qHead[d] * kHead[d];
+                    dot *= invSqrtD;
+                    scoreRow[k] = dot;
+                    if (dot > maxScore) maxScore = dot;
+                }
+                for (int k = q + 1; k < seq; k++) scoreRow[k] = 0f;
+
+                float sumExp = 0f;
+                for (int k = 0; k <= q; k++)
+                {
+                    float e = MathF.Exp(scoreRow[k] - maxScore);
+                    scoreRow[k] = e;
+                    sumExp += e;
+                }
+                float invSum = 1f / sumExp;
+                for (int k = 0; k <= q; k++) scoreRow[k] *= invSum;
+
+                float* outHead = pOut + qRow * outStride + h * D;
+                for (int d = 0; d < D; d++) outHead[d] = 0f;
+                for (int k = 0; k <= q; k++)
+                {
+                    float p = scoreRow[k];
+                    if (p == 0f) continue;
+                    float* vHead = pV + (b * seq + k) * vStride + h * D;
+                    for (int d = 0; d < D; d++) outHead[d] += p * vHead[d];
+                }
+            }
+        });
+    }
+
+    private void AttentionBackward(int batch, int seq, NeuralMatrix dAttnOutIn)
+    {
+        int H = NumHeads;
+        int D = HeadDim;
+        float invSqrtD = 1f / MathF.Sqrt(D);
+
+        float* pQ = Q.Pointer; int qStride = Q.ColumnsStride;
+        float* pK = K.Pointer; int kStride = K.ColumnsStride;
+        float* pV = V.Pointer; int vStride = V.ColumnsStride;
+        float* pScores = AttnScores.Pointer; int scoreStride = AttnScores.ColumnsStride;
+        float* pdOut = dAttnOutIn.Pointer; int dOutStride = dAttnOutIn.ColumnsStride;
+        float* pdQ = dQ.Pointer; int dqStride = dQ.ColumnsStride;
+        float* pdK = dK.Pointer; int dkStride = dK.ColumnsStride;
+        float* pdV = dV.Pointer; int dvStride = dV.ColumnsStride;
+
+        Parallel.For(0, batch * H, bh =>
+        {
+            int b = bh / H;
+            int h = bh % H;
+
+            for (int s = 0; s < seq; s++)
+            {
+                int row = b * seq + s;
+                float* dq = pdQ + row * dqStride + h * D;
+                float* dk = pdK + row * dkStride + h * D;
+                float* dv = pdV + row * dvStride + h * D;
+                for (int d = 0; d < D; d++)
+                {
+                    dq[d] = 0f;
+                    dk[d] = 0f;
+                    dv[d] = 0f;
+                }
+            }
+
+            for (int q = 0; q < seq; q++)
+            {
+                int qRow = b * seq + q;
+                float* qHead = pQ + qRow * qStride + h * D;
+                float* dqHead = pdQ + qRow * dqStride + h * D;
+                float* doutHead = pdOut + qRow * dOutStride + h * D;
+                float* scoreRow = pScores + (bh * seq + q) * scoreStride;
+
+                float sumDS = 0f;
+                Span<float> dS = stackalloc float[q + 1];
+
+                for (int k = 0; k <= q; k++)
+                {
+                    float* vHead = pV + (b * seq + k) * vStride + h * D;
+                    float* dvHead = pdV + (b * seq + k) * dvStride + h * D;
+                    float p = scoreRow[k];
+
+                    float dot = 0f;
+                    for (int d = 0; d < D; d++)
+                    {
+                        dot += doutHead[d] * vHead[d];
+                        dvHead[d] += p * doutHead[d];
+                    }
+
+                    dS[k] = dot;
+                    sumDS += dot * p;
+                }
+
+                for (int k = 0; k <= q; k++)
+                {
+                    float p = scoreRow[k];
+                    float dSoftmax = p * (dS[k] - sumDS) * invSqrtD;
+
+                    float* kHead = pK + (b * seq + k) * kStride + h * D;
+                    float* dkHead = pdK + (b * seq + k) * dkStride + h * D;
+
+                    for (int d = 0; d < D; d++)
+                    {
+                        dqHead[d] += dSoftmax * kHead[d];
+                        dkHead[d] += dSoftmax * qHead[d];
+                    }
+                }
+            }
+        });
+    }
+
+    private void ComputeSwiGlu(int T)
+    {
+        int F = MlpHiddenDim;
+        int gpStride = GatePre.ColumnsStride;
+        int upStride = UpBranch.ColumnsStride;
+        int mAStride = MlpActivated.ColumnsStride;
+        float* pG = GatePre.Pointer;
+        float* pU = UpBranch.Pointer;
+        float* pM = MlpActivated.Pointer;
+
+        Parallel.For(0, T, r =>
+        {
+            float* g = pG + r * gpStride;
+            float* u = pU + r * upStride;
+            float* m = pM + r * mAStride;
+            for (int i = 0; i < F; i++)
+            {
+                float x = g[i];
+                float silu = x / (1f + MathF.Exp(-x));
+                m[i] = silu * u[i];
+            }
+        });
+    }
+
+    private void BackwardSwiGlu(int T, NeuralMatrix dMlpActivated, NeuralMatrix dGateOut, NeuralMatrix dUpOut)
+    {
+        int F = MlpHiddenDim;
+        int gStride = GatePre.ColumnsStride;
+        int uStride = UpBranch.ColumnsStride;
+        int dMStride = dMlpActivated.ColumnsStride;
+        int dgStride = dGateOut.ColumnsStride;
+        int duStride = dUpOut.ColumnsStride;
+
+        float* pG = GatePre.Pointer;
+        float* pU = UpBranch.Pointer;
+        float* pDM = dMlpActivated.Pointer;
+        float* pDG = dGateOut.Pointer;
+        float* pDU = dUpOut.Pointer;
+
+        Parallel.For(0, T, r =>
+        {
+            float* g = pG + r * gStride;
+            float* u = pU + r * uStride;
+            float* dM = pDM + r * dMStride;
+            float* dG = pDG + r * dgStride;
+            float* dU = pDU + r * duStride;
+
+            for (int i = 0; i < F; i++)
+            {
+                float gi = g[i];
+                float ui = u[i];
+                float sig = 1f / (1f + MathF.Exp(-gi));
+                float silu = gi * sig;
+                float dSilu = sig * (1f + gi * (1f - sig));
+
+                float dOut = dM[i];
+                dG[i] = dOut * ui * dSilu;
+                dU[i] = dOut * silu;
+            }
+        });
+    }
+
+    private void RmsNormBackward(
+        NeuralMatrix x, NeuralMatrix dY, NeuralMatrix scale,
+        NeuralMatrix dX, NeuralMatrix dScaleAcc, int T)
+    {
+        int E = EmbedDim;
+        const float eps = 1e-5f;
+
+        float* pX = x.Pointer; int xStride = x.ColumnsStride;
+        float* pDY = dY.Pointer; int dyStride = dY.ColumnsStride;
+        float* pDX = dX.Pointer; int dxStride = dX.ColumnsStride;
+        float* pScale = scale.Pointer;
+        float* pDScale = dScaleAcc.Pointer;
+        float* rBuf = _rBuffer;
+
+        Parallel.For(0, T, row =>
+        {
+            float* xRow = pX + row * xStride;
+            float sumSq = 0f;
+            for (int i = 0; i < E; i++) sumSq += xRow[i] * xRow[i];
+            rBuf[row] = 1f / MathF.Sqrt(sumSq / E + eps);
+        });
+
+        Parallel.For(0, T, row =>
+        {
+            float* xRow = pX + row * xStride;
+            float* dyRow = pDY + row * dyStride;
+            float* dxRow = pDX + row * dxStride;
+            float r = rBuf[row];
+            float r3n = r * r * r / E;
+
+            float s = 0f;
+            for (int i = 0; i < E; i++) s += dyRow[i] * xRow[i] * pScale[i];
+
+            for (int i = 0; i < E; i++)
+                dxRow[i] = r * pScale[i] * dyRow[i] - r3n * xRow[i] * s;
+        });
+
+        for (int i = 0; i < E; i++)
+        {
+            float grad = 0f;
+            for (int row = 0; row < T; row++)
+                grad += pDY[row * dyStride + i] * pX[row * xStride + i] * rBuf[row];
+            pDScale[i] = grad;
+        }
     }
 
     private void ApplyRmsNorm(NeuralMatrix input, NeuralMatrix output, NeuralMatrix scale, int numRows)
@@ -153,7 +504,7 @@ public unsafe class TransformerLayerBuffers : IDisposable
         float* pOut = output.Pointer;
         float* pScale = scale.Pointer;
 
-        for (int r = 0; r < numRows; r++)
+        Parallel.For(0, numRows, r =>
         {
             float* inRow = pIn + r * inStride;
             float* outRow = pOut + r * outStride;
@@ -163,27 +514,26 @@ public unsafe class TransformerLayerBuffers : IDisposable
 
             if (Avx2.IsSupported)
             {
-                var sumVec = Vector256<float>.Zero;
-                int vecLimit = cols - (cols % 8);
-                for (; i < vecLimit; i += 8)
+                var sumVec0 = Vector256<float>.Zero;
+                var sumVec1 = Vector256<float>.Zero;
+                int vecLimit = cols - (cols % 16);
+                for (; i < vecLimit; i += 16)
                 {
-                    var v = Vector256.Load(inRow + i);
-                    sumVec = Fma.IsSupported
-                        ? Fma.MultiplyAdd(v, v, sumVec)
-                        : Avx.Add(sumVec, Avx.Multiply(v, v));
+                    var v0 = Vector256.Load(inRow + i);
+                    var v1 = Vector256.Load(inRow + i + 8);
+                    sumVec0 = Fma.IsSupported ? Fma.MultiplyAdd(v0, v0, sumVec0) : Avx.Add(sumVec0, Avx.Multiply(v0, v0));
+                    sumVec1 = Fma.IsSupported ? Fma.MultiplyAdd(v1, v1, sumVec1) : Avx.Add(sumVec1, Avx.Multiply(v1, v1));
                 }
-                var hi = Avx.ExtractVector128(sumVec, 1);
-                var lo = sumVec.GetLower();
+                sumVec0 = Avx.Add(sumVec0, sumVec1);
+                var hi = Avx.ExtractVector128(sumVec0, 1);
+                var lo = sumVec0.GetLower();
                 var sum128 = Sse.Add(lo, hi);
                 sum128 = Sse3.HorizontalAdd(sum128, sum128);
                 sum128 = Sse3.HorizontalAdd(sum128, sum128);
                 sumSq += sum128.ToScalar();
             }
 
-            for (; i < cols; i++)
-            {
-                sumSq += inRow[i] * inRow[i];
-            }
+            for (; i < cols; i++) sumSq += inRow[i] * inRow[i];
 
             float scaleFactor = 1.0f / MathF.Sqrt((sumSq / cols) + 1e-5f);
 
@@ -191,239 +541,108 @@ public unsafe class TransformerLayerBuffers : IDisposable
             if (Avx2.IsSupported)
             {
                 var vScaleFact = Vector256.Create(scaleFactor);
-                int vecLimit = cols - (cols % 8);
-                for (; i < vecLimit; i += 8)
+                int vecLimit = cols - (cols % 16);
+                for (; i < vecLimit; i += 16)
                 {
-                    var vIn = Vector256.Load(inRow + i);
-                    var vSc = Vector256.Load(pScale + i);
-                    var vNorm = Avx.Multiply(vIn, vScaleFact);
-                    Avx.Multiply(vNorm, vSc).Store(outRow + i);
+                    var vIn0 = Vector256.Load(inRow + i);
+                    var vSc0 = Vector256.Load(pScale + i);
+                    Avx.Multiply(Avx.Multiply(vIn0, vScaleFact), vSc0).Store(outRow + i);
+
+                    var vIn1 = Vector256.Load(inRow + i + 8);
+                    var vSc1 = Vector256.Load(pScale + i + 8);
+                    Avx.Multiply(Avx.Multiply(vIn1, vScaleFact), vSc1).Store(outRow + i + 8);
                 }
             }
 
             for (; i < cols; i++)
-            {
                 outRow[i] = inRow[i] * scaleFactor * pScale[i];
-            }
-        }
+        });
     }
 
-    private void UpdateKvCache(int batch, int seqLen, int startStep)
+    private void UpdateWeightsAdamW(
+        NeuralMatrix inputActivations,
+        NeuralMatrix outputGrads,
+        NeuralMatrix weight,
+        NeuralMatrix mState,
+        NeuralMatrix vState,
+        float lr,
+        int stepCount,
+        string name = "?")
     {
-        int headDim = HeadDim;
-        int numHeads = NumHeads;
-        int kStride = KScratch.ColumnsStride;
-        int vStride = VScratch.ColumnsStride;
-        int cacheStride = KeyCache.ColumnsStride;
+        const float beta1 = 0.9f;
+        const float beta2 = 0.999f;
+        const float eps = 1e-8f;
+        const float weightDecay = 0.01f;
 
-        float* pK = KScratch.Pointer;
-        float* pV = VScratch.Pointer;
-        float* pKCache = KeyCache.Pointer;
-        float* pVCache = ValueCache.Pointer;
+        float bc1 = 1f - MathF.Pow(beta1, stepCount);
+        float bc2 = 1f - MathF.Pow(beta2, stepCount);
 
-        int totalMaxSeq = KeyCache.Rows / (batch * numHeads);
+        int rows = weight.Rows;        // in_features
+        int cols = weight.UsedColumns; // out_features
+        int totalTokens = inputActivations.Rows;
 
-        for (int b = 0; b < batch; b++)
+        float* pX = inputActivations.Pointer;
+        float* pDY = outputGrads.Pointer;
+        float* pW = weight.Pointer;
+        float* pM = mState.Pointer;
+        float* pV = vState.Pointer;
+
+        int xStride = inputActivations.ColumnsStride;
+        int dyStride = outputGrads.ColumnsStride;
+        int wStride = weight.ColumnsStride;
+
+        Parallel.For(0, rows, r =>
         {
-            for (int s = 0; s < seqLen; s++)
+            float* wRow = pW + r * wStride;
+            float* mRow = pM + r * wStride;
+            float* vRow = pV + r * wStride;
+
+            for (int c = 0; c < cols; c++)
             {
-                int tokenIdx = b * seqLen + s;
-                int currentSeqPos = startStep + s;
-
-                float* srcKRow = pK + tokenIdx * kStride;
-                float* srcVRow = pV + tokenIdx * vStride;
-
-                for (int h = 0; h < numHeads; h++)
+                float grad = 0f;
+                for (int t = 0; t < totalTokens; t++)
                 {
-                    int cacheRow = (b * numHeads + h) * totalMaxSeq + currentSeqPos;
-                    float* dstK = pKCache + cacheRow * cacheStride;
-                    float* dstV = pVCache + cacheRow * cacheStride;
-
-                    float* srcKHead = srcKRow + h * headDim;
-                    float* srcVHead = srcVRow + h * headDim;
-
-                    int i = 0;
-                    if (Avx2.IsSupported)
-                    {
-                        int vecLimit = headDim - (headDim % 8);
-                        for (; i < vecLimit; i += 8)
-                        {
-                            Vector256.Load(srcKHead + i).Store(dstK + i);
-                            Vector256.Load(srcVHead + i).Store(dstV + i);
-                        }
-                    }
-
-                    for (; i < headDim; i++)
-                    {
-                        dstK[i] = srcKHead[i];
-                        dstV[i] = srcVHead[i];
-                    }
+                    grad += pX[t * xStride + r] * pDY[t * dyStride + c];
                 }
+
+                mRow[c] = beta1 * mRow[c] + (1f - beta1) * grad;
+                vRow[c] = beta2 * vRow[c] + (1f - beta2) * (grad * grad);
+
+                float mHat = mRow[c] / bc1;
+                float vHat = vRow[c] / bc2;
+
+                wRow[c] -= lr * (mHat / (MathF.Sqrt(vHat) + eps) + weightDecay * wRow[c]);
             }
-        }
+        });
     }
 
-    private void ComputeCausalAttention(int batch, int querySeqLen, int keySeqLen)
+    private void UpdateScaleAdamW(
+        NeuralMatrix dScaleGrad, NeuralMatrix scale,
+        NeuralMatrix mState, NeuralMatrix vState,
+        float lr, int stepCount)
     {
-        float invSqrtDim = 1.0f / MathF.Sqrt(HeadDim);
-        int numHeads = NumHeads;
-        int headDim = HeadDim;
+        const float beta1 = 0.9f;
+        const float beta2 = 0.999f;
+        const float eps = 1e-8f;
+        const float weightDecay = 0.01f;
 
-        int qStride = QScratch.ColumnsStride;
-        int scoresStride = AttnScoresScratch.ColumnsStride;
-        int cacheStride = KeyCache.ColumnsStride;
-        int ctxStride = ContextScratch.ColumnsStride;
+        float bc1 = 1f - MathF.Pow(beta1, stepCount);
+        float bc2 = 1f - MathF.Pow(beta2, stepCount);
 
-        float* pQ = QScratch.Pointer;
-        float* pScores = AttnScoresScratch.Pointer;
-        float* pKCache = KeyCache.Pointer;
-        float* pVCache = ValueCache.Pointer;
-        float* pCtx = ContextScratch.Pointer;
+        int E = EmbedDim;
+        float* g = dScaleGrad.Pointer;
+        float* s = scale.Pointer;
+        float* m = mState.Pointer;
+        float* v = vState.Pointer;
 
-        int totalMaxSeq = KeyCache.Rows / (batch * numHeads);
-
-        for (int b = 0; b < batch; b++)
+        for (int i = 0; i < E; i++)
         {
-            for (int h = 0; h < numHeads; h++)
-            {
-                int headCacheOffset = (b * numHeads + h) * totalMaxSeq;
-
-                for (int q = 0; q < querySeqLen; q++)
-                {
-                    int qTokenIdx = b * querySeqLen + q;
-                    float* qPtr = pQ + qTokenIdx * qStride + h * headDim;
-                    float* scoreRow = pScores + (b * numHeads + h) * scoresStride + q;
-
-                    float maxVal = float.NegativeInfinity;
-
-                    for (int k = 0; k < keySeqLen; k++)
-                    {
-                        if (querySeqLen > 1 && k > q)
-                        {
-                            scoreRow[k] = float.NegativeInfinity;
-                            continue;
-                        }
-
-                        float* kPtr = pKCache + (headCacheOffset + k) * cacheStride;
-                        float dot = 0f;
-                        int i = 0;
-
-                        if (Avx2.IsSupported)
-                        {
-                            var sumVec = Vector256<float>.Zero;
-                            int vecLimit = headDim - (headDim % 8);
-                            for (; i < vecLimit; i += 8)
-                            {
-                                var vQ = Vector256.Load(qPtr + i);
-                                var vK = Vector256.Load(kPtr + i);
-                                sumVec = Fma.IsSupported
-                                    ? Fma.MultiplyAdd(vQ, vK, sumVec)
-                                    : Avx.Add(sumVec, Avx.Multiply(vQ, vK));
-                            }
-                            var hi = Avx.ExtractVector128(sumVec, 1);
-                            var lo = sumVec.GetLower();
-                            var sum128 = Sse.Add(lo, hi);
-                            sum128 = Sse3.HorizontalAdd(sum128, sum128);
-                            sum128 = Sse3.HorizontalAdd(sum128, sum128);
-                            dot += sum128.ToScalar();
-                        }
-
-                        for (; i < headDim; i++)
-                        {
-                            dot += qPtr[i] * kPtr[i];
-                        }
-
-                        float val = dot * invSqrtDim;
-                        scoreRow[k] = val;
-                        if (val > maxVal) maxVal = val;
-                    }
-
-                    float expSum = 0f;
-                    for (int k = 0; k < keySeqLen; k++)
-                    {
-                        if (querySeqLen > 1 && k > q)
-                        {
-                            scoreRow[k] = 0f;
-                        }
-                        else
-                        {
-                            float e = MathF.Exp(scoreRow[k] - maxVal);
-                            scoreRow[k] = e;
-                            expSum += e;
-                        }
-                    }
-
-                    float invExpSum = expSum > 0f ? 1.0f / expSum : 0f;
-                    for (int k = 0; k < keySeqLen; k++)
-                    {
-                        scoreRow[k] *= invExpSum;
-                    }
-
-                    float* ctxPtr = pCtx + qTokenIdx * ctxStride + h * headDim;
-                    for (int d = 0; d < headDim; d++)
-                    {
-                        ctxPtr[d] = 0f;
-                    }
-
-                    for (int k = 0; k < keySeqLen; k++)
-                    {
-                        float weight = scoreRow[k];
-                        if (weight == 0f) continue;
-
-                        float* vPtr = pVCache + (headCacheOffset + k) * cacheStride;
-                        int i = 0;
-
-                        if (Avx2.IsSupported)
-                        {
-                            var vWeight = Vector256.Create(weight);
-                            int vecLimit = headDim - (headDim % 8);
-                            for (; i < vecLimit; i += 8)
-                            {
-                                var vCtx = Vector256.Load(ctxPtr + i);
-                                var vVal = Vector256.Load(vPtr + i);
-                                vCtx = Fma.IsSupported
-                                    ? Fma.MultiplyAdd(vVal, vWeight, vCtx)
-                                    : Avx.Add(vCtx, Avx.Multiply(vVal, vWeight));
-                                vCtx.Store(ctxPtr + i);
-                            }
-                        }
-
-                        for (; i < headDim; i++)
-                        {
-                            ctxPtr[i] += weight * vPtr[i];
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private void ComputeSwiGluMlp(int numRows)
-    {
-        NeuralMatrix gateBuf = QScratch;
-        NeuralMatrix upBuf = MlpHiddenScratch;
-
-        NormScratch.Dot(WGate, gateBuf);
-        NormScratch.Dot(WUp, upBuf);
-
-        int hiddenDim = MlpHiddenDim;
-        int gateStride = gateBuf.ColumnsStride;
-        int upStride = upBuf.ColumnsStride;
-
-        float* pGate = gateBuf.Pointer;
-        float* pUp = upBuf.Pointer;
-
-        for (int r = 0; r < numRows; r++)
-        {
-            float* gRow = pGate + r * gateStride;
-            float* uRow = pUp + r * upStride;
-
-            for (int i = 0; i < hiddenDim; i++)
-            {
-                float x = gRow[i];
-                float silu = x / (1.0f + MathF.Exp(-x));
-                uRow[i] = silu * uRow[i];
-            }
+            float gi = g[i];
+            m[i] = beta1 * m[i] + (1f - beta1) * gi;
+            v[i] = beta2 * v[i] + (1f - beta2) * (gi * gi);
+            float mHat = m[i] / bc1;
+            float vHat = v[i] / bc2;
+            s[i] -= lr * (mHat / (MathF.Sqrt(vHat) + eps) + weightDecay * s[i]);
         }
     }
 
@@ -434,10 +653,28 @@ public unsafe class TransformerLayerBuffers : IDisposable
         Wq.Dispose(); Wk.Dispose(); Wv.Dispose(); Wo.Dispose();
         WGate.Dispose(); WUp.Dispose(); WDown.Dispose();
         Norm1Scale.Dispose(); Norm2Scale.Dispose();
-        QScratch.Dispose(); KScratch.Dispose(); VScratch.Dispose();
-        AttnScoresScratch.Dispose(); MlpHiddenScratch.Dispose(); NormScratch.Dispose();
-        ContextScratch.Dispose();
-        KeyCache.Dispose(); ValueCache.Dispose();
+
+        mWq.Dispose(); vWq.Dispose(); mWk.Dispose(); vWk.Dispose();
+        mWv.Dispose(); vWv.Dispose(); mWo.Dispose(); vWo.Dispose();
+        mWGate.Dispose(); vWGate.Dispose(); mWUp.Dispose(); vWUp.Dispose();
+        mWDown.Dispose(); vWDown.Dispose();
+        mNorm1.Dispose(); vNorm1.Dispose(); mNorm2.Dispose(); vNorm2.Dispose();
+        dNorm1Scale.Dispose(); dNorm2Scale.Dispose();
+
+        InputResidual.Dispose(); Norm1Out.Dispose();
+        Q.Dispose(); K.Dispose(); V.Dispose(); AttnOut.Dispose();
+        AttnScores.Dispose(); ResidualMid.Dispose(); Norm2Out.Dispose();
+        GatePre.Dispose(); UpBranch.Dispose(); MlpActivated.Dispose();
+
+        dMlpPreDown.Dispose(); dGatePre.Dispose(); dUp.Dispose();
+        dQ.Dispose(); dK.Dispose(); dV.Dispose(); dAttnOut.Dispose();
+        dNorm1.Dispose(); dNorm2.Dispose(); ScratchE.Dispose();
+
+        if (_rBuffer != null)
+        {
+            NativeMemory.Free(_rBuffer);
+            _rBuffer = null;
+        }
 
         _disposed = true;
         GC.SuppressFinalize(this);

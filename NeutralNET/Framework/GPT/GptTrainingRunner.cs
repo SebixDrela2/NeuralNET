@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using NeutralNET.Framework.Neural.GPT;
@@ -8,77 +9,163 @@ namespace NeutralNET.Framework.Neural.GPT;
 
 public class GptTrainingRunner
 {
-    public static List<int[]> CreateBatches(List<int> tokens, int contextSize)
+    public static unsafe (float AvgLoss, float Accuracy) Evaluate(GptNeuralFramework gpt, List<int[][]> testMiniBatches)
     {
-        List<int[]> batches = new();
-        int stride = contextSize / 2;
-
-        for (int i = 0; i <= tokens.Count - (contextSize + 1); i += stride)
-        {
-            int[] chunk = new int[contextSize + 1];
-            tokens.CopyTo(i, chunk, 0, contextSize + 1);
-            batches.Add(chunk);
-        }
-
-        return batches;
-    }
-
-    public static unsafe (float AvgLoss, float Accuracy) Evaluate(GptNeuralFramework gpt, List<int[]> testBatches)
-    {
-        float totalLoss = 0f;
+        double totalLoss = 0.0;
         int correctPredictions = 0;
         int totalTokens = 0;
+        int skippedTokens = 0;
+        int outOfRangeTargets = 0;
 
-        foreach (var batch in testBatches)
+        int batchCounter = 0;
+        int totalBatches = testMiniBatches.Count;
+
+        foreach (var miniBatch in testMiniBatches)
         {
-            int seqLen = batch.Length - 1;
-            int[] inputs = batch[0..seqLen];
-            int[] targets = batch[1..(seqLen + 1)];
+            batchCounter++;
+            int batchSize = miniBatch.Length;
+            int seqLen = miniBatch[0].Length - 1;
+            int totalBatchTokens = batchSize * seqLen;
 
-            fixed (int* pInput = inputs)
+            int[] inputIdsArray = ArrayPool<int>.Shared.Rent(totalBatchTokens);
+            int[] targetIdsArray = ArrayPool<int>.Shared.Rent(totalBatchTokens);
+
+            try
             {
-                gpt.Forward(pInput, 1, seqLen);
-            }
+                Span<int> inputIds = inputIdsArray.AsSpan(0, totalBatchTokens);
+                Span<int> targetIds = targetIdsArray.AsSpan(0, totalBatchTokens);
 
-            float* logitsPtr = gpt.LogitsOutput.Pointer;
-            int logitsStride = gpt.LogitsOutput.ColumnsStride;
-            int vocabSize = gpt.VocabSize;
-
-            for (int t = 0; t < seqLen; t++)
-            {
-                float* logitRow = logitsPtr + (t * logitsStride);
-                int target = targets[t];
-
-                int bestToken = 0;
-                float maxLogit = float.NegativeInfinity;
-
-                for (int v = 0; v < vocabSize; v++)
+                for (int b = 0; b < batchSize; b++)
                 {
-                    if (logitRow[v] > maxLogit)
+                    for (int t = 0; t < seqLen; t++)
                     {
-                        maxLogit = logitRow[v];
-                        bestToken = v;
+                        int idx = b * seqLen + t;
+                        inputIds[idx] = miniBatch[b][t];
+                        targetIds[idx] = miniBatch[b][t + 1];
                     }
                 }
 
-                if (bestToken == target)
+                fixed (int* pInput = inputIds)
                 {
-                    correctPredictions++;
+                    gpt.Forward(pInput, batchSize, seqLen);
                 }
 
-                float sumExp = 0f;
-                for (int v = 0; v < vocabSize; v++)
+                float* logitsPtr = gpt.LogitsOutput.Pointer;
+                int logitsStride = gpt.LogitsOutput.ColumnsStride;
+                int vocabSize = gpt.VocabSize;
+                int rows = gpt.LogitsOutput.Rows;
+
+                // ---- per-batch diagnostic ----
                 {
-                    sumExp += MathF.Exp(logitRow[v] - maxLogit);
+                    float mn = float.PositiveInfinity;
+                    float mx = float.NegativeInfinity;
+                    double sum = 0.0;
+                    long count = 0;
+                    long nan = 0;
+                    for (int r = 0; r < rows; r++)
+                    {
+                        float* row = logitsPtr + r * logitsStride;
+                        for (int v = 0; v < vocabSize; v++)
+                        {
+                            float val = row[v];
+                            if (float.IsNaN(val) || float.IsInfinity(val)) { nan++; continue; }
+                            if (val < mn) mn = val;
+                            if (val > mx) mx = val;
+                            sum += val;
+                            count++;
+                        }
+                    }
+                    double mean = count > 0 ? sum / count : 0.0;
+                    Console.WriteLine($"[evaluate-diag] batch {batchCounter}/{totalBatches} rows={rows} vocab={vocabSize} stride={logitsStride} |min={mn:G4} max={mx:G4} mean={mean:G4} nan={nan}|");
                 }
 
-                totalLoss += MathF.Log(sumExp) - (logitRow[target] - maxLogit);
-                totalTokens++;
+                int batchCorrect = 0;
+                int batchTotal = 0;
+                double batchLossSum = 0.0;
+
+                for (int i = 0; i < totalBatchTokens; i++)
+                {
+                    float* logitRow = logitsPtr + (i * logitsStride);
+                    int target = targetIds[i];
+
+                    if (target < 0 || target >= vocabSize)
+                    {
+                        outOfRangeTargets++;
+                        continue;
+                    }
+
+                    float maxLogit = float.NegativeInfinity;
+                    int bestToken = 0;
+
+                    for (int v = 0; v < vocabSize; v++)
+                    {
+                        float logitVal = logitRow[v];
+                        if (logitVal > maxLogit)
+                        {
+                            maxLogit = logitVal;
+                            bestToken = v;
+                        }
+                    }
+
+                    if (float.IsNaN(maxLogit) || float.IsInfinity(maxLogit))
+                    {
+                        skippedTokens++;
+                        continue;
+                    }
+
+                    totalTokens++;
+                    batchTotal++;
+
+                    if (bestToken == target)
+                    {
+                        correctPredictions++;
+                        batchCorrect++;
+                    }
+
+                    float sumExp = 0f;
+                    for (int v = 0; v < vocabSize; v++)
+                        sumExp += MathF.Exp(logitRow[v] - maxLogit);
+
+                    float targetLogit = logitRow[target];
+                    float tokenLoss = MathF.Log(MathF.Max(sumExp, 1e-7f)) - (targetLogit - maxLogit);
+
+                    if (float.IsNaN(tokenLoss) || float.IsInfinity(tokenLoss))
+                    {
+                        totalTokens--;
+                        batchTotal--;
+                        if (bestToken == target)
+                        {
+                            correctPredictions--;
+                            batchCorrect--;
+                        }
+                        skippedTokens++;
+                        continue;
+                    }
+
+                    totalLoss += tokenLoss;
+                    batchLossSum += tokenLoss;
+                }
+
+                double batchAcc = batchTotal > 0 ? (double)batchCorrect / batchTotal * 100.0 : 0.0;
+                double batchAvgLoss = batchTotal > 0 ? batchLossSum / batchTotal : 0.0;
+                Console.WriteLine($"[evaluate-diag]   batch loss={batchAvgLoss:F4} correct={batchCorrect}/{batchTotal} ({batchAcc:F3}%)");
+            }
+            finally
+            {
+                ArrayPool<int>.Shared.Return(inputIdsArray);
+                ArrayPool<int>.Shared.Return(targetIdsArray);
             }
         }
 
-        float avgLoss = totalTokens > 0 ? totalLoss / totalTokens : 0f;
-        float accuracy = totalTokens > 0 ? ((float)correctPredictions / totalTokens) * 100f : 0f;
+        // ---- final summary ----
+        double finalAcc = totalTokens > 0 ? (double)correctPredictions / totalTokens * 100.0 : 0.0;
+        double finalLoss = totalTokens > 0 ? totalLoss / totalTokens : 0.0;
+
+        Console.WriteLine($"[evaluate-diag] FINAL: loss={finalLoss:F4} correct={correctPredictions} total={totalTokens} acc={finalAcc:F4}% skipped={skippedTokens} outOfRangeTargets={outOfRangeTargets}");
+
+        float avgLoss = (float)finalLoss;
+        float accuracy = (float)finalAcc;
+
         return (avgLoss, accuracy);
     }
 

@@ -19,17 +19,19 @@ public class GPTTextDataLoader
             throw new FileNotFoundException($"[GPTTextDataLoader] File not found: {filePath}");
         }
 
-        string rawText = File.ReadAllText(filePath);
-        if (string.IsNullOrWhiteSpace(rawText))
+        var rawText = File.ReadAllText(filePath);
+        var slicedText = rawText.Substring(0, rawText.Length / 10);
+
+        if (string.IsNullOrWhiteSpace(slicedText))
         {
             throw new InvalidOperationException($"[GPTTextDataLoader] Corpus file '{filePath}' is empty.");
         }
 
-        BuildVocabulary(rawText);
-        EncodedTokens = Encode(rawText);
+        BuildVocabulary(slicedText);
+        EncodedTokens = Encode(slicedText);
 
         Console.WriteLine($"[GPTTextDataLoader] Loaded file: {filePath}");
-        Console.WriteLine($"[GPTTextDataLoader] Total characters: {rawText.Length:N0} | Vocab size: {VocabSize}");
+        Console.WriteLine($"[GPTTextDataLoader] Total characters: {slicedText.Length:N0} | Vocab size: {VocabSize}");
     }
 
     private void BuildVocabulary(string text)

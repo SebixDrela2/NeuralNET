@@ -65,9 +65,80 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void DotVectorized(NeuralMatrix other, NeuralMatrix result)
     {
-        int inFeatures = UsedColumns;
-        int outFeatures = other.Rows;
+        // Standard matmul: A[m, k] @ B[k, n] = C[m, n]
+        int m = Rows;
+        int k = UsedColumns;
+        int n = other.UsedColumns;
+
+        float* pA = Pointer; int aStride = ColumnsStride;
+        float* pB = other.Pointer; int bStride = other.ColumnsStride;
+        float* pR = result.Pointer; int rStride = result.ColumnsStride;
+
+        Parallel.For(0, m, i =>
+        {
+            float* aRow = pA + i * aStride;
+            float* rRow = pR + i * rStride;
+
+            // Zero the output row (only the used columns; padding can stay whatever).
+            for (int j = 0; j < n; j++) rRow[j] = 0f;
+
+            // C[i, :] += A[i, p] * B[p, :] for each p in [0, k)
+            // This is a row-of-A scalars times rows-of-B, accumulated into C's row.
+            for (int p = 0; p < k; p++)
+            {
+                float aVal = aRow[p];
+                if (aVal == 0f) continue;
+
+                float* bRow = pB + p * bStride;
+                int j = 0;
+
+                if (Avx512F.IsSupported)
+                {
+                    var vA = Vector512.Create(aVal);
+                    int vecLimit = n - (n % 16);
+                    for (; j < vecLimit; j += 16)
+                    {
+                        var rVec = Vector512.Load(rRow + j);
+                        var bVec = Vector512.Load(bRow + j);
+                        rVec = Avx512F.FusedMultiplyAdd(vA, bVec, rVec);
+                        rVec.Store(rRow + j);
+                    }
+                }
+                else if (Avx2.IsSupported)
+                {
+                    var vA = Vector256.Create(aVal);
+                    int vecLimit = n - (n % 8);
+                    for (; j < vecLimit; j += 8)
+                    {
+                        var rVec = Vector256.Load(rRow + j);
+                        var bVec = Vector256.Load(bRow + j);
+                        rVec = Fma.IsSupported
+                            ? Fma.MultiplyAdd(vA, bVec, rVec)
+                            : Avx.Add(rVec, Avx.Multiply(vA, bVec));
+                        rVec.Store(rRow + j);
+                    }
+                }
+
+                for (; j < n; j++)
+                {
+                    rRow[j] += aVal * bRow[j];
+                }
+            }
+        });
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void DotTranspose(NeuralMatrix other, NeuralMatrix result)
+    {
+        // Dla A * B^T: Liczba kolumn A musi zgadzać się z liczbą kolumn B
+        if (UsedColumns != other.UsedColumns)
+        {
+            throw new ArgumentException($"Dimension mismatch for DotTranspose: Left columns ({UsedColumns}) != Right columns ({other.UsedColumns})");
+        }
+
         int batchSize = Rows;
+        int outFeatures = other.Rows;
+        int inFeatures = UsedColumns;
 
         float* pInput = Pointer;
         float* pResult = result.Pointer;
@@ -77,7 +148,7 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
         int resStride = result.ColumnsStride;
         int othStride = other.ColumnsStride;
 
-        for (int row = 0; row < batchSize; row++)
+        Parallel.For(0, batchSize, row =>
         {
             float* inputRow = pInput + row * inStride;
             float* resultRow = pResult + row * resStride;
@@ -130,7 +201,7 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
 
                 resultRow[neuronIdx] = sum;
             }
-        }
+        });
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -225,22 +296,6 @@ public unsafe class NeuralMatrix : CriticalFinalizerObject, IDisposable
         if (UsedColumns != other.Rows)
         {
             throw new ArgumentException($"Dimension mismatch: Left columns ({UsedColumns}) != Right rows ({other.Rows})");
-        }
-
-        if (UnsafeSize >= GpuExecutionThresholdElements && other.UnsafeSize >= GpuExecutionThresholdElements)
-        {
-            try
-            {
-                //GpuMatrixOps.ComputeConvolutionGpu(
-                //    Pointer, other.Pointer, result.Pointer,
-                //    Rows, other.UsedColumns, UsedColumns,
-                //    ColumnsStride, other.ColumnsStride, result.ColumnsStride);
-                //return;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"⚠️ GPU execution call failed: {ex.Message}. Falling back to CPU SIMD.");
-            }
         }
 
         DotVectorized(other, result);
