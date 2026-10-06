@@ -1,205 +1,300 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 
 namespace NeutralNET.Framework.Neural.GPT;
 
 /// <summary>
-/// A lightweight Byte-Pair Encoding (BPE) tokenizer supporting vocabulary training, 
-/// saving/loading merges, and encoding/decoding raw string inputs.
+/// Byte-pair encoding tokenizer.
+///
+/// Pre-tokenization groups an optional single leading whitespace with the
+/// following non-whitespace run, so tokens like " the" and " and" can form.
+/// Merge application at encode time follows the standard "lowest-rank merge first"
+/// rule, matching what was learned during training.
 /// </summary>
 public class BpeTokenizer
 {
-    private readonly Dictionary<string, int> _encoder = [];
-    private readonly Dictionary<int, string> _decoder = [];
-    private readonly List<(string, string)> _merges = [];
-    private int _vocabSize;
+    private const string FileMagic = "BPE1";
 
-    public int VocabSize => _encoder.Count;
+    private readonly Dictionary<string, int> _tokenToId = new();
+    private readonly Dictionary<int, string> _idToToken = new();
+    private readonly Dictionary<(string, string), int> _mergeRank = new();
 
-    public BpeTokenizer() { }
+    public int VocabSize => _tokenToId.Count;
 
-    /// <summary>
-    /// Trains BPE vocabulary directly on a text corpus up to targetVocabSize.
-    /// </summary>
+    // ------------------------------------------------------------------
+    //  Training
+    // ------------------------------------------------------------------
+
     public void Train(string text, int targetVocabSize)
     {
-        _encoder.Clear();
-        _decoder.Clear();
-        _merges.Clear();
+        _tokenToId.Clear();
+        _idToToken.Clear();
+        _mergeRank.Clear();
 
-        // 1. Initialize base vocabulary with character-level tokens
-        HashSet<char> uniqueChars = new(text);
-        int currentId = 0;
-        foreach (char c in uniqueChars)
+        // 1. Base vocabulary: every distinct character.
+        int nextId = 0;
+        foreach (char c in text.Distinct().OrderBy(c => c))
         {
-            string token = c.ToString();
-            if (!_encoder.ContainsKey(token))
-            {
-                _encoder[token] = currentId;
-                _decoder[currentId] = token;
-                currentId++;
-            }
+            string s = c.ToString();
+            _tokenToId[s] = nextId;
+            _idToToken[nextId] = s;
+            nextId++;
         }
 
-        // Represent initial text as words split into character sequence lists
-        List<List<string>> words = new();
-        string[] rawTokens = text.Split(new[] { ' ', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+        // 2. Unique words with frequencies.
+        var freq = new Dictionary<string, int>();
+        foreach (var w in SplitIntoWords(text))
+            freq[w] = freq.GetValueOrDefault(w) + 1;
 
-        foreach (var word in rawTokens)
+        // Convert each unique word into a mutable list of char tokens.
+        var words = new List<(List<string> Tokens, int Freq)>(freq.Count);
+        foreach (var kv in freq)
         {
-            List<string> chars = new();
-            foreach (char c in word)
-            {
-                chars.Add(c.ToString());
-            }
-            if (chars.Count > 0) words.Add(chars);
+            var chars = new List<string>(kv.Key.Length);
+            foreach (char c in kv.Key) chars.Add(c.ToString());
+            words.Add((chars, kv.Value));
         }
 
-        // 2. Iteratively merge most frequent adjacent pairs
-        while (_encoder.Count < targetVocabSize)
+        // 3. Iterative merging.
+        while (nextId < targetVocabSize)
         {
-            Dictionary<(string, string), int> pairCounts = new();
-
-            foreach (var word in words)
+            // Count weighted pair frequencies.
+            var pairCounts = new Dictionary<(string, string), long>();
+            foreach (var (tokens, f) in words)
             {
-                for (int i = 0; i < word.Count - 1; i++)
+                for (int i = 0; i < tokens.Count - 1; i++)
                 {
-                    var pair = (word[i], word[i + 1]);
-                    pairCounts[pair] = pairCounts.GetValueOrDefault(pair, 0) + 1;
+                    var pair = (tokens[i], tokens[i + 1]);
+                    pairCounts[pair] = pairCounts.GetValueOrDefault(pair) + f;
                 }
             }
-
             if (pairCounts.Count == 0) break;
 
-            // Find pair with max frequency
-            (string, string) bestPair = ("", "");
-            int maxFreq = -1;
-            foreach (var kvp in pairCounts)
+            // Pick the pair with the highest weighted count.
+            var bestPair = default((string, string));
+            long bestCount = 1; // require at least 2 occurrences
+            foreach (var kv in pairCounts)
             {
-                if (kvp.Value > maxFreq)
+                if (kv.Value > bestCount)
                 {
-                    maxFreq = kvp.Value;
-                    bestPair = kvp.Key;
+                    bestCount = kv.Value;
+                    bestPair = kv.Key;
                 }
             }
+            if (bestCount <= 1) break;
 
-            if (maxFreq <= 1) break;
+            string merged = bestPair.Item1 + bestPair.Item2;
 
-            string newToken = bestPair.Item1 + bestPair.Item2;
-            _encoder[newToken] = currentId;
-            _decoder[currentId] = newToken;
-            _merges.Add(bestPair);
-            currentId++;
-
-            // Replace occurrences of bestPair in text
+            // Apply the merge in every word.
             for (int w = 0; w < words.Count; w++)
             {
-                var word = words[w];
-                List<string> newWord = new();
-                for (int i = 0; i < word.Count; i++)
+                var (tokens, f) = words[w];
+                var newTokens = new List<string>(tokens.Count);
+                for (int i = 0; i < tokens.Count; i++)
                 {
-                    if (i < word.Count - 1 && word[i] == bestPair.Item1 && word[i + 1] == bestPair.Item2)
+                    if (i < tokens.Count - 1
+                        && tokens[i] == bestPair.Item1
+                        && tokens[i + 1] == bestPair.Item2)
                     {
-                        newWord.Add(newToken);
-                        i++; // Skip merged element
+                        newTokens.Add(merged);
+                        i++;
                     }
                     else
                     {
-                        newWord.Add(word[i]);
+                        newTokens.Add(tokens[i]);
                     }
                 }
-                words[w] = newWord;
+                words[w] = (newTokens, f);
             }
-        }
 
-        _vocabSize = _encoder.Count;
+            _tokenToId[merged] = nextId;
+            _idToToken[nextId] = merged;
+            _mergeRank[bestPair] = _mergeRank.Count;
+            nextId++;
+        }
     }
+
+    /// <summary>
+    /// Pre-tokenization.
+    /// Yields, in order:
+    ///  - a whole run of leading whitespace (minus one char) if longer than 1
+    ///  - one whitespace char (if any) + the following non-whitespace run
+    ///  - a trailing whitespace-only run at end of input
+    /// </summary>
+    private static IEnumerable<string> SplitIntoWords(string text)
+    {
+        int i = 0;
+        while (i < text.Length)
+        {
+            int start = i;
+
+            // Skip whitespace, remember where the body starts.
+            int bodyStart = i;
+            while (bodyStart < text.Length && char.IsWhiteSpace(text[bodyStart])) bodyStart++;
+
+            if (bodyStart >= text.Length)
+            {
+                // Trailing whitespace.
+                yield return text.Substring(start);
+                yield break;
+            }
+
+            // Consume the non-whitespace body.
+            i = bodyStart;
+            while (i < text.Length && !char.IsWhiteSpace(text[i])) i++;
+
+            int prefixLen = bodyStart - start;
+            if (prefixLen > 1)
+            {
+                // Emit all but one whitespace char as its own token.
+                yield return text.Substring(start, prefixLen - 1);
+            }
+
+            int wordStart = prefixLen > 0 ? bodyStart - 1 : start;
+            yield return text.Substring(wordStart, i - wordStart);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    //  Encoding
+    // ------------------------------------------------------------------
 
     public List<int> Encode(string text)
     {
-        List<int> tokens = new();
-        if (string.IsNullOrEmpty(text)) return tokens;
+        var ids = new List<int>();
+        if (string.IsNullOrEmpty(text)) return ids;
 
-        int idx = 0;
-        while (idx < text.Length)
+        foreach (var word in SplitIntoWords(text))
+            EncodeWord(word, ids);
+        return ids;
+    }
+
+    private void EncodeWord(string word, List<int> output)
+    {
+        // Start with one token per character.
+        var tokens = new List<string>(word.Length);
+        foreach (char c in word) tokens.Add(c.ToString());
+
+        // Repeatedly apply the lowest-rank available merge.
+        while (tokens.Count > 1)
         {
-            int longestMatchLength = 0;
-            int matchedId = -1;
-
-            // Greedy match longest token present in encoder
-            foreach (var kvp in _encoder)
+            int bestRank = int.MaxValue;
+            int bestPos = -1;
+            for (int i = 0; i < tokens.Count - 1; i++)
             {
-                if (kvp.Key.Length > longestMatchLength && text.AsSpan(idx).StartsWith(kvp.Key))
+                if (_mergeRank.TryGetValue((tokens[i], tokens[i + 1]), out int rank)
+                    && rank < bestRank)
                 {
-                    longestMatchLength = kvp.Key.Length;
-                    matchedId = kvp.Value;
+                    bestRank = rank;
+                    bestPos = i;
                 }
             }
+            if (bestPos < 0) break;
 
-            if (matchedId != -1)
+            tokens[bestPos] = tokens[bestPos] + tokens[bestPos + 1];
+            tokens.RemoveAt(bestPos + 1);
+        }
+
+        // Look up final tokens.
+        foreach (var t in tokens)
+        {
+            if (_tokenToId.TryGetValue(t, out int id))
             {
-                tokens.Add(matchedId);
-                idx += longestMatchLength;
+                output.Add(id);
             }
             else
             {
-                // Fallback unknown token handling via character key addition
-                string unkChar = text[idx].ToString();
-                if (!_encoder.TryGetValue(unkChar, out int id))
-                {
-                    id = _encoder.Count;
-                    _encoder[unkChar] = id;
-                    _decoder[id] = unkChar;
-                }
-                tokens.Add(id);
-                idx++;
+                // Fallback: per-char (shouldn't happen for in-vocab text).
+                foreach (char c in t)
+                    if (_tokenToId.TryGetValue(c.ToString(), out int cid))
+                        output.Add(cid);
             }
         }
-
-        return tokens;
     }
 
-    public string Decode(List<int> tokens)
+    // ------------------------------------------------------------------
+    //  Decoding
+    // ------------------------------------------------------------------
+
+    public string Decode(IEnumerable<int> tokens)
     {
-        StringBuilder sb = new();
-        foreach (var t in tokens)
-        {
-            if (_decoder.TryGetValue(t, out string? val))
-            {
-                sb.Append(val);
-            }
-        }
+        var sb = new StringBuilder();
+        foreach (int t in tokens)
+            if (_idToToken.TryGetValue(t, out var s))
+                sb.Append(s);
         return sb.ToString();
     }
 
-    public void SaveVocabulary(string path)
+    // ------------------------------------------------------------------
+    //  Persistence (binary, length-prefixed UTF-8)
+    // ------------------------------------------------------------------
+
+    public void Save(string path)
     {
-        using var writer = new StreamWriter(path);
-        writer.WriteLine(_encoder.Count);
-        foreach (var kvp in _encoder)
+        string? dir = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+
+        using var w = new BinaryWriter(File.Create(path));
+        w.Write(FileMagic);
+        w.Write(_tokenToId.Count);
+        w.Write(_mergeRank.Count);
+
+        foreach (var kv in _tokenToId.OrderBy(kv => kv.Value))
         {
-            writer.WriteLine($"{kvp.Value}\t{kvp.Key}");
+            w.Write(kv.Value);
+            WriteString(w, kv.Key);
+        }
+
+        foreach (var kv in _mergeRank.OrderBy(kv => kv.Value))
+        {
+            WriteString(w, kv.Key.Item1);
+            WriteString(w, kv.Key.Item2);
         }
     }
 
-    public void LoadVocabulary(string path)
+    public void Load(string path)
     {
-        _encoder.Clear();
-        _decoder.Clear();
-        using var reader = new StreamReader(path);
-        int count = int.Parse(reader.ReadLine() ?? "0");
-        for (int i = 0; i < count; i++)
+        _tokenToId.Clear();
+        _idToToken.Clear();
+        _mergeRank.Clear();
+
+        using var r = new BinaryReader(File.OpenRead(path));
+        string magic = r.ReadString();
+        if (magic != FileMagic)
+            throw new InvalidDataException($"Bad BPE file magic: '{magic}' (expected '{FileMagic}')");
+
+        int vocabSize = r.ReadInt32();
+        int mergeCount = r.ReadInt32();
+
+        for (int i = 0; i < vocabSize; i++)
         {
-            var line = reader.ReadLine()?.Split('\t');
-            if (line != null && line.Length >= 2)
-            {
-                int id = int.Parse(line[0]);
-                string token = line[1];
-                _encoder[token] = id;
-                _decoder[id] = token;
-            }
+            int id = r.ReadInt32();
+            string token = ReadString(r);
+            _tokenToId[token] = id;
+            _idToToken[id] = token;
         }
+
+        for (int i = 0; i < mergeCount; i++)
+        {
+            string a = ReadString(r);
+            string b = ReadString(r);
+            _mergeRank[(a, b)] = i;
+        }
+    }
+
+    private static void WriteString(BinaryWriter w, string s)
+    {
+        byte[] bytes = Encoding.UTF8.GetBytes(s);
+        w.Write(bytes.Length);
+        w.Write(bytes);
+    }
+
+    private static string ReadString(BinaryReader r)
+    {
+        int len = r.ReadInt32();
+        return Encoding.UTF8.GetString(r.ReadBytes(len));
     }
 }

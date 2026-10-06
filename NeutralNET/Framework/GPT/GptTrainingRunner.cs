@@ -257,6 +257,31 @@ public class GptTrainingRunner
         Console.WriteLine($"[Checkpoint] Model (with optimizer state) saved to: {filePath}");
     }
 
+    /// <summary>
+    /// Non-throwing wrapper around <see cref="LoadModel"/>.
+    /// Returns false if the file doesn't exist or the format is invalid.
+    /// </summary>
+    public static unsafe bool TryLoadModel(GptNeuralFramework gpt, string filePath, out string message)
+    {
+        if (!File.Exists(filePath))
+        {
+            message = $"[Checkpoint] No checkpoint at {filePath}";
+            return false;
+        }
+
+        try
+        {
+            LoadModel(gpt, filePath);
+            message = $"[Checkpoint] Loaded {filePath}";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            message = $"[Checkpoint] Failed to load {filePath}: {ex.Message}";
+            return false;
+        }
+    }
+
     public static unsafe void LoadModel(GptNeuralFramework gpt, string filePath)
     {
         if (!File.Exists(filePath)) throw new FileNotFoundException("Checkpoint not found!");

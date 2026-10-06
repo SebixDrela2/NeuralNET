@@ -26,6 +26,9 @@ public class TrainingConfig
     public string CanonicalCheckpoint { get; set; } = "";
     public string BestLossSidecar { get; set; } = "";
 
+    public bool UseBpe { get; set; } = true;
+    public int BpeVocabSize { get; set; } = 512;
+
     public GptConfig ToGptConfig(int vocabSize) => new()
     {
         VocabSize = vocabSize,
@@ -53,7 +56,9 @@ public class TrainingConfig
             BuildFolder = buildFolder,
             CorpusFile = Path.Combine(buildFolder, "ShakespeareWork.txt"),
             CanonicalCheckpoint = Path.Combine(buildFolder, "shakespeare_gpt.bin"),
-            BestLossSidecar = Path.Combine(buildFolder, "shakespeare_gpt.bestloss.txt")
+            BestLossSidecar = Path.Combine(buildFolder, "shakespeare_gpt.bestloss.txt"),
+            UseBpe = true,
+            BpeVocabSize = 512,
         };
     }
 }

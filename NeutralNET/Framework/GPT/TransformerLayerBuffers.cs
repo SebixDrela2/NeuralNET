@@ -578,14 +578,14 @@ public unsafe class TransformerLayerBuffers : IDisposable
     }
 
     private void UpdateWeightsAdamW(
-        NeuralMatrix inputActivations,
-        NeuralMatrix outputGrads,
-        NeuralMatrix weight,
-        NeuralMatrix mState,
-        NeuralMatrix vState,
-        float lr,
-        int stepCount,
-        string name = "?")
+    NeuralMatrix inputActivations,
+    NeuralMatrix outputGrads,
+    NeuralMatrix weight,
+    NeuralMatrix mState,
+    NeuralMatrix vState,
+    float lr,
+    int stepCount,
+    string name = "?")
     {
         const float beta1 = 0.9f;
         const float beta2 = 0.999f;
@@ -597,41 +597,63 @@ public unsafe class TransformerLayerBuffers : IDisposable
 
         int rows = weight.Rows;        // in_features
         int cols = weight.UsedColumns; // out_features
-        int totalTokens = inputActivations.Rows;
+        int T = inputActivations.Rows;
+        if (T == 0) return;
 
-        float* pX = inputActivations.Pointer;
-        float* pDY = outputGrads.Pointer;
-        float* pW = weight.Pointer;
+        float* pX = inputActivations.Pointer; int xStride = inputActivations.ColumnsStride;
+        float* pDY = outputGrads.Pointer; int dyStride = outputGrads.ColumnsStride;
+        float* pW = weight.Pointer; int wStride = weight.ColumnsStride;
         float* pM = mState.Pointer;
         float* pV = vState.Pointer;
 
-        int xStride = inputActivations.ColumnsStride;
-        int dyStride = outputGrads.ColumnsStride;
-        int wStride = weight.ColumnsStride;
-
-        Parallel.For(0, rows, r =>
+        // Row-major scratch for the full gradient matrix [rows, cols].
+        float* gradW = (float*)NativeMemory.Alloc((nuint)(rows * cols), sizeof(float));
+        try
         {
-            float* wRow = pW + r * wStride;
-            float* mRow = pM + r * wStride;
-            float* vRow = pV + r * wStride;
+            // Clear the scratch. rows*cols is at most 128*512 = 65536 floats = 256 KB.
+            new Span<float>(gradW, rows * cols).Clear();
 
-            for (int c = 0; c < cols; c++)
+            // Pass 1: accumulate gradW[r, c] = sum_t X[t, r] * dY[t, c]
+            // Parallelize over r. Inner loop reads dY[t, :] sequentially, so every
+            // cache line of dY is fully consumed in one pass.
+            Parallel.For(0, rows, r =>
             {
-                float grad = 0f;
-                for (int t = 0; t < totalTokens; t++)
+                float* gRow = gradW + r * cols;
+                for (int t = 0; t < T; t++)
                 {
-                    grad += pX[t * xStride + r] * pDY[t * dyStride + c];
+                    float xVal = pX[t * xStride + r];
+                    if (xVal == 0f) continue;
+                    float* dyRow = pDY + t * dyStride;
+                    for (int c = 0; c < cols; c++)
+                        gRow[c] += xVal * dyRow[c];
                 }
+            });
 
-                mRow[c] = beta1 * mRow[c] + (1f - beta1) * grad;
-                vRow[c] = beta2 * vRow[c] + (1f - beta2) * (grad * grad);
+            // Pass 2: AdamW elementwise.
+            Parallel.For(0, rows, r =>
+            {
+                float* wRow = pW + r * wStride;
+                float* mRow = pM + r * wStride;
+                float* vRow = pV + r * wStride;
+                float* gRow = gradW + r * cols;
 
-                float mHat = mRow[c] / bc1;
-                float vHat = vRow[c] / bc2;
+                for (int c = 0; c < cols; c++)
+                {
+                    float grad = gRow[c];
+                    mRow[c] = beta1 * mRow[c] + (1f - beta1) * grad;
+                    vRow[c] = beta2 * vRow[c] + (1f - beta2) * (grad * grad);
 
-                wRow[c] -= lr * (mHat / (MathF.Sqrt(vHat) + eps) + weightDecay * wRow[c]);
-            }
-        });
+                    float mHat = mRow[c] / bc1;
+                    float vHat = vRow[c] / bc2;
+
+                    wRow[c] -= lr * (mHat / (MathF.Sqrt(vHat) + eps) + weightDecay * wRow[c]);
+                }
+            });
+        }
+        finally
+        {
+            NativeMemory.Free(gradW);
+        }
     }
 
     private void UpdateScaleAdamW(

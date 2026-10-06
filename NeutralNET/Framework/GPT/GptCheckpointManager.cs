@@ -22,26 +22,16 @@ public class GptCheckpointManager
 
     public bool TryResume(GptNeuralFramework gpt, out string message)
     {
-        if (!File.Exists(_canonicalPath))
+        if (!GptTrainingRunner.TryLoadModel(gpt, _canonicalPath, out message))
         {
-            message = "[Checkpoint] No existing checkpoint. Starting from random init.";
-            return false;
-        }
-
-        try
-        {
-            GptTrainingRunner.LoadModel(gpt, _canonicalPath);
-            LoadSidecar();
-            message = $"[Checkpoint] Resumed. stepCount={gpt.StepCount} globalStep={GlobalStep} bestLoss={BestLoss:F4}";
-            return true;
-        }
-        catch (Exception ex)
-        {
-            message = $"[Checkpoint] Resume failed: {ex.Message}\n[Checkpoint] Starting fresh (delete the checkpoint if it's corrupt).";
             BestLoss = float.PositiveInfinity;
             GlobalStep = 0;
             return false;
         }
+
+        LoadSidecar();
+        message = $"[Checkpoint] Resumed. stepCount={gpt.StepCount} globalStep={GlobalStep} bestLoss={BestLoss:F4}";
+        return true;
     }
 
     /// <summary>Always writes an epoch snapshot. Returns the path written.</summary>
