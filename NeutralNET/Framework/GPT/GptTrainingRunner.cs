@@ -9,6 +9,8 @@ namespace NeutralNET.Framework.Neural.GPT;
 
 public class GptTrainingRunner
 {
+    private const int CheckpointMagic = 0x47505431;  // 'GPT1'
+
     public static unsafe (float AvgLoss, float Accuracy) Evaluate(GptNeuralFramework gpt, List<int[][]> testMiniBatches)
     {
         double totalLoss = 0.0;
@@ -55,7 +57,7 @@ public class GptTrainingRunner
                 int vocabSize = gpt.VocabSize;
                 int rows = gpt.LogitsOutput.Rows;
 
-                // ---- per-batch diagnostic ----
+                // per-batch diagnostic
                 {
                     float mn = float.PositiveInfinity;
                     float mx = float.NegativeInfinity;
@@ -157,16 +159,12 @@ public class GptTrainingRunner
             }
         }
 
-        // ---- final summary ----
         double finalAcc = totalTokens > 0 ? (double)correctPredictions / totalTokens * 100.0 : 0.0;
         double finalLoss = totalTokens > 0 ? totalLoss / totalTokens : 0.0;
 
         Console.WriteLine($"[evaluate-diag] FINAL: loss={finalLoss:F4} correct={correctPredictions} total={totalTokens} acc={finalAcc:F4}% skipped={skippedTokens} outOfRangeTargets={outOfRangeTargets}");
 
-        float avgLoss = (float)finalLoss;
-        float accuracy = (float)finalAcc;
-
-        return (avgLoss, accuracy);
+        return ((float)finalLoss, (float)finalAcc);
     }
 
     public static unsafe void SaveModel(GptNeuralFramework gpt, string filePath)
@@ -197,26 +195,66 @@ public class GptTrainingRunner
             }
         }
 
-        WriteMatrix(gpt.TokenEmbeddings);
-        WriteMatrix(gpt.PositionalEmbeddings);
-        WriteMatrix(gpt.OutputProjection);
+        // Header
+        writer.Write(CheckpointMagic);
+        writer.Write(gpt.StepCount);
 
+        // Embeddings (weights + Adam m/v)
+        WriteMatrix(gpt.TokenEmbeddings);
+        WriteMatrix(gpt.DebugMTokEmb);
+        WriteMatrix(gpt.DebugVTokEmb);
+
+        WriteMatrix(gpt.PositionalEmbeddings);
+        WriteMatrix(gpt.DebugMPosEmb);
+        WriteMatrix(gpt.DebugVPosEmb);
+
+        WriteMatrix(gpt.OutputProjection);
+        WriteMatrix(gpt.DebugMOutProj);
+        WriteMatrix(gpt.DebugVOutProj);
+
+        // Layers
         for (int l = 0; l < gpt.NumLayers; l++)
         {
             var layer = gpt.Layers[l];
+
             WriteMatrix(layer.Norm1Scale);
+            WriteMatrix(layer.DebugMNorm1);
+            WriteMatrix(layer.DebugVNorm1);
+
             WriteMatrix(layer.Wq);
+            WriteMatrix(layer.DebugMWq);
+            WriteMatrix(layer.DebugVWq);
+
             WriteMatrix(layer.Wk);
+            WriteMatrix(layer.DebugMWk);
+            WriteMatrix(layer.DebugVWk);
+
             WriteMatrix(layer.Wv);
+            WriteMatrix(layer.DebugMWv);
+            WriteMatrix(layer.DebugVWv);
+
             WriteMatrix(layer.Wo);
+            WriteMatrix(layer.DebugMWo);
+            WriteMatrix(layer.DebugVWo);
 
             WriteMatrix(layer.Norm2Scale);
+            WriteMatrix(layer.DebugMNorm2);
+            WriteMatrix(layer.DebugVNorm2);
+
             WriteMatrix(layer.WGate);
+            WriteMatrix(layer.DebugMWGate);
+            WriteMatrix(layer.DebugVWGate);
+
             WriteMatrix(layer.WUp);
+            WriteMatrix(layer.DebugMWUp);
+            WriteMatrix(layer.DebugVWUp);
+
             WriteMatrix(layer.WDown);
+            WriteMatrix(layer.DebugMWDown);
+            WriteMatrix(layer.DebugVWDown);
         }
 
-        Console.WriteLine($"[Checkpoint] Model successfully saved to: {filePath}");
+        Console.WriteLine($"[Checkpoint] Model (with optimizer state) saved to: {filePath}");
     }
 
     public static unsafe void LoadModel(GptNeuralFramework gpt, string filePath)
@@ -249,25 +287,71 @@ public class GptTrainingRunner
             }
         }
 
-        ReadMatrix(gpt.TokenEmbeddings);
-        ReadMatrix(gpt.PositionalEmbeddings);
-        ReadMatrix(gpt.OutputProjection);
+        // Header
+        int magic = reader.ReadInt32();
+        if (magic != CheckpointMagic)
+        {
+            throw new InvalidOperationException(
+                $"Checkpoint format mismatch (got 0x{magic:X8}, expected 0x{CheckpointMagic:X8}). " +
+                "This checkpoint was saved with an older format. Delete or rename it and retrain, or downgrade to the previous code.");
+        }
+        gpt.StepCount = reader.ReadInt32();
 
+        // Embeddings
+        ReadMatrix(gpt.TokenEmbeddings);
+        ReadMatrix(gpt.DebugMTokEmb);
+        ReadMatrix(gpt.DebugVTokEmb);
+
+        ReadMatrix(gpt.PositionalEmbeddings);
+        ReadMatrix(gpt.DebugMPosEmb);
+        ReadMatrix(gpt.DebugVPosEmb);
+
+        ReadMatrix(gpt.OutputProjection);
+        ReadMatrix(gpt.DebugMOutProj);
+        ReadMatrix(gpt.DebugVOutProj);
+
+        // Layers
         for (int l = 0; l < gpt.NumLayers; l++)
         {
             var layer = gpt.Layers[l];
+
             ReadMatrix(layer.Norm1Scale);
+            ReadMatrix(layer.DebugMNorm1);
+            ReadMatrix(layer.DebugVNorm1);
+
             ReadMatrix(layer.Wq);
+            ReadMatrix(layer.DebugMWq);
+            ReadMatrix(layer.DebugVWq);
+
             ReadMatrix(layer.Wk);
+            ReadMatrix(layer.DebugMWk);
+            ReadMatrix(layer.DebugVWk);
+
             ReadMatrix(layer.Wv);
+            ReadMatrix(layer.DebugMWv);
+            ReadMatrix(layer.DebugVWv);
+
             ReadMatrix(layer.Wo);
+            ReadMatrix(layer.DebugMWo);
+            ReadMatrix(layer.DebugVWo);
 
             ReadMatrix(layer.Norm2Scale);
+            ReadMatrix(layer.DebugMNorm2);
+            ReadMatrix(layer.DebugVNorm2);
+
             ReadMatrix(layer.WGate);
+            ReadMatrix(layer.DebugMWGate);
+            ReadMatrix(layer.DebugVWGate);
+
             ReadMatrix(layer.WUp);
+            ReadMatrix(layer.DebugMWUp);
+            ReadMatrix(layer.DebugVWUp);
+
             ReadMatrix(layer.WDown);
+            ReadMatrix(layer.DebugMWDown);
+            ReadMatrix(layer.DebugVWDown);
         }
 
-        Console.WriteLine($"[Checkpoint] Model weights successfully loaded from: {filePath}");
+        Console.WriteLine($"[Checkpoint] Model (with optimizer state) loaded from: {filePath}");
     }
 }

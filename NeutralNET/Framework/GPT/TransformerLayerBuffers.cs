@@ -27,6 +27,24 @@ public unsafe class TransformerLayerBuffers : IDisposable
     public NeuralMatrix DebugDQ => dQ;
     public NeuralMatrix DebugDK => dK;
     public NeuralMatrix DebugDV => dV;
+    public NeuralMatrix DebugMWq => mWq;
+    public NeuralMatrix DebugVWq => vWq;
+    public NeuralMatrix DebugMWk => mWk;
+    public NeuralMatrix DebugVWk => vWk;
+    public NeuralMatrix DebugMWv => mWv;
+    public NeuralMatrix DebugVWv => vWv;
+    public NeuralMatrix DebugMWo => mWo;
+    public NeuralMatrix DebugVWo => vWo;
+    public NeuralMatrix DebugMWGate => mWGate;
+    public NeuralMatrix DebugVWGate => vWGate;
+    public NeuralMatrix DebugMWUp => mWUp;
+    public NeuralMatrix DebugVWUp => vWUp;
+    public NeuralMatrix DebugMWDown => mWDown;
+    public NeuralMatrix DebugVWDown => vWDown;
+    public NeuralMatrix DebugMNorm1 => mNorm1;
+    public NeuralMatrix DebugVNorm1 => vNorm1;
+    public NeuralMatrix DebugMNorm2 => mNorm2;
+    public NeuralMatrix DebugVNorm2 => vNorm2;
 
     public static bool DiagEnabled = false;
     public static int DiagStep = 0;

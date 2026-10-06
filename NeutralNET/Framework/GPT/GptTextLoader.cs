@@ -20,7 +20,12 @@ public class GPTTextDataLoader
         }
 
         var rawText = File.ReadAllText(filePath);
-        var slicedText = rawText.Substring(0, rawText.Length / 10);
+        var slicedText = rawText.Substring(0, (int)(rawText.Length * 0.3));
+
+        if (!slicedText.Contains("To be, or not to be"))
+        {
+            throw new InvalidOperationException($"No shakespearing.");
+        }
 
         if (string.IsNullOrWhiteSpace(slicedText))
         {

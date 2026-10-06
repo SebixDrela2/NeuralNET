@@ -1,0 +1,2 @@
+bestLoss=2.5435722
+globalStep=400

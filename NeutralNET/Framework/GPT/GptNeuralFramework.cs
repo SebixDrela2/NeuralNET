@@ -41,6 +41,19 @@ public unsafe class GptNeuralFramework : IDisposable
     public NeuralMatrix LogitsOutput;
     public NeuralMatrix ResidualGrad;
 
+    public NeuralMatrix DebugMTokEmb => _mTokEmb;
+    public NeuralMatrix DebugVTokEmb => _vTokEmb;
+    public NeuralMatrix DebugMPosEmb => _mPosEmb;
+    public NeuralMatrix DebugVPosEmb => _vPosEmb;
+    public NeuralMatrix DebugMOutProj => _mOutProj;
+    public NeuralMatrix DebugVOutProj => _vOutProj;
+
+    public int StepCount
+    {
+        get => _stepCount;
+        set => _stepCount = value;
+    }
+
     public static bool DiagnosticsEnabled = true;
     private int _forwardCounter = 0;
 
