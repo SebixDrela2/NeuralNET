@@ -1,7 +1,7 @@
+using System;
 using NeutralNET.Activation;
 using NeutralNET.Matrices;
 using NeutralNET.Stuff;
-using System;
 
 namespace NeutralNET.Models;
 

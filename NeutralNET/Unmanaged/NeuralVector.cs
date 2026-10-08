@@ -1,7 +1,7 @@
-using NeutralNET.Matrices;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
+using NeutralNET.Matrices;
 
 namespace NeutralNET.Unmanaged;
 

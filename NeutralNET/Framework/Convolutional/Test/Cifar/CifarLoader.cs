@@ -1,5 +1,5 @@
-using NeutralNET.Matrices;
 using NeutralNET.Framework.Convolutional;
+using NeutralNET.Matrices;
 using NeutralNET.Stuff;
 
 public static class Cifar10Loader

@@ -1,8 +1,8 @@
+using System.Runtime.CompilerServices;
 using NeutralNET.Framework.Connected.Neural;
 using NeutralNET.Matrices;
 using NeutralNET.Stuff;
 using NeutralNET.Validators;
-using System.Runtime.CompilerServices;
 
 namespace NeutralNET.Models;
 

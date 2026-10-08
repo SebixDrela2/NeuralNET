@@ -1,4 +1,3 @@
-using NeutralNET.Utils;
 using System.Collections.Concurrent;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -7,6 +6,7 @@ using System.Drawing.Text;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using NeutralNET.Utils;
 
 namespace NeutralNET.Stuff;
 

@@ -12,13 +12,11 @@ using static NeutralNET.Activation.ActivationSelector;
 
 namespace NeutralNET.Framework.Neural.CNN;
 
-using static ConvRenter;
-using static NeuralRenter;
-
-
 using System;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
+using static ConvRenter;
+using static NeuralRenter;
 
 /// <summary>
 /// Zero-GC CNN framework with full object and buffer pooling, pluggable optimizers,

@@ -1,2 +1,2 @@
-bestLoss=3.128236
-globalStep=1704
+bestLoss=2.957125
+globalStep=2272

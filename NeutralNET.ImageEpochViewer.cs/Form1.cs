@@ -1,3 +1,6 @@
+using System.Diagnostics;
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using NeutralNET.Activation;
 using NeutralNET.Framework.Connected;
 using NeutralNET.Framework.Connected.Neural;
@@ -6,9 +9,6 @@ using NeutralNET.Framework.Neural;
 using NeutralNET.Matrices;
 using NeutralNET.Models;
 using NeutralNET.Stuff;
-using System.Diagnostics;
-using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
 
 namespace NeutralNET.ImageEpochViewer;
 

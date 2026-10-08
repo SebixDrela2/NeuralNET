@@ -1,9 +1,9 @@
+using System;
 using NeutralNET.Framework.Connected.Neural;
 using NeutralNET.Matrices;
 using NeutralNET.Models;
 using NeutralNET.Stuff;
 using NeutralNET.Validators;
-using System;
 
 public class DigitModel : IModel, IValidator
 {
